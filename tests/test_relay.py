@@ -713,7 +713,9 @@ def test_group_full_release_stays_busy_until_cancelled_thread_settles(tmp_path: 
 
 
 @pytest.mark.parametrize("device", ["ram", VRAM0])
-def test_live_run_refuses_worker_unload(tmp_path: Path, device: str) -> None:
+def test_live_run_refuses_worker_unload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str
+) -> None:
     """A run starting after idle telemetry protects its model across the boundary."""
 
     async def scenario() -> None:
@@ -773,7 +775,107 @@ def test_live_run_refuses_worker_unload(tmp_path: Path, device: str) -> None:
                 # Advisory unload preserves identity and cached references.
                 rerun = await engine.run(load_graph(), ["load"])
                 assert rerun.cached == ("load",)
+
+            adopting, resume = asyncio.Event(), asyncio.Event()
+            to_thread = asyncio.to_thread
+
+            async def hold_adoption(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+                if function.__name__ == "adopt":
+                    adopting.set()
+                    await resume.wait()
+                return await to_thread(function, *args, **kwargs)
+
+            monkeypatch.setattr(asyncio, "to_thread", hold_adoption)
+            handoff = asyncio.create_task(engine.run(load_graph("handoff"), ["load"]))
+            try:
+                async with asyncio.timeout(10):
+                    await adopting.wait()
+                    assert await eventually(
+                        lambda: any(
+                            i.display_name == "handoff" for i in governor.details()[CONSUMER]
+                        )
+                    )
+                    item = next(
+                        i for i in governor.details()[CONSUMER] if i.display_name == "handoff"
+                    )
+                    assert item.in_use is True
+                    assert (
+                        await governor.shed(
+                            device, nbytes, consumers=[CONSUMER], items=[item.item_id]
+                        )
+                        == 0
+                    )
+                    resume.set()
+                    result = await handoff
+                    assert result.executed == ("load",)
+                item = next(i for i in governor.details()[CONSUMER] if i.display_name == "handoff")
+                assert item.in_use is False
+                assert (
+                    await governor.shed(device, nbytes, consumers=[CONSUMER], items=[item.item_id])
+                    == nbytes
+                )
+            finally:
+                resume.set()
+                if not handoff.done():
+                    handoff.cancel()
+                await asyncio.gather(handoff, return_exceptions=True)
         finally:
+            await worker.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("device,nbytes", [("ram", 300), (VRAM0, 400)])
+def test_worker_unload_refuses_use_started_after_proposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str, nbytes: int
+) -> None:
+    async def scenario() -> None:
+        governor = MemoryGovernor({VRAM0: 1000, "ram": 1000})
+        registry = core_registry()
+        cache = MemoryLRUCache()
+        pins, guard = wire_gate(cache)
+        worker = relay_worker(tmp_path, registry, governor, release_guard=guard)
+        await worker.start()
+        committing, finish = asyncio.Event(), asyncio.Event()
+        shedding: asyncio.Task[int] | None = None
+        try:
+            engine = make_engine(registry, worker, cache=cache, pins=pins)
+            loaded = await engine.run(load_graph(), ["load"])
+            assert await eventually(lambda: consumer_footprint(governor, VRAM0) == 400)
+            send = worker._session.send
+
+            async def hold_commit(header, blobs):
+                if header.get("type") == "memoryReleaseCommit":
+                    committing.set()
+                    await finish.wait()
+                await send(header, blobs)
+
+            monkeypatch.setattr(worker._session, "send", hold_commit)
+            shedding = asyncio.create_task(governor.shed(device, nbytes, consumers=[CONSUMER]))
+            async with asyncio.timeout(10):
+                await committing.wait()
+                # The invocation completes before commit: only the child's
+                # use-clock, not a currently live parent pin, can reject it.
+                used = await worker.invoke(
+                    Invocation(
+                        invocation_id="use-after-proposal",
+                        node_id="use",
+                        node_type="mem.use",
+                        inputs={"model": loaded.outputs["load"]["model"]},
+                        effective_schema=worker.schemas["mem.use"],
+                    )
+                )
+                assert used.error is None
+                assert used.outputs is not None
+                assert used.outputs["name"].resolve() == "sd15.safetensors"
+                finish.set()
+                assert await shedding == 0
+            assert consumer_footprint(governor, device) == nbytes
+            assert await governor.shed(device, nbytes, consumers=[CONSUMER]) == nbytes
+        finally:
+            finish.set()
+            if shedding is not None:
+                await asyncio.gather(shedding, return_exceptions=True)
             await worker.close()
 
     run_scenario(scenario())

@@ -17,9 +17,9 @@ atomically refuses if the resource is pinned, and while a resource is
 condemned every ``pin()`` returns False, so a late arrival is *detected*
 and the caller recomputes through the ordinary miss path instead of
 using a stub that is about to dangle. A refused release is rolled back
-with ``absolve()``; a confirmed one stays condemned forever - resource
-ids are never reused, so the tombstone can only ever refuse a genuinely
-stale reference.
+with ``absolve()``, as is an advisory device unload that preserves the
+reference. A confirmed terminal release stays condemned forever - resource
+ids are never reused, so the tombstone only refuses a genuinely stale reference.
 
 Event-loop confined, like the engine that feeds it: not thread-safe by
 design. Node authors never see this type - pinning is host plumbing
@@ -69,8 +69,8 @@ class ResourcePins:
     def absolve(self, resource_id: str) -> None:
         """Roll back a condemnation: the owner refused the release (the
         resident was used since it was proposed), so references stay
-        valid. Never called after a confirmed release - that tombstone is
-        permanent."""
+        valid. Advisory device unload also preserves references. Never
+        called after a confirmed terminal release - that tombstone is permanent."""
         self._condemned.discard(resource_id)
 
     def condemned(self, resource_id: str) -> bool:
