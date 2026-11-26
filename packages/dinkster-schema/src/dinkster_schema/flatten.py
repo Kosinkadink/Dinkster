@@ -99,6 +99,7 @@ def site_evaluator(
     linked: Callable[[object], bool] | None,
     literal: Callable[[object], object] | None,
     in_use: Mapping[str, object],
+    file_facts: Mapping[str, Mapping[str, object]] | None = None,
 ) -> SiteEvaluator:
     """Evaluates a formula in the scope of an automatic site, over the stored
     values, the choices ``chosen`` by a walk, and ``in_use`` for unstored
@@ -115,6 +116,7 @@ def site_evaluator(
         literal=literal or (lambda value: value),
         formulas=True,
         in_use=in_use,
+        file_facts=file_facts or {},
     )
     flattener.chosen = dict(chosen)
     return SiteEvaluator(
@@ -370,6 +372,7 @@ class _Flattener:
         literal: Callable[[object], object],
         formulas: bool,
         in_use: Mapping[str, object],
+        file_facts: Mapping[str, Mapping[str, object]] | None = None,
     ) -> None:
         self.stored_ids = stored_ids
         self.in_use = in_use
@@ -382,6 +385,8 @@ class _Flattener:
         self.derived = derived
         self.linked = linked
         self.literal = literal
+        # Structural walks leave facts unknown; only automatic sites receive them.
+        self.file_facts = file_facts
         self.frames: list[_Frame] = []
         self.chosen: dict[str, str] = {}
 
@@ -534,13 +539,39 @@ class _Flattener:
         if not self.at_hand:
             return UNKNOWN
         frames = self.frames if frames is None else frames
-        names, where, inputs, unknown, _ = self.names_at(frames)
+        names, where, inputs, unknown, files = self.names_at(frames)
         defaults: dict[str, object] = {}
         self.defaults(frames[0].rows, "", defaults)
         member = next((frame for frame in reversed(frames) if frame.index is not None), None)
         values: dict[str, Callable[[], object]] = {}
         wired: dict[str, bool] = {}
         sizes: dict[str, int] = {}
+        facts: dict[tuple[str, str], object] = {}
+        for name in files - unknown if self.file_facts is not None else ():
+            value = self.value(where[name], defaults)[0]
+            if not isinstance(value, Mapping):
+                continue
+            asset = cast("Mapping[str, object]", value)
+            digest = asset.get("digest")
+            if not isinstance(digest, str):
+                continue
+            assert self.file_facts is not None
+            decoded = self.file_facts.get(digest, {})
+            for fact in ("width", "height", "frames", "fps", "duration"):
+                if fact in decoded:
+                    facts[fact, name] = decoded[fact]
+            filename, media_type = asset.get("name"), asset.get("mediaType")
+            if isinstance(filename, str):
+                facts["filename", name] = filename.replace("\\", "/").rsplit("/", 1)[-1]
+            if isinstance(media_type, str) and media_type:
+                family = media_type.split("/", 1)[0] if "/" in media_type else ""
+                facts["kind", name] = (
+                    "3d"
+                    if family == "model"
+                    else family
+                    if family in ("image", "video", "audio", "text")
+                    else "file"
+                )
         for name, kind in names.items():
             flat_id = where[name]
             if name in unknown:
@@ -575,6 +606,7 @@ class _Flattener:
                 values=_LazyValues(values),
                 linked=wired,
                 group_sizes=sizes,
+                facts=facts,
                 member_index=None if member is None else member.index,
                 member_key=None if member is None else member.key,
             )

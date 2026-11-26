@@ -569,3 +569,69 @@ def test_a_formula_refused_while_working_out_gives_the_default_and_the_run_goes_
             ]
 
     run_scenario(scenario())
+
+
+def test_automatic_formulas_and_lookups_use_the_picked_files_facts() -> None:
+    schema = NodeSchema(
+        node_type="test.file_facts",
+        output_node=True,
+        body=(
+            Input("file", TypeExpr.concrete(ASSET_TYPE), required=False, widget=AssetWidget()),
+            Input("width", INT, default=-1, automatic=Formula("width(file)")),
+            Input("fps", FLOAT, default=-1.0, automatic=Formula("fps(file)")),
+            Input(
+                "quarter",
+                FLOAT,
+                default=-1.0,
+                automatic=Lookup(source_rate, args=(Formula("frames(file)"),)),
+            ),
+            Input("filename", STRING, default="unknown", automatic=Formula("filename(file)")),
+            Input("kind", STRING, default="unknown", automatic=Formula("kind(file)")),
+            Output("out", FLOAT),
+        ),
+    )
+    image = {**VIDEO, "digest": "blake3:" + "b" * 64, "name": "two.png", "mediaType": "image/png"}
+    unavailable = {**VIDEO, "digest": "blake3:" + "c" * 64}
+    graph = Graph(
+        {
+            "video": GraphNode(schema.node_type, {"file": {**VIDEO, "name": "folder/one.mp4"}}),
+            "renamed": GraphNode(
+                schema.node_type, {"file": {**VIDEO, "name": "C:\\files\\other.mp4"}}
+            ),
+            "image": GraphNode(schema.node_type, {"file": image}),
+            "unavailable": GraphNode(schema.node_type, {"file": unavailable}),
+            "wired": GraphNode(schema.node_type, {"file": Link("video", "out")}),
+        }
+    )
+
+    async def answer(_node_type: str, _function: str, args: Sequence[object]) -> object:
+        value = args[0]
+        assert isinstance(value, (int, float))
+        return source_rate(value)
+
+    resolved, records = asyncio.run(
+        resolve_automatic(
+            graph,
+            list(graph.nodes),
+            {schema.node_type: schema},
+            call_lookup=answer,
+            file_facts={
+                str(VIDEO["digest"]): {"width": 16, "frames": 7, "fps": 25.0, "filename": "wrong"},
+                str(image["digest"]): {"width": 13, "frames": 1},
+            },
+        )
+    )
+    expected = {
+        "video": (16, 25.0, 1.75, "one.mp4", "video"),
+        "renamed": (16, 25.0, 1.75, "other.mp4", "video"),
+        "image": (13, -1.0, 0.25, "two.png", "image"),
+        "unavailable": (-1, -1.0, -1.0, "clip.mp4", "video"),
+        "wired": (-1, -1.0, -1.0, "unknown", "unknown"),
+    }
+    fields = ("width", "fps", "quarter", "filename", "kind")
+    used = {(record.node_id, record.input_id): record.value for record in records}
+    for node_id, values in expected.items():
+        assert tuple(used[node_id, field] for field in fields) == values
+        node = resolved.nodes[node_id]
+        assert isinstance(node, GraphNode)
+        assert tuple(node.inputs[field] for field in fields) == values
