@@ -234,6 +234,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         with use_asset_folders(mounts.project_context(project)):
             if mounts.table.bind_name(name, kind) is not None:
                 return {"status": "local", "name": name, "kind": kind}
+            if mounts.table.name_is_ambiguous(name, kind):
+                return {"status": "duplicate"}
             if downloads.hidden_name(name, kind):
                 return {
                     "status": "model-hidden",
@@ -333,12 +335,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 if found is not None:
                     result.append({**found, "name": name, "kind": kind})
                     continue
-                with use_asset_folders(downloads.mounts.project_context(project)):
-                    duplicate = downloads.mounts.table.name_is_ambiguous(name, kind)
                 result.append(
-                    {"name": name, "kind": kind, "status": "duplicate"}
-                    if duplicate
-                    else {
+                    {
                         "name": name,
                         "kind": kind,
                         "status": "missing",

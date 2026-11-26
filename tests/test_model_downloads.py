@@ -506,6 +506,24 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             second = tmp_path / "models/diffusion_models/copy/flux1-dev.safetensors"
             second.parent.mkdir()
             second.write_bytes(b"second copy")
+            from dinkster.template_model_sources import TemplateModelSources
+
+            def unexpected_source_lookup(*_: object) -> tuple[str, ...]:
+                pytest.fail("duplicate model names must not look up download sources")
+
+            with monkeypatch.context() as no_sources:
+                no_sources.setattr(TemplateModelSources, "for_name", unexpected_source_lookup)
+                for request_body in (
+                    body,
+                    {
+                        **body,
+                        "source": "https://huggingface.co/Comfy-Org/flux1-dev/resolve/main/flux1-dev.safetensors",
+                    },
+                ):
+                    response = await client.post("/api/models/downloads/plan", json=request_body)
+                    assert response.status == 200
+                    assert await response.json() == {"status": "duplicate"}
+            assert len(requests) == 1
             response = await client.post("/api/models/presence", json=presence)
             assert (await response.json())["models"][:2] == [
                 {"name": body["name"], "kind": body["kind"], "status": "duplicate"},
@@ -519,6 +537,8 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             second.unlink()
             response = await client.post("/api/models/presence", json=presence)
             assert (await response.json())["models"][0]["status"] == "local"
+            response = await client.post("/api/models/downloads/plan", json=body)
+            assert (await response.json())["status"] == "local"
             for invalid in (
                 {**presence, "models": []},
                 {**presence, "models": [{"name": "a.bin", "kind": "model/vae"}] * 257},
