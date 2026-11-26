@@ -866,6 +866,8 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     Cursors bind scope and ordering, with the virtual path breaking ties.
     ``path`` and ``recursive`` optionally scope a single mount's traversal.
     Repeated ``mount`` values restrict the all-mount route to enabled mounts.
+    A shallow first page includes descendant file counts for each immediate
+    folder, using the same query, kind and project visibility as the entries.
     """
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info.get("mountId")
@@ -943,19 +945,35 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
 
     needle = query.lower()
     rows: list[tuple[AssetEntry, str]] = []
+    include_folders = mount_id is not None and not recursive and "cursor" not in request.query
+    folder_counts = (
+        {name: 0 for name in listings[mount_id].folders}
+        if include_folders and mount_id is not None
+        else {}
+    )
     with use_asset_folders(context):
         for item in mount_ids:
             mount_kind = service.table.kind(item)
             scope = f"mounts/{item}/" + (f"{path}/" if path else "")
-            entries = service.table.entries(item) if recursive else listings[item].entries
-            rows.extend(
-                (entry, mount_kind)
-                for entry in entries
-                if entry.virtual_path.startswith(scope)
-                and (not needle or needle in entry.virtual_path.lower())
-                and (not kind or _entry_kind(entry, mount_kind) == kind)
-                and not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+            entries = (
+                service.table.entries(item)
+                if recursive or include_folders
+                else listings[item].entries
             )
+            for entry in entries:
+                if (
+                    not entry.virtual_path.startswith(scope)
+                    or (needle and needle not in entry.virtual_path.lower())
+                    or (kind and _entry_kind(entry, mount_kind) != kind)
+                    or model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+                ):
+                    continue
+                folder, separator, _ = entry.virtual_path[len(scope) :].partition("/")
+                if not recursive and separator:
+                    if include_folders:
+                        folder_counts[folder] = folder_counts.get(folder, 0) + 1
+                    continue
+                rows.append((entry, mount_kind))
     total = len(rows)
     rows.sort(key=lambda row: order_key(row[0]))
     if after is not None:
@@ -965,8 +983,9 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
         "entries": [_entry_wire(entry, mount_kind) for entry, mount_kind in page],
         "total": total,
     }
-    if mount_id is not None and not recursive and "cursor" not in request.query:
+    if include_folders and mount_id is not None:
         body["folders"] = list(listings[mount_id].folders)
+        body["folderCounts"] = folder_counts
     if remainder:
         body["cursor"] = encode_cursor(bound, order_key(page[-1][0]))
     return web.json_response(body)
