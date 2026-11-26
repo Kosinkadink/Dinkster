@@ -68,7 +68,7 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
-from dinkster_server.library import LIBRARY_KEY, run_owned_thread
+from dinkster_server.library import ASSET_GRANTS_KEY, LIBRARY_KEY, run_owned_thread
 from dinkster_server.lookups import announce_asset_kinds
 from dinkster_server.projects import PROJECTS_KEY, validate_project
 from dinkster_values.asset_folders import use_asset_folders
@@ -491,6 +491,9 @@ class MountService:
                 return
             loop = asyncio.get_running_loop()
             announced_files_done = 0
+            mount = self.table.get(mount_id)
+            store = app.get(ASSET_GRANTS_KEY)
+            granted: set[str] = set()
 
             def publish_progress(progress: AssetScanProgress) -> None:
                 _log.info(
@@ -516,6 +519,14 @@ class MountService:
                 except RuntimeError:
                     pass  # the hashing thread may outlive server shutdown
 
+            def admit_progress(progress: AssetScanProgress) -> None:
+                if progress.files_done and store is not None and self.table.get(mount_id) is mount:
+                    for entry in self.table.entries(mount_id):
+                        if entry.digest not in granted:
+                            store.grant_asset("local", entry.digest, entry.ref(resolver=self.table))
+                            granted.add(entry.digest)
+                publish_progress(progress)
+
             helper = app.get(PROJECTS_KEY)
 
             def scan_index(
@@ -530,7 +541,7 @@ class MountService:
                     asyncio.to_thread(
                         self.table.scan,
                         mount_id,
-                        on_progress=publish_progress,
+                        on_progress=admit_progress,
                         progress_interval=_SCAN_PROGRESS_INTERVAL,
                         scan_index=scan_index if helper is not None else None,
                     )
@@ -794,6 +805,9 @@ async def handle_mount_resolve_path(request: web.Request) -> web.Response:
                 mount_id
             ) is not grants.get(mount_id):
                 return respond(refused)
+            store = request.app.get(ASSET_GRANTS_KEY)
+            if store is not None and body["scope"] == "local":
+                await run_owned_thread(lambda: store.grant_asset("local", ref.digest, ref))
             service.refresh_resolution_store()
             service.publish(request.app, mount_ids=(mount_id,))
             return respond({"status": "resolved", "asset": ref.to_wire()})

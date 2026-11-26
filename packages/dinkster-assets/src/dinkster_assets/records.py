@@ -1357,10 +1357,15 @@ class LibraryStore:
             raise AssetError("media grant facts do not match supplied bytes")
         return self._persist_grant_result(grant)
 
-    def grant_asset(self, scope: str, digest: str, data: bytes | Path) -> bool:
+    def grant_asset(self, scope: str, digest: str, data: bytes | Path | AssetRef) -> bool:
         """Grant verified opaque bytes without claiming a media kind or adoption."""
         digest = require_digest(digest)
-        if isinstance(data, Path):
+        if isinstance(data, AssetRef):
+            if data.digest != digest:
+                raise AssetError("asset grant digest does not match supplied reference")
+            with data.open() as handle:
+                size = os.fstat(handle.fileno()).st_size
+        elif isinstance(data, Path):
             with open_verified(data, digest) as handle:
                 size = os.fstat(handle.fileno()).st_size
         else:

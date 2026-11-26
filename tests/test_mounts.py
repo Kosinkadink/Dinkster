@@ -265,7 +265,12 @@ runpy.run_module("dinkster_library", run_name="__main__")
             for identifier in ("models-upscale", "models-upscaler"):
                 table.add(MountDef(identifier, models))
             service = MountService(table, library / "mounts.toml")
-            app = create_app(make_engine, SCHEMAS)
+            server_library = ServerLibrary(
+                vault=AssetVault(library / "vault"),
+                store=LibraryStore(library / "catalog.sqlite"),
+                resolver=table,
+            )
+            app = create_app(make_engine, SCHEMAS, library=server_library)
             add_project_routes(app, library, engine_version="test")
             add_mount_routes(app, service)
             async with TestClient(TestServer(app)) as client:
@@ -295,6 +300,9 @@ runpy.run_module("dinkster_library", run_name="__main__")
                     assert table.ref(body["asset"]["virtualPath"]).local_path() == (
                         models / "selected.txt"
                     )
+                    response = await client.get("/api/assets/" + body["asset"]["digest"])
+                    assert response.status == 200
+                    assert await response.read() == b"selected without a folder scan"
                 assert opened.read_text("utf-8").splitlines() == ["model.bin", "selected.txt"]
                 await service.scan(app, "models-upscale")
                 assert (

@@ -625,6 +625,21 @@ def test_media_grants_verify_bytes_before_recording_authority(tmp_path: Path, ba
         assert store.grant_asset("alice", digest_bytes(b""), b"")
         empty = store.media_grant("alice", digest_bytes(b""), "asset/file")
         assert empty is not None and empty.byte_size == 0
+        mounts = MountTable(index_root=tmp_path / "grant-indexes")
+        mount_root = tmp_path / "grant-source"
+        mount_root.mkdir()
+        (mount_root / "source.txt").write_bytes(opaque)
+        mounts.add(MountDef("source", mount_root))
+        mounts.scan("source")
+        ref = mounts.ref("mounts/source/source.txt")
+        with pytest.raises(AssetError, match="digest"):
+            store.grant_asset("bound", grant.digest, ref)
+        assert store.grant_asset("bound", opaque_digest, ref)
+        assert not store.grant_asset("bound", opaque_digest, ref)
+        (mount_root / "source.txt").write_bytes(b"changed")
+        with pytest.raises(AssetError):
+            store.grant_asset("changed", opaque_digest, ref)
+        assert not store.has_asset_grant("changed", opaque_digest)
         store.close()
     assert not (root / "library.sqlite").exists()
 
@@ -722,6 +737,76 @@ def _large_wav(byte_count: int) -> bytes:
         writer.setframerate(44_100)
         writer.writeframes(bytes(byte_count // 2 * 2))
     return output.getvalue()
+
+
+def test_verified_mount_sources_grant_only_local_bytes(tmp_path: Path) -> None:
+    from dinkster.mounts_api import MountService, add_mount_routes
+
+    root = tmp_path / "mounted"
+    root.mkdir()
+    scanned = b"verified during the folder scan"
+    selected = b"verified through explicit native selection"
+    (root / "scanned.txt").write_bytes(scanned)
+    mounts = MountTable(index_root=tmp_path / "indexes")
+    mounts.add(MountDef("input", root))
+    service = MountService(mounts)
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(tmp_path / "catalog.sqlite"),
+            resolver=mounts,
+        )
+        app = create_app(_media_engine, _MEDIA_SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            assert (await client.get(f"/api/assets/{digest_bytes(scanned)}")).status == 404
+            await service.scan(app, "input")
+            (root / "selected.txt").write_bytes(selected)
+            response = await client.post(
+                "/api/mounts/resolve-path",
+                json={"path": str(root / "selected.txt"), "project": "default", "scope": "local"},
+            )
+            assert response.status == 200
+            assert (await response.json())["status"] == "resolved"
+            foreign = b"native selection is not remote-scope adoption"
+            (root / "foreign.txt").write_bytes(foreign)
+            response = await client.post(
+                "/api/mounts/resolve-path",
+                json={
+                    "path": str(root / "foreign.txt"),
+                    "project": "default",
+                    "scope": "shared:board:film",
+                },
+            )
+            assert response.status == 200
+            assert (await response.json())["status"] == "resolved"
+            for scope in ("local", "shared:board:film"):
+                response = await client.get(f"/api/assets/{digest_bytes(foreign)}?scope={scope}")
+                assert response.status == 404
+            for data in (scanned, selected):
+                digest = digest_bytes(data)
+                response = await client.get(f"/api/assets/{digest}")
+                assert response.status == 200
+                assert await response.read() == data
+                response = await client.get(f"/api/assets/{digest}?scope=shared:board:film")
+                assert response.status == 404
+            replacement = b"changed bytes require a fresh verified scan"
+            (root / "scanned.txt").write_bytes(replacement)
+            await service.scan(app, "input")
+            response = await client.get(f"/api/assets/{digest_bytes(replacement)}")
+            assert response.status == 200
+            assert await response.read() == replacement
+            assert (await client.get(f"/api/assets/{digest_bytes(scanned)}")).status == 404
+            mounts.remove("input")
+            for data in (replacement, selected):
+                assert (await client.get(f"/api/assets/{digest_bytes(data)}")).status == 404
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_streaming_media_bypasses_aiohttp_buffer_limit_while_buffered_routes_remain_bounded(
