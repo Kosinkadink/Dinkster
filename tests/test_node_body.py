@@ -690,6 +690,45 @@ def test_a_curve_declares_its_color_strips_outside_both_signatures() -> None:
         schema_from_wire(wire)
 
 
+def test_curve_editor_interpolation_choices_roundtrip_without_changing_signatures() -> None:
+    from dinkster_schema.model import CurveWidget, Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
+
+    def schema(widget: CurveWidget, *, effective: bool = False) -> NodeSchema:
+        row = Input("curve", TypeExpr.concrete("CURVE"), widget=widget)
+        return (
+            NodeSchema("test.curve", inputs=(row,), effective=True)
+            if effective
+            else NodeSchema("test.curve", body=(row,))
+        )
+
+    plain = CurveWidget()
+    for kinds in (("step",), ("step", "linear")):
+        widget = CurveWidget(interpolations=cast("Any", kinds))
+        wire = schema_to_wire(schema(widget))
+        descriptor = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+        assert descriptor == {"type": "CURVE", "interpolations": list(kinds)}
+        assert schema_from_wire(wire).body == schema(widget).body
+        for effective in (False, True):
+            assert schema_signature(schema(widget, effective=effective)) == schema_signature(
+                schema(plain, effective=effective)
+            )
+    wire = schema_to_wire(schema(plain))
+    descriptor = cast("list[dict[str, Any]]", wire["body"])[0]["widget"]
+    assert descriptor == {"type": "CURVE"}
+    assert schema_from_wire(wire).body == schema(plain).body
+    for bad in ([], ["step", "step"], ["unknown"], [None], [["step"]]):
+        descriptor["interpolations"] = bad
+        with pytest.raises(ValueError, match="interpolations"):
+            schema_from_wire(wire)
+        with pytest.raises(ValueError, match="interpolations"):
+            CurveWidget(interpolations=cast("Any", tuple(bad)))
+    for bad in (None, "step", ("step",)):
+        descriptor["interpolations"] = bad
+        with pytest.raises(ValueError, match="interpolations"):
+            schema_from_wire(wire)
+
+
 def test_a_curve_names_the_input_beside_it_that_is_its_histogram() -> None:
     from dataclasses import replace
 
