@@ -56,7 +56,7 @@ __all__ = [
     "asset_preflight",
     "bind_model_names",
     "graph_asset_names",
-    "graph_model_kinds",
+    "graph_model_assets",
     "graph_node_types",
     "graph_provider_selections",
     "parse_asset_consent",
@@ -274,12 +274,14 @@ def _scan_graph(graph: Graph, found: dict[str, str]) -> None:
             _scan_graph(node.body, found)
 
 
-def graph_model_kinds(graph: Graph, schemas: Mapping[str, NodeSchema]) -> dict[str, str]:
-    """Identify model literals even when no distribution declaration knows their digest."""
-    found: dict[str, str] = {}
+def graph_model_assets(
+    graph: Graph, schemas: Mapping[str, NodeSchema]
+) -> dict[str, tuple[str, str]]:
+    """Map model input and default digests to display names and asset kinds."""
+    found: dict[str, tuple[str, str]] = {}
     for node in graph.nodes.values():
         if isinstance(node, RegionNode):
-            found.update(graph_model_kinds(node.body, schemas))
+            found.update(graph_model_assets(node.body, schemas))
             continue
         schema = schemas.get(node.node_type)
         if schema is None:
@@ -292,7 +294,7 @@ def graph_model_kinds(graph: Graph, schemas: Mapping[str, NodeSchema]) -> dict[s
                 continue
             names: dict[str, str] = {}
             _scan_inputs({spec.id: node.inputs.get(spec.id, spec.default)}, names)
-            found.update((digest, widget.kind) for digest in names)
+            found.update((digest, (name, widget.kind)) for digest, name in names.items())
     return found
 
 

@@ -764,9 +764,11 @@ def test_unselected_missing_asset_branch_still_refuses_graph_wide_preflight(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("model_default", [False, True], ids=["media-literal", "model-default"])
 def test_compiled_literal_asset_is_preflighted_before_queue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model_default: bool,
 ) -> None:
     async def scenario() -> None:
         client, app, engine, runtime = await make_compiled_asset_client(tmp_path)
@@ -778,8 +780,10 @@ def test_compiled_literal_asset_is_preflighted_before_queue(
             graph = Graph(
                 {
                     "compiled": GraphNode(
-                        "test.asset.size",
-                        {
+                        "test.model.size" if model_default else "test.asset.size",
+                        {}
+                        if model_default
+                        else {
                             "asset": asset_literal(
                                 MODEL_DIGEST, "compiled-only.bin", len(MODEL_BYTES)
                             )
@@ -799,7 +803,9 @@ def test_compiled_literal_asset_is_preflighted_before_queue(
             plan = await response.json()
             assert plan["error"] == "assets-missing"
             assert plan["assets"][0]["digest"] == MODEL_DIGEST
-            assert plan["assets"][0]["name"] == "compiled-only.bin"
+            assert plan["assets"][0]["name"] == (
+                "model.bin" if model_default else "compiled-only.bin"
+            )
             assert calls == 1
             assert app[STATE_KEY].queue.get("c1", "j1") is None
         finally:
