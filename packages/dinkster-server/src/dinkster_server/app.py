@@ -3965,12 +3965,24 @@ async def handle_value(request: web.Request) -> web.Response:
         else "private, no-cache"
     )
     library = request.app.get(LIBRARY_KEY)
+    for digest in value_asset_references({output_id: value}):
+        await require_asset_read(request, digest, scope=job.scope)
+        if library is not None and not await run_owned_thread(
+            lambda digest=digest: library.asset_available(digest)
+        ):
+            return _rendition_problem(
+                404, "rendition_unavailable", "rendition source is unavailable"
+            )
     document_rendition = library is not None and _mime == IMAGE_DOCUMENT_MEDIA_TYPE
     not_modified = any(tag.value in (etag_value, "*") for tag in (request.if_none_match or ()))
     if not_modified and not document_rendition:
         return web.Response(
             status=304,
-            headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
+            headers={
+                "ETag": f'"{etag_value}"',
+                "Cache-Control": cache_control,
+                "Vary": "Authorization",
+            },
         )
     try:
         if library is None:
@@ -4042,7 +4054,11 @@ async def handle_value(request: web.Request) -> web.Response:
     if not_modified:
         return web.Response(
             status=304,
-            headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
+            headers={
+                "ETag": f'"{etag_value}"',
+                "Cache-Control": cache_control,
+                "Vary": "Authorization",
+            },
         )
     return web.Response(
         body=rendition.data,
@@ -4050,6 +4066,7 @@ async def handle_value(request: web.Request) -> web.Response:
         headers={
             "ETag": f'"{etag_value}"',
             "Cache-Control": cache_control,
+            "Vary": "Authorization",
             "X-Dinkster-Type-Id": value.type_id,
             "X-Dinkster-Fingerprint": value.fingerprint,
             "X-Dinkster-Rendition": rendition.kind,

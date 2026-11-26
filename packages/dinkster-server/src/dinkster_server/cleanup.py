@@ -272,7 +272,9 @@ async def maintain_cleanup_policy(app: web.Application) -> None:
         app[POLICY_KEY].update(result)
 
 
-def _scratch_roots(scratch: Path) -> Generator[tuple[Path, Path]]:
+def _scratch_roots(
+    scratch: Path, *, owner: tuple[str, int] | None = None
+) -> Generator[tuple[Path, Path]]:
     def present_directory(path: Path) -> bool:
         try:
             mode = path.stat(follow_symlinks=False).st_mode
@@ -290,15 +292,22 @@ def _scratch_roots(scratch: Path) -> Generator[tuple[Path, Path]]:
         if not present_directory(folder):
             continue
         for pack in folder.iterdir():
+            selected = produced_job_scratch_root(pack, *owner) if owner is not None else None
+            if selected is not None and not selected.exists() and not is_link_or_junction(selected):
+                continue
             if is_link_or_junction(pack) or not pack.is_dir():
                 raise AssetError("scratch pack accounting is unavailable")
             produced = pack / "produced-assets"
             jobs = produced / "jobs"
             if not present_directory(produced):
                 continue
-            if any(path.name != "jobs" for path in produced.iterdir()):
+            if selected is None and any(path.name != "jobs" for path in produced.iterdir()):
                 raise AssetError("unscoped scratch accounting is unavailable")
             if not present_directory(jobs):
+                continue
+            if selected is not None:
+                if present_directory(selected):
+                    yield pack, selected
                 continue
             for root in jobs.iterdir():
                 if root.name == ".leases":
@@ -341,9 +350,7 @@ def grant_produced_publications(
     scratch: Path, store: LibraryStore, *, job: str, attempt: int, scope: str
 ) -> None:
     """Grant a job's offered writer publications without claiming its readers are idle."""
-    for pack, root in _scratch_roots(scratch):
-        if root != produced_job_scratch_root(pack, job, attempt):
-            continue
+    for _pack, root in _scratch_roots(scratch, owner=(job, attempt)):
         with closing(ProducedScratchLease(root)):
             state = ProducedScratchState(root)
             if state.owner() != (job, attempt):

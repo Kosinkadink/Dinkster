@@ -37,6 +37,8 @@ def test_recovery_adopts_only_offered_publications(tmp_path: Path, temporary: bo
                 writer.commit()
         ProducedScratchState(source.root).offer([offered])
 
+        unrelated = source.root.parent / "unrelated"
+        unrelated.write_bytes(b"not a job directory")
         with closing(LibraryStore(tmp_path / "library")) as store:
             grant_produced_publications(scratch, store, job="other", attempt=1, scope="local")
             grant_produced_publications(scratch, store, job="finished", attempt=2, scope="local")
@@ -45,6 +47,7 @@ def test_recovery_adopts_only_offered_publications(tmp_path: Path, temporary: bo
             assert store.has_asset_grant("local", offered)
             assert not store.has_asset_grant("local", unoffered)
             assert not store.has_asset_grant("other", offered)
+        unrelated.unlink()
 
     result = recover_produced_publications(
         vault, scratch, preview_vaults=(preview,) if preview is not None else ()

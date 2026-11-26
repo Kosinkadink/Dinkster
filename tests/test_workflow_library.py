@@ -475,6 +475,23 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
                             break
                         await asyncio.sleep(0)
                 assert status["state"] == "completed", status
+                if job_id != "claim":
+                    url = (
+                        f"/api/values?clientId=client&jobId={job_id}&nodeId=producer"
+                        "&outputId=video&rendition=default"
+                    )
+                    rendition = await client.get(
+                        url,
+                        headers=headers,
+                    )
+                    assert rendition.status == (404 if job_id == "cached" else 200)
+                    if job_id == "cached":
+                        conditional = await client.get(
+                            url, headers={**headers, "If-None-Match": "*"}
+                        )
+                        assert conditional.status == 404
+                    else:
+                        assert await rendition.read() == encoded
                 if not published:
                     published.extend(status["resultOffers"]["producer"]["video"]["digests"])
                     assert published == [digest_bytes(encoded)]
@@ -490,6 +507,15 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
                     if allowed:
                         assert await response.read() == encoded
                 assert status["artifacts"] == []
+            path = vault.resolve(published[0])
+            assert path is not None
+            path.unlink()
+            response = await client.get(
+                "/api/values?clientId=client&jobId=producer&nodeId=producer"
+                "&outputId=video&rendition=default",
+                headers={"Authorization": "Bearer a", "If-None-Match": "*"},
+            )
+            assert response.status == 404
         finally:
             await client.close()
 
