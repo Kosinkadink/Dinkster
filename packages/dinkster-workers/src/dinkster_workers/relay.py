@@ -10,28 +10,18 @@ parent's governor as ordinary Shedders:
   synchronous and must never await a boundary crossing. The child pushes
   ``memoryReport`` frames (footprints plus detail items) at state-changing
   moments: right after hello, after every invocation, and inside every shed
-  reply. The parent serves both methods from that snapshot; staleness bounded
-  by push points is the honest contract, and measured free memory remains
-  ground truth beside it.
-- **shed() is the live surface.** ``vram:*`` pressure crosses as one
-  advisory round trip: unloading preserves resident identity, so the worst
-  transport race is a model reloading later. ``ram`` pressure crosses as a
-  *gated two-phase release* (DESIGN 3.10) - and only when the composing host
-  supplied a ReleaseGuard; without one it is refused (returns 0), because
-  release drops the child's strong reference while parent caches and live
-  runs may still hold stubs. The gate, per candidate the child proposes:
-  every guard invalidator drops its cache entries referencing the resource
-  (a failing invalidator disqualifies the candidate); then the resource is
-  atomically *condemned* in the guard's pins - refused if a live run has
-  it pinned, and once condemned no new pin can succeed, so a reference in
-  flight across a suspension point is detected (its pin returns False) and
-  recomputed rather than dangled. Only then does the commit cross; the
-  child re-checks its use-clock token and its own in-flight result holds,
-  and the reply names what was actually released - refusals are absolved
-  (references stay valid), confirmations stay condemned forever (resource
-  ids are never reused). Every reply carries a fresh snapshot applied
-  *before* the proxy returns, so the governor's admission rescore sees the
-  freed bytes immediately.
+  reply. Residency is a snapshot; live use is queried from the parent's
+  current pin registry using the consumer's explicit reference identity.
+  Unsupported use remains absent, not a cached false.
+- **shed() is the live surface.** Both device unloading and terminal RAM
+  release require the parent's ReleaseGuard. The child proposes candidates;
+  the parent refuses live-run pins and blocks new pins during the commit.
+  The child rechecks use-clock tokens and in-flight result holds before
+  freeing memory. Terminal release also invalidates parent caches and keeps
+  successful condemnations forever. Advisory device unload preserves identity
+  and cache entries, so a confirmed reply absolves its temporary gate.
+  A missing guard or uncertain transport outcome never claims freed bytes.
+  Replies refresh the snapshot before the governor rescores admission.
 - **A dead worker holds nothing and frees nothing.** Once the relay closes,
   footprints read 0, details are empty, and shed returns 0 - never a claim
   of bytes the transport cannot vouch for.
@@ -47,7 +37,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, cast
 
 from dinkster_memory import ConsumerItem, PageMap, PressureSignal, Shedder
@@ -71,17 +61,21 @@ in-process ResidentPool takes - ``MemoryLRUCache.drop_referencing`` fits."""
 
 @dataclass(frozen=True)
 class ReleaseGuard:
-    """The parent-side half of the cross-process ram-release gate.
+    """The parent-side half of the cross-process unload and release gate.
 
-    ``pins`` must be the same registry the Engine pins run-held envelopes
-    into, and ``invalidators`` must cover every parent-side cache that can
-    hand out stubs (each one's ``drop_referencing``). Wiring only part of
-    it re-opens the dangling-stub hole - compose all three (engine pins,
-    cache invalidators, this guard) from one place.
+    ``pins`` resolves the registry the Engine pins run-held envelopes into.
+    A provider follows registry adoption across composition generations.
+    ``invalidators`` must cover every parent cache that can hand out stubs,
+    including caches created after the guard. Compose all three together.
     """
 
-    pins: ResourcePins
+    pins: ResourcePins | Callable[[], ResourcePins]
     invalidators: tuple[InvalidateFn, ...]
+
+    @property
+    def current_pins(self) -> ResourcePins:
+        """Resolve a composition's registry after generation adoption."""
+        return self.pins() if callable(self.pins) else self.pins
 
 
 @dataclass(frozen=True)
@@ -118,6 +112,8 @@ def consumer_item_to_wire(item: ConsumerItem) -> dict[str, object]:
         "displayName": item.display_name,
         "bytesByResidency": dict(item.bytes_by_residency),
     }
+    if item.resource_id is not None:
+        wire["resourceId"] = item.resource_id
     if item.in_use is not None:
         wire["inUse"] = item.in_use
     if item.pages is not None:
@@ -153,6 +149,7 @@ def consumer_item_from_wire(
         display_name=str(wire["displayName"]),
         bytes_by_residency=bytes_by_residency,
         pages=pages,
+        resource_id=wire.get("resourceId") if isinstance(wire.get("resourceId"), str) else None,
         in_use=wire.get("inUse") if isinstance(wire.get("inUse"), bool) else None,
     )
 
@@ -182,7 +179,6 @@ class MemoryRelay:
         self._device_map = device_map
         self._release_guard = release_guard
         self._snapshots: dict[str, _ConsumerSnapshot] = {}
-        self._pending: dict[str, asyncio.Future[int]] = {}
         # Release round trips (query, commit): requestId -> reply header.
         # None resolution means the transport died - never a claim of bytes.
         self._replies: dict[str, asyncio.Future[Mapping[str, Any] | None]] = {}
@@ -234,51 +230,23 @@ class MemoryRelay:
         snapshot = self._snapshots.get(consumer)
         if snapshot is None:
             return ()
-        return snapshot.items
+        guard = self._release_guard
+        pins = guard.current_pins if guard is not None else None
+        return tuple(
+            replace(item, in_use=pins.pinned(item.resource_id))
+            if pins is not None and item.resource_id is not None
+            else replace(item, in_use=None)
+            for item in snapshot.items
+        )
 
     # -- shedding ----------------------------------------------------------
 
     async def shed(self, consumer: str, pressure: PressureSignal) -> int:
         if not self._alive:
             return 0
-        if not pressure.device.startswith("vram:"):
-            # ram release drops the child's strong reference: it may only
-            # cross through the two-phase gate, and only when the composing
-            # host wired one (DESIGN 3.10).
-            return await self._shed_release(consumer, pressure)
-        child_device = self.to_child_residency(pressure.device)
-        if child_device is None:
-            return 0
-        request_id = f"shed{next(self._ids)}"
-        future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
-        self._pending[request_id] = future
-        header: dict[str, object] = {
-            "type": "memoryShed",
-            "requestId": request_id,
-            "consumer": consumer,
-            "device": child_device,
-            "bytesNeeded": pressure.bytes_needed,
-        }
-        if pressure.items is not None:
-            header["items"] = list(pressure.items)
-        try:
-            await self._send(header)
-            return await future
-        except Exception:  # noqa: BLE001 - transport failure must not claim bytes
-            self._pending.pop(request_id, None)
-            return 0
+        return await self._shed_release(consumer, pressure)
 
-    def on_shed_result(self, header: Mapping[str, Any]) -> None:
-        # Fresh snapshot first: the governor rescores admission the moment
-        # the proxy returns, and it must see the freed bytes.
-        consumers = header.get("consumers")
-        if isinstance(consumers, Mapping):
-            self.apply_report(cast("Mapping[str, Any]", consumers))
-        future = self._pending.pop(str(header.get("requestId")), None)
-        if future is not None and not future.done():
-            future.set_result(int(cast("int", header.get("freedBytes", 0))))
-
-    # -- ram release (the two-phase gate; DESIGN 3.10) ----------------------
+    # -- unloading and release (the two-phase gate; DESIGN 3.10) ----------------------
 
     async def _shed_release(self, consumer: str, pressure: PressureSignal) -> int:
         guard = self._release_guard
@@ -303,9 +271,14 @@ class MemoryRelay:
         # run has the resource pinned, and once taken makes every later
         # pin() return False, so nothing can slip in between this check and
         # the child's drop.
+        pins = guard.current_pins
+        advisory = pressure.device.startswith("vram:")
         safe: list[dict[str, object]] = []
         condemned: list[str] = []
+        claimed = 0
         for wire_raw in cast("Sequence[object]", reply.get("candidates", ())):
+            if pressure.items is None and claimed >= pressure.bytes_needed:
+                break
             if not isinstance(wire_raw, Mapping):
                 continue
             wire = cast("Mapping[str, Any]", wire_raw)
@@ -313,15 +286,17 @@ class MemoryRelay:
             if not resource_id:
                 continue
             disqualified = False
-            for invalidate in guard.invalidators:
-                try:
-                    invalidate(resource_id)
-                except Exception:  # noqa: BLE001 - a cache that may still
-                    disqualified = True  # hold a stub beats reclaimed bytes
-                    break
-            if disqualified or not guard.pins.condemn(resource_id):
+            if not advisory:
+                for invalidate in guard.invalidators:
+                    try:
+                        invalidate(resource_id)
+                    except Exception:  # noqa: BLE001 - a cache that may still
+                        disqualified = True  # hold a stub beats reclaimed bytes
+                        break
+            if disqualified or not pins.condemn(resource_id):
                 continue
             condemned.append(resource_id)
+            claimed += int(wire.get("nbytes", 0))
             safe.append(
                 {
                     "itemId": str(wire.get("itemId", "")),
@@ -349,10 +324,10 @@ class MemoryRelay:
             return 0
         released = {str(rid) for rid in cast("Sequence[object]", reply.get("released", ()))}
         for resource_id in condemned:
-            if resource_id not in released:
-                # The child refused (used since proposal): references stay
-                # valid, so the tombstone is rolled back.
-                guard.pins.absolve(resource_id)
+            if advisory or resource_id not in released:
+                # Advisory unload preserves references; a refused terminal
+                # release does too. Only a confirmed terminal drop is permanent.
+                pins.absolve(resource_id)
         return int(cast("int", reply.get("freedBytes", 0)))
 
     async def _round_trip(self, header: dict[str, object]) -> Mapping[str, Any] | None:
@@ -500,6 +475,7 @@ class MemoryRelay:
                 await abort_query()
                 return None
             parsed.append((name, status, tuple(candidates), query_error))
+        pins = guard.current_pins
         for name, status, candidate_wires, query_error in parsed:
             if status in {"busy", "unsupported", "error"}:
                 result: dict[str, object] = {
@@ -523,7 +499,7 @@ class MemoryRelay:
                         gate_status = "error"
                         gate_error = f"cache invalidation failed: {exc}"
                         continue
-                    if not guard.pins.condemn(resource_id):
+                    if not pins.condemn(resource_id):
                         if gate_status != "error":
                             gate_status = "busy"
                         continue
@@ -602,7 +578,7 @@ class MemoryRelay:
             # of freed resources. Only a validated refusal proves survival.
             if child_status in {"busy", "unsupported"}:
                 for resource_id in condemned.get(name, set()) - released:
-                    guard.pins.absolve(resource_id)
+                    pins.absolve(resource_id)
             if gate["status"] in {"busy", "error", "unsupported"}:
                 results.append(gate)
                 continue
@@ -701,10 +677,6 @@ class MemoryRelay:
         call it."""
         self._alive = False
         self._snapshots.clear()
-        for future in self._pending.values():
-            if not future.done():
-                future.set_result(0)
-        self._pending.clear()
         for reply in self._replies.values():
             if not reply.done():
                 reply.set_result(None)

@@ -1841,9 +1841,11 @@ def test_group_contract_conflict_refuses_before_launch(tmp_path: Path) -> None:
 # constructs IsolatedWorker by hand.
 
 
-def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> None:
+def test_composed_worker_unloads_idle_models_and_invalidates_released_references(
+    tmp_path: Path,
+) -> None:
     async def scenario() -> None:
-        governor = MemoryGovernor()
+        governor = MemoryGovernor({"vram:cuda:0": 1000, "ram": 1000})
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
             '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
@@ -1876,6 +1878,16 @@ def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> No
                 while governor.footprint("vram:cuda:0") != 400:
                     await asyncio.sleep(0.02)
             assert governor.footprint("ram") == 300
+            assert governor.details()["memorypack:models"][0].in_use is False
+            assert await governor.shed("vram:cuda:0", 400) == 400
+            assert (await engine.run(graph, ["load"])).cached == ("load",)
+            assert await governor.shed("ram", 300) == 300
+            recomputed = await engine.run(graph, ["load"])
+            assert recomputed.executed == ("load",)
+            assert (
+                recomputed.outputs["load"]["model"].fingerprint
+                != result.outputs["load"]["model"].fingerprint
+            )
         finally:
             await composition.close()
 
