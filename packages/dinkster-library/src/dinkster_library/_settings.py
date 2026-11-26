@@ -131,19 +131,18 @@ def preferences(
         records.db.execute("BEGIN IMMEDIATE" if writing else "BEGIN")
         if paired:
             return {
-                name: _preference(
+                name: preference(
                     records,
                     f"folders.{name}.{'patch' if writing else 'get'}",
                     object_value(arguments[name], f"{name} changes") if writing else {},
                 )["folders"]
                 for name in ("grants", "projects")
             }
-        return _preference(records, operation, arguments)
+        return preference(records, operation, arguments)
 
 
-def _preference(
-    records: Records, operation: str, arguments: dict[str, object]
-) -> dict[str, object]:
+def preference(records: Records, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+    """Read or patch one settings record within the caller's transaction."""
     prefix = operation.rsplit(".", 1)[0]
     if prefix not in (
         "settings",

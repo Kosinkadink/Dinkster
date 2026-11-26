@@ -2612,6 +2612,13 @@ def _serve(
                     resolution_store.replace_mount_snapshot(scopes, ())
                 else:
                     mount_service.attach_resolution_store(resolution_store, scopes)
+
+            async def prepare_project_run(project: str) -> None:
+                if mount_service is not None:
+                    output = mount_service.project_context(project).output_mount
+                    if output is not None and output in mount_service.table.pending():
+                        await mount_service.scan(app, output, pending_only=True)
+
             redactor = PathRedactor(redaction_roots)
             app = create_app(
                 make_engine,
@@ -2665,6 +2672,7 @@ def _serve(
                 workers=lambda: composer.workers(remote_specs),
                 place_execution=composer.place_execution,
                 full_free=composer.full_free,
+                prepare_project_run=prepare_project_run,
                 prepare_remote_run=prepare_remote_run if account is not None else None,
                 finish_remote_run=finish_remote_run if account is not None else None,
                 federated_asset_paths=(

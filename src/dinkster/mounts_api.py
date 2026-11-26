@@ -852,6 +852,7 @@ def _entry_wire(entry: AssetEntry, mount_kind: str = "") -> dict[str, object]:
         "digest": entry.digest,
         "size": entry.size,
         "mediaType": entry.media_type,
+        "modifiedAt": entry.modified_at,
     }
     kind = _entry_kind(entry, mount_kind)
     if kind:
@@ -860,27 +861,47 @@ def _entry_wire(entry: AssetEntry, mount_kind: str = "") -> dict[str, object]:
 
 
 async def handle_mount_entries(request: web.Request) -> web.Response:
-    """Query-first, cursor-paged browse of one mount's catalog. Sorted by
-    virtual path ascending; the keyset is the last path served. ``q``
-    filters by case-insensitive substring of the path below the mount;
-    ``path`` and ``recursive`` optionally scope the folder traversal."""
+    """Browse enabled mount catalogs by path, name or newest modification time.
+
+    Cursors bind scope and ordering, with the virtual path breaking ties.
+    ``path`` and ``recursive`` optionally scope a single mount's traversal.
+    Repeated ``mount`` values restrict the all-mount route to enabled mounts.
+    """
     service = request.app[MOUNTS_KEY]
-    mount_id = request.match_info["mountId"]
+    mount_id = request.match_info.get("mountId")
     project = request.query.get("project", "default")
     await validate_project(request, project)
     try:
         context = service.project_context(project)
     except MountsError as exc:
         return _folder_error(exc)
-    if service.table.get(mount_id) is None:
+    if mount_id is not None and service.table.get(mount_id) is None:
         return _json_error(404, f"unknown mount: {mount_id}")
-    if mount_id not in context.mounts:
+    if mount_id is not None and mount_id not in context.mounts:
         return _json_error(403, "folder-not-enabled")
+    mount_ids = (mount_id,) if mount_id is not None else context.mounts
+    requested_mounts = request.query.getall("mount", [])
+    if requested_mounts:
+        if mount_id is not None:
+            return _json_error(400, "mount selection requires the all-mount route")
+        for item in requested_mounts:
+            if not item:
+                return _json_error(400, "mount must not be empty")
+            if service.table.get(item) is None:
+                return _json_error(404, f"unknown mount: {item}")
+            if item not in context.mounts:
+                return _json_error(403, "folder-not-enabled")
+        mount_ids = tuple(item for item in context.mounts if item in requested_mounts)
     query = request.query.get("q", "").strip()
     kind = request.query.get("kind", "").strip()
     if kind and not is_asset_kind(kind):
         return _json_error(400, "kind must be a namespaced asset kind")
+    sort = request.query.get("sort", "path")
+    if sort not in ("path", "name", "newest"):
+        return _json_error(400, "sort must be path, name or newest")
     path = request.query.get("path", "")
+    if mount_id is None and path:
+        return _json_error(400, "path requires a single mount")
     recursive_raw = request.query.get("recursive", "true")
     if recursive_raw not in ("true", "false"):
         return _json_error(400, "recursive must be true or false")
@@ -888,7 +909,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     try:
         # This is also the /list route's validation and normalization seam.
         # Keep it before all paging state, even for recursive traversal.
-        listing = service.table.list_folder(mount_id, path)
+        listings = {item: service.table.list_folder(item, path) for item in mount_ids}
     except (AssetError, MountsError) as exc:
         return _json_error(400, str(exc))
     limit_raw = request.query.get("limit", str(_PAGE_LIMIT_DEFAULT))
@@ -899,44 +920,55 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     if not 1 <= limit <= _PAGE_LIMIT_MAX:
         return _json_error(400, f"limit must be in 1..{_PAGE_LIMIT_MAX}")
     bound = {
-        "mount": mount_id,
+        "mount": mount_id or "",
+        "mounts": json.dumps(mount_ids),
+        "enabledMounts": json.dumps(context.mounts),
         "project": project,
         "q": query.lower(),
         "kind": kind,
         "path": path,
         "recursive": str(recursive).lower(),
+        "sort": sort,
         "hiddenModels": json.dumps(context.hidden_models),
     }
-    after_path = ""
     cursor = request.query.get("cursor")
-    if cursor:
-        _, after_path = decode_cursor(cursor, bound)
-    if recursive:
-        entries = service.table.entries(mount_id)
-        scope = f"mounts/{mount_id}"
-        if path:
-            scope = f"{scope}/{path}"
-        scope += "/"
-        entries = tuple(entry for entry in entries if entry.virtual_path.startswith(scope))
-    else:
-        entries = listing.entries
+    after = decode_cursor(cursor, bound) if cursor else None
+
+    def order_key(entry: AssetEntry) -> tuple[float, str]:
+        if sort == "newest":
+            return (-entry.modified_at, entry.virtual_path)
+        if sort == "name":
+            return (0.0, f"{entry.name.lower()}\0{entry.virtual_path}")
+        return (0.0, entry.virtual_path)
+
     needle = query.lower()
-    mount_kind = service.table.kind(mount_id)
+    rows: list[tuple[AssetEntry, str]] = []
     with use_asset_folders(context):
-        rows = [
-            entry
-            for entry in entries
-            if (not needle or needle in entry.virtual_path.lower())
-            and (not kind or _entry_kind(entry, mount_kind) == kind)
-            and entry.virtual_path > after_path
-            and not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
-        ]
+        for item in mount_ids:
+            mount_kind = service.table.kind(item)
+            scope = f"mounts/{item}/" + (f"{path}/" if path else "")
+            entries = service.table.entries(item) if recursive else listings[item].entries
+            rows.extend(
+                (entry, mount_kind)
+                for entry in entries
+                if entry.virtual_path.startswith(scope)
+                and (not needle or needle in entry.virtual_path.lower())
+                and (not kind or _entry_kind(entry, mount_kind) == kind)
+                and not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+            )
+    total = len(rows)
+    rows.sort(key=lambda row: order_key(row[0]))
+    if after is not None:
+        rows = [row for row in rows if order_key(row[0]) > after]
     page, remainder = rows[:limit], rows[limit:]
-    body: dict[str, object] = {"entries": [_entry_wire(entry, mount_kind) for entry in page]}
-    if not recursive and "cursor" not in request.query:
-        body["folders"] = list(listing.folders)
+    body: dict[str, object] = {
+        "entries": [_entry_wire(entry, mount_kind) for entry, mount_kind in page],
+        "total": total,
+    }
+    if mount_id is not None and not recursive and "cursor" not in request.query:
+        body["folders"] = list(listings[mount_id].folders)
     if remainder:
-        body["cursor"] = encode_cursor(bound, (0.0, page[-1].virtual_path))
+        body["cursor"] = encode_cursor(bound, order_key(page[-1][0]))
     return web.json_response(body)
 
 
@@ -1150,6 +1182,7 @@ def add_mount_routes(app: web.Application, service: MountService) -> None:
     add_model_settings_routes(app, service)
     app.router.add_get("/api/mounts", handle_mounts_list)
     app.router.add_get("/api/mounts/locations", handle_mount_locations)
+    app.router.add_get("/api/mounts/entries", handle_mount_entries)
     app.router.add_post("/api/mounts/resolve-path", handle_mount_resolve_path)
     app.router.add_get("/api/mounts/{mountId}/list", handle_mount_folder)
     app.router.add_get("/api/mounts/{mountId}/entries", handle_mount_entries)
