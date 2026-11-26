@@ -225,6 +225,10 @@ def make_engine(on_event: object = None) -> Engine:
             lambda: (Input("a", FLOAT, default=1.0, automatic=Formula("a + 1")),),
             r"automatic fields read each other \(a -> a\)",
         ),
+        (
+            lambda: (Input("min", FLOAT, default=1.0, automatic=Formula("min(min, 1)")),),
+            r"automatic fields read each other \(min -> min\)",
+        ),
     ],
 )
 def test_a_pack_with_an_automatic_field_it_cannot_hold_is_refused(
