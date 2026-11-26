@@ -139,7 +139,9 @@ def version(value: str) -> tuple[int, ...]:
 
 
 def graphics_vendor(base: dict[str, object]) -> str | None:
-    return next((vendor for vendor in ("nvidia", "amd", "intel") if base.get(vendor)), None)
+    return next(
+        (vendor for vendor in ("nvidia", "amd", "intel") if base.get(vendor) is not None), None
+    )
 
 
 def supported_cards(base: dict[str, object], cards: list[GraphicsCard]) -> list[GraphicsCard]:
@@ -179,9 +181,15 @@ def supported_builds(
     }
     gpu = [name for name, base in native.items() if supported_cards(base, cards)]
     gpu.sort(
-        key=lambda name: version(
-            cast("dict[str, str]", native[name][cast("str", graphics_vendor(native[name]))])[
-                "minimumDriver"
+        key=lambda name: tuple(
+            version(
+                cast(
+                    "dict[str, str]", native[name][cast("str", graphics_vendor(native[name]))]
+                ).get(field, "0")
+            )
+            for field in [
+                "minimumComputeCapability",
+                "minimumDriver",
             ]
         ),
         reverse=True,
