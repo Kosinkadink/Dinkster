@@ -1023,6 +1023,144 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
                 stop_engine(root, engine)
 
 
+def test_native_path_post_refuses_changed_execution_before_forwarding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor import environment_runtime
+
+    async def scenario() -> None:
+        roots = [tmp_path / "first", tmp_path / "second"]
+        received: list[tuple[int, bytes]] = []
+        checking, release = asyncio.Event(), asyncio.Event()
+        hold = False
+        verified = True
+        servers: list[TestServer] = []
+        for index in range(2):
+            app = make_engine(str(index))
+
+            async def project(request: web.Request) -> web.Response:
+                if hold:
+                    checking.set()
+                    await release.wait()
+                return web.json_response(
+                    {"project": {"id": "film", "revision": 1, "deleted": False}}
+                )
+
+            async def resolve(request: web.Request, recipient: int = index) -> web.Response:
+                assert request.headers["Origin"] == str(servers[recipient].make_url("").origin())
+                received.append((recipient, await request.read()))
+                return web.json_response({"recipient": recipient})
+
+            app.router.add_get("/api/projects/film", project)
+            app.router.add_post("/api/mounts/resolve-path", resolve)
+            server = TestServer(app)
+            await server.start_server()
+            servers.append(server)
+
+        def provenance(root: Path, name: str) -> dict[str, object] | None:
+            if not verified:
+                return None
+            index = roots.index(root)
+            return {
+                "installation": {"id": str(index), "root": str(root)},
+                "engine": {
+                    "name": name,
+                    "generation": 1,
+                    "instance": str(index),
+                    "url": str(servers[index].make_url("")).rstrip("/"),
+                },
+                "library": {"path": str(root / "library"), "device": 1, "inode": index},
+                "processInstance": str(index),
+            }
+
+        monkeypatch.setattr(environment_runtime, "engine_provenance", provenance)
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(servers[roots.index(target.root)].make_url("")).rstrip("/")
+
+        home = Home(installations=lambda: frozenset(roots), start=start, watch_interval=0.02)
+        try:
+            async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+
+                async def opened(index: int) -> dict:
+                    response = await client.post(
+                        "/supervisor/engine", json={"root": str(roots[index])}
+                    )
+                    assert response.status == 200
+                    await wait_for(client, lambda s: s["state"] == "ready")
+                    return await (await client.get("/supervisor/status?project=film")).json()
+
+                first = await opened(0)
+                execution = first["execution"]
+                assert execution["filesystem"]["binding"]
+                body = {"path": "/private/native/selected.txt", "project": "film", "scope": "local"}
+                origin = str(client.make_url("").origin())
+                headers = {"X-Dinkster-Execution": json.dumps(execution), "Origin": origin}
+                path = "/api/mounts/resolve-path"
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 200
+                assert await response.json() == {"recipient": 0}
+                assert [(index, json.loads(data)) for index, data in received] == [(0, body)]
+                received.clear()
+
+                await opened(1)
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 409
+                assert (await response.json())["error"] == "execution-binding-mismatch"
+                assert received == []
+                await opened(0)
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 409
+                assert received == []
+
+                current = await (await client.get("/supervisor/status?project=film")).json()
+                headers = {
+                    "X-Dinkster-Execution": json.dumps(current["execution"]),
+                    "Origin": origin,
+                }
+                hold = True
+                pending = asyncio.create_task(client.post(path, json=body, headers=headers))
+                await checking.wait()
+                response = await client.post("/supervisor/engine", json={"root": str(roots[1])})
+                assert response.status == 200
+                release.set()
+                response = await pending
+                assert response.status == 409
+                assert (await response.json())["error"] == "execution-binding-mismatch"
+                assert received == []
+
+                hold = False
+                current = await opened(1)
+                headers = {
+                    "X-Dinkster-Execution": json.dumps(current["execution"]),
+                    "Origin": origin,
+                }
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 200
+                assert await response.json() == {"recipient": 1}
+                assert [(index, json.loads(data)) for index, data in received] == [(1, body)]
+                received.clear()
+                verified = False
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 409
+                assert (await response.json())["error"] == "execution-binding-mismatch"
+                assert received == []
+
+                for supplied in (
+                    {},
+                    {"X-Dinkster-Execution": "not json"},
+                    {"X-Dinkster-Execution": "{}"},
+                ):
+                    response = await client.post(path, json=body, headers=supplied)
+                    assert response.status == 400
+                    assert received == []
+        finally:
+            for server in servers:
+                await server.close()
+
+    run_scenario(scenario())
+
+
 def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Path) -> None:
     import io
 

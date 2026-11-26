@@ -60,6 +60,12 @@ reports an unknown host and null identities/filesystem. No open, ready context
 or valid explicit project means null execution. WSL paths belong to the named
 Linux distribution, not the caller's native filesystem.
 
+``POST /api/mounts/resolve-path`` requires a single ``X-Dinkster-Execution``
+header containing the validated status ``execution`` object as JSON. Home
+revalidates it before forwarding any path bytes; missing/invalid snapshots
+return 400 and changed/unverified bindings return 409
+``execution-binding-mismatch``. This check does not grant file access.
+
 ``GET /supervisor/installations`` lists each installation's root with its
 frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
 ``selected`` and ``available``.
@@ -871,6 +877,12 @@ async def _route(request: web.Request) -> web.StreamResponse:
     home = request.app[HOME_KEY]
     if home.engine_absent and (answer := await _answer_from_library(request)):
         return answer
+    if request.method == "POST" and request.path == "/api/mounts/resolve-path":
+        refused = await _check_execution_binding(request)
+        if refused is not None:
+            return refused
+    # No suspension after binding validation: the proxy captures this selection's
+    # URL and registers for selection-change cancellation before its first await.
     origin = request.headers.get("Origin")
     if origin is not None and home.link.base_url:
         # The origin check already passed; the engine sees the request as its own page's.
@@ -978,6 +990,42 @@ async def _execution_status(request: web.Request) -> dict[str, object] | None:
         }
     except (OSError, ValueError, aiohttp.ClientError, TimeoutError):
         return None
+
+
+async def _check_execution_binding(request: web.Request) -> web.Response | None:
+    headers = request.headers.getall("X-Dinkster-Execution", [])
+    try:
+        expected: object = json.loads(headers[0]) if len(headers) == 1 else None
+    except ValueError:
+        expected = None
+    project = expected.get("project") if isinstance(expected, dict) else None
+    identifier = project.get("id") if isinstance(project, dict) else None
+    if (
+        not isinstance(identifier, str)
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", identifier) is None
+    ):
+        return web.json_response(
+            {"error": "execution-binding-invalid", "message": "A validated execution is required."},
+            status=400,
+            headers={"Cache-Control": "no-store"},
+        )
+    current = await _execution_status(
+        request.clone(rel_url=request.rel_url.with_query({"project": identifier}))
+    )
+    if (
+        current is None
+        or current["filesystem"] is None
+        or json.dumps(current, sort_keys=True) != json.dumps(expected, sort_keys=True)
+    ):
+        return web.json_response(
+            {
+                "error": "execution-binding-mismatch",
+                "message": "The selected execution no longer matches the validated binding.",
+            },
+            status=409,
+            headers={"Cache-Control": "no-store"},
+        )
+    return None
 
 
 async def _handle_status(request: web.Request) -> web.Response:
