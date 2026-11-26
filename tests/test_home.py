@@ -802,14 +802,26 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
             helper.call("projects.register", id="film", name=root.name)
 
     async def scenario() -> None:
-        home = Home(installations=lambda: frozenset(roots), watch_interval=0.05)
+        started = asyncio.Event()
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            completed = started
+            try:
+                return await home_module.start_managed_engine(target, found)
+            finally:
+                completed.set()
+
+        home = Home(installations=lambda: frozenset(roots), start=start, watch_interval=0.05)
         async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
 
             async def opened(root: Path, engine: str = "main") -> dict:
+                nonlocal started
+                started = asyncio.Event()
                 response = await client.post(
                     "/supervisor/engine", json={"root": str(root), "engine": engine}
                 )
                 assert response.status == 200
+                await started.wait()
                 status = await wait_for(client, lambda s: s["state"] != "starting")
                 assert status["state"] == "ready", status
                 return await (await client.get("/supervisor/status?project=film")).json()
