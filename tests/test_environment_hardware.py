@@ -67,14 +67,18 @@ def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
             "memoryMiB": 8192,
         }
     ]
+    cards.append({**cards[0], "id": "1", "name": "Second NVIDIA card"})
     assert hardware.supported_builds(manifests, cards) == expected
     selection = hardware.hardware_selection(manifests, cards)
     choices = selection["choices"]
     assert isinstance(choices, list)
     assert [choice["variant"] for choice in choices] == expected
+    assert [choice["gpus"] for choice in choices] == [
+        ["0", "1"] if "nvidia" in name else [] for name in expected
+    ]
     assert selection["variant"] == (expected[0] if expected else None)
     assert selection["detectedCards"] == cards
-    assert selection["gpus"] == (["0"] if expected and "nvidia" in expected[0] else [])
+    assert selection["gpus"] == (["0", "1"] if expected and "nvidia" in expected[0] else [])
     assert (selection["refusal"] is None) == bool(expected)
     if expected:
         assert selection["buildLabel"] and selection["buildReason"]
@@ -104,9 +108,14 @@ def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
             minimum = "560.76" if choice["variant"] == "win-nvidia-cu126" else "580.82"
             assert choice["reason"] == f"Needs NVIDIA driver {minimum} or newer."
         assert selection["buildReason"] == choices[0]["reason"]
-        assigned = hardware.hardware_selection(manifests, cards, assigned=("0",))
-        assert assigned["choices"] == choices and assigned["variant"] == expected[0]
-        assert assigned["gpus"] == ["0"]
+        assigned = hardware.hardware_selection(manifests, cards, assigned=("1",))
+        assigned_choices = assigned["choices"]
+        assert isinstance(assigned_choices, list)
+        assert [choice["variant"] for choice in assigned_choices] == expected
+        assert [choice["gpus"] for choice in assigned_choices] == [
+            ["1"] if "nvidia" in name else [] for name in expected
+        ]
+        assert assigned["variant"] == expected[0] and assigned["gpus"] == ["1"]
         missing = hardware.hardware_selection(manifests, cards, assigned=("missing",))
         assert missing["variant"] is None and missing["choices"] == []
         assert missing["gpus"] == [] and missing["refusal"] is not None
@@ -115,6 +124,13 @@ def test_build_selection_recommends_supported_graphics_and_offers_cpu_last(
         assert cpu["choices"] == choices and cpu["refusal"] is None
         assert cpu["buildLabel"] == choices[-1]["label"]
         assert cpu["buildReason"] == choices[-1]["reason"]
+        if expected == ["win-nvidia", "win-nvidia-cu126", "win-cpu"]:
+            mixed = hardware.hardware_selection(
+                manifests, [{**cards[0], "computeCapability": "12.0"}, cards[1]]
+            )
+            mixed_choices = mixed["choices"]
+            assert isinstance(mixed_choices, list)
+            assert [choice["gpus"] for choice in mixed_choices] == [["0", "1"], ["1"], []]
     with pytest.raises(ValueError, match="not supported"):
         hardware.hardware_selection(manifests, cards, requested="foreign-build")
 

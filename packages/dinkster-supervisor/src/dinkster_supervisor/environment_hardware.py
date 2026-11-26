@@ -231,6 +231,14 @@ def hardware_selection(
     if requested is not None and requested not in builds:
         raise ValueError("That build is not supported on this computer.")
     variant = requested or (builds[0] if builds else None)
+    assignments = {
+        name: [
+            card["id"]
+            for card in supported_cards(manifests[name], cards)
+            if not assigned or card["id"] in assigned
+        ]
+        for name in builds
+    }
     return {
         "detectedCards": cards,
         "choices": [
@@ -238,19 +246,14 @@ def hardware_selection(
                 "variant": name,
                 "label": build_label(name),
                 "reason": build_reason(manifests[name]),
+                "gpus": assignments[name],
             }
             for name in builds
         ],
         "variant": variant,
         "buildLabel": build_label(variant) if variant is not None else None,
         "buildReason": build_reason(manifests[variant]) if variant is not None else None,
-        "gpus": [
-            card["id"]
-            for card in supported_cards(manifests[variant], cards)
-            if not assigned or card["id"] in assigned
-        ]
-        if variant is not None
-        else [],
+        "gpus": assignments[variant] if variant is not None else [],
         "refusal": None
         if builds
         else {
