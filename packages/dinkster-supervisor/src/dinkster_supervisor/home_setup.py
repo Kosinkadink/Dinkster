@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import shutil
 import socket
@@ -20,7 +21,14 @@ from .environment_hardware import (
     detect_graphics_cards,
     hardware_selection,
 )
-from .environment_state import dinkster_home, library_engine, read_document, shared_library
+from .environment_state import (
+    Journal,
+    content_digest,
+    dinkster_home,
+    library_engine,
+    read_document,
+    shared_library,
+)
 
 RELEASE_MIRROR = "https://releases.dinkster.org"
 
@@ -67,7 +75,55 @@ async def environment_command(root: Path, *arguments: str) -> dict[str, object]:
     return result
 
 
-def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, object]:
+def _cancelled_setup_identity(root: Path) -> str | None:
+    """Identify only the unchanged files left by a completed cancellation."""
+    try:
+        if root.is_symlink() or root.is_junction():
+            return None
+        children = {path.name for path in root.iterdir()}
+        if children - {".lock", "journal", "builds", "runtime", "engine-state", "environment-id"}:
+            return None
+        identity = hashlib.sha256()
+        pending = [root]
+        while pending:
+            path = pending.pop()
+            if path.is_symlink() or path.is_junction():
+                return None
+            info = path.stat()
+            if path.is_dir():
+                pending.extend(sorted(path.iterdir()))
+                content = None
+            elif path.is_file():
+                content = content_digest(path)
+            else:
+                return None
+            identity.update(
+                json.dumps(
+                    [str(path.relative_to(root)), info.st_dev, info.st_ino, content]
+                ).encode()
+            )
+        if (root / "builds").exists() and any((root / "builds").iterdir()):
+            return None
+        journals = list((root / "journal").glob("*"))
+        if not journals and children - {".lock"}:
+            return None
+        for path in journals:
+            journal = Journal.read(path)
+            if (
+                journal.operation != "setup"
+                or journal.previous is not None
+                or journal.stage != "rolled-back"
+                or journal.error not in {"setup cancelled", "pack preparation cancelled"}
+            ):
+                return None
+        return identity.hexdigest()
+    except (OSError, ValueError):
+        return None
+
+
+def setup_facts(
+    root: Path, channel: str, requested: str | None, *, cancelled: bool = False
+) -> dict[str, object]:
     if not root.is_absolute():
         raise SetupRefused("invalid-root", "Choose an absolute installation folder.")
     parent = root
@@ -75,7 +131,11 @@ def setup_facts(root: Path, channel: str, requested: str | None) -> dict[str, ob
         parent = parent.parent
     free = shutil.disk_usage(parent).free
     refusal = library_refusal()
-    if root.is_symlink() or (root.exists() and (not root.is_dir() or any(root.iterdir()))):
+    if (
+        root.is_symlink()
+        or root.is_junction()
+        or (root.exists() and (not root.is_dir() or (not cancelled and any(root.iterdir()))))
+    ):
         refusal = {"code": "invalid-root", "message": "Choose a new or empty installation folder."}
     facts: dict[str, object] = {
         "root": str(root.resolve()),
@@ -133,6 +193,7 @@ class SetupJobs:
         self._pack_identities: dict[str, str | None] = {}
         self._jobs: dict[str, dict[str, object]] = {}
         self._running_plan: dict[str, object] | None = None
+        self._cancelled_roots: dict[Path, str] = {}
         self._task: asyncio.Task[None] | None = None
         self._progress: Path | None = None
         self._lock = asyncio.Lock()
@@ -157,7 +218,13 @@ class SetupJobs:
             and variant in (None, self._running_plan["variant"])
         ):
             return self._running_plan
-        facts = await asyncio.to_thread(setup_facts, root, channel, variant)
+        identity = self._cancelled_roots.get(root.resolve())
+        if identity is not None and identity == await asyncio.to_thread(
+            _cancelled_setup_identity, root
+        ):
+            facts = await asyncio.to_thread(setup_facts, root, channel, variant, cancelled=True)
+        else:
+            facts = await asyncio.to_thread(setup_facts, root, channel, variant)
         pack_identity = None
         if facts["engineRelease"] is not None:
             try:
@@ -247,6 +314,7 @@ class SetupJobs:
                 del self._jobs[next(iter(self._jobs))]
             self._progress = dinkster_home() / "setup-jobs" / f"{job_id}.json"
             self._running_plan = facts
+            self._cancelled_roots.pop(Path(cast("str", facts["root"])), None)
             self._task = asyncio.create_task(
                 self._run(job, facts, self._progress, previous_identity)
             )
@@ -291,6 +359,11 @@ class SetupJobs:
                 "--yes",
             )
             if result["status"] == "cancelled":
+                identity = await asyncio.to_thread(_cancelled_setup_identity, root)
+                if identity is not None:
+                    self._cancelled_roots[root] = identity
+                    while len(self._cancelled_roots) > 16:
+                        del self._cancelled_roots[next(iter(self._cancelled_roots))]
                 job["state"] = "cancelled"
             else:
                 await self._completed(root)
