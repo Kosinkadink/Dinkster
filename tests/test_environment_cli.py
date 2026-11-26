@@ -2210,6 +2210,101 @@ def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
     assert not root.exists()
 
 
+@pytest.mark.parametrize("system", ["linux", "win32"])
+@pytest.mark.parametrize("vendor", ["amd", "intel"])
+def test_catalog_recommends_only_the_matching_graphics_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    system: str,
+    vendor: str,
+) -> None:
+    import copy
+
+    from dinkster_supervisor import environment, environment_hardware
+
+    mirror, root = tmp_path / "mirror", tmp_path / "prospective"
+    os_name = "windows" if system == "win32" else "linux"
+    base, _, channel = _mirror(mirror, target=(os_name, "x86_64"))
+    paths = {}
+    for name, brand in [("amd", "AMD"), ("intel", "Intel")]:
+        variant = "fixture-" + name
+        document = copy.deepcopy(base)
+        document.update(
+            variant=variant,
+            displayName=f"{brand} graphics",
+            **{name: {"minimumDriver": "31.2"}},
+        )
+        payload = {key: value for key, value in document.items() if key not in {"id", "signature"}}
+        payload["archive"] = {"format": "tar+zstd"}
+        identity = hashlib.sha256(_json(payload)).hexdigest()
+        document["id"] = "sha256:" + identity
+        path = mirror / f"base/{variant}/{identity}/manifest.json"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(_json(document))
+        paths[name] = path
+        channel["base"][variant] = {
+            "id": document["id"],
+            "locations": [{"type": "mirror", "path": path.relative_to(mirror).as_posix()}],
+        }
+    (mirror / "channels/nightly.json").write_bytes(_channel_json(channel, "nightly"))
+    # Do not replace sys.platform globally: pathlib and the public CLI still run on the host.
+    monkeypatch.setattr(environment_hardware, "sys", SimpleNamespace(platform=system))
+    monkeypatch.setattr(environment_hardware.platform, "machine", lambda: "x86_64")
+    cards = [
+        {
+            "id": "7",
+            "name": f"{vendor} card",
+            "vendor": vendor,
+            "driver": "31.2",
+            "computeCapability": None,
+            "memoryMiB": 8192,
+        }
+    ]
+    monkeypatch.setattr(environment, "detect_graphics_cards", lambda: cards)
+    args = environment.argument_parser().parse_args(
+        [
+            "--root",
+            str(root),
+            "catalog",
+            "--channel",
+            "nightly",
+            "--mirror",
+            str(mirror),
+            "--hardware",
+            "--json",
+        ]
+    )
+
+    def catalog() -> dict:
+        assert environment.run(args) == 0
+        return json.loads(capsys.readouterr().out)["hardware"]
+
+    result = catalog()
+    brand = "AMD" if vendor == "amd" else "Intel"
+    assert result["variant"] == "fixture-" + vendor
+    assert result["buildLabel"] == f"{brand} graphics"
+    assert result["buildReason"] == f"Needs {brand} driver 31.2 or newer."
+    assert result["gpus"] == ["7"]
+    assert [choice["variant"] for choice in result["choices"]] == [
+        "fixture-" + vendor,
+        "fixture-cpu",
+    ]
+    assert result["choices"][1]["gpus"] == []
+    cards[0]["driver"] = "31.1"
+    assert catalog()["variant"] == "fixture-cpu"
+    cards.clear()
+    assert [choice["variant"] for choice in catalog()["choices"]] == ["fixture-cpu"]
+    assert not root.exists()
+
+    # Changing hardware policy without changing its signed identity must be refused.
+    document = json.loads(paths[vendor].read_bytes())
+    document[vendor]["minimumDriver"] = "1"
+    paths[vendor].write_bytes(_json(document))
+    assert environment.run(args) == 1
+    assert "intact expected artifact manifest" in json.loads(capsys.readouterr().out)["error"]
+
+
 def test_setup_plan_labels_cached_channel_without_mutating_project_or_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

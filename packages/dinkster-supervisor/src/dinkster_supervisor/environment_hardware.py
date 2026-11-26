@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import NotRequired, TypedDict, cast
 
 
 class GraphicsCard(TypedDict):
@@ -20,6 +20,8 @@ class GraphicsCard(TypedDict):
     driver: str | None
     computeCapability: str | None
     memoryMiB: int | None
+    vendor: NotRequired[str]
+    detectionError: NotRequired[str]
 
 
 def detect_graphics_cards() -> list[GraphicsCard] | None:
@@ -136,19 +138,31 @@ def version(value: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
+def graphics_vendor(base: dict[str, object]) -> str | None:
+    return next((vendor for vendor in ("nvidia", "amd", "intel") if base.get(vendor)), None)
+
+
 def supported_cards(base: dict[str, object], cards: list[GraphicsCard]) -> list[GraphicsCard]:
-    limits = cast("dict[str, str | None] | None", base["nvidia"])
-    if limits is None:
+    vendor = graphics_vendor(base)
+    if vendor is None:
         return []
-    maximum = limits["maximumExclusiveComputeCapability"]
+    limits = cast("dict[str, str | None]", base[vendor])
+    maximum = limits.get("maximumExclusiveComputeCapability")
     return [
         card
         for card in cards
-        if (driver := card["driver"]) is not None
-        and (capability := card["computeCapability"]) is not None
+        if card.get("vendor", "nvidia") == vendor
+        and not card.get("detectionError")
+        and (driver := card["driver"]) is not None
         and version(driver) >= version(cast("str", limits["minimumDriver"]))
-        and version(capability) >= version(cast("str", limits["minimumComputeCapability"]))
-        and (maximum is None or version(capability) < version(maximum))
+        and (
+            vendor != "nvidia"
+            or (
+                (capability := card["computeCapability"]) is not None
+                and version(capability) >= version(cast("str", limits["minimumComputeCapability"]))
+                and (maximum is None or version(capability) < version(maximum))
+            )
+        )
     ]
 
 
@@ -164,23 +178,34 @@ def supported_builds(
         if base["platform"] == {"os": os_name, "arch": arch}
     }
     gpu = [name for name, base in native.items() if supported_cards(base, cards)]
-    return sorted(
-        gpu,
+    gpu.sort(
         key=lambda name: version(
-            cast("dict[str, str]", native[name]["nvidia"])["minimumComputeCapability"]
+            cast("dict[str, str]", native[name][cast("str", graphics_vendor(native[name]))])[
+                "minimumDriver"
+            ]
         ),
         reverse=True,
-    ) + sorted(name for name, base in native.items() if base["nvidia"] is None)
+    )
+    gpu.sort(
+        key=lambda name: next(
+            index
+            for index, card in enumerate(cards)
+            if card.get("vendor", "nvidia") == graphics_vendor(native[name])
+        )
+    )
+    return gpu + [name for name, base in native.items() if graphics_vendor(base) is None]
 
 
 def build_reason(base: dict[str, object]) -> str:
-    limits = cast("dict[str, str | None] | None", base["nvidia"])
-    if limits is None:
+    vendor = graphics_vendor(base)
+    if vendor is None:
         if cast("dict[str, str]", base["platform"])["os"] == "macos":
             return "Uses the graphics built into this Mac."
         return "Does not use the graphics card and is much slower."
+    limits = cast("dict[str, str | None]", base[vendor])
     minimum = ".".join(str(part) for part in version(cast("str", limits["minimumDriver"])))
-    return f"Needs NVIDIA driver {minimum} or newer."
+    brand = {"nvidia": "NVIDIA", "amd": "AMD", "intel": "Intel"}[vendor]
+    return f"Needs {brand} driver {minimum} or newer."
 
 
 def build_label(variant: str) -> str:
@@ -217,16 +242,16 @@ def hardware_selection(
         }
     builds = supported_builds(manifests, cards)
     if assigned:
-        gpu_default = bool(builds and manifests[builds[0]]["nvidia"] is not None)
+        gpu_default = bool(builds and graphics_vendor(manifests[builds[0]]) is not None)
         builds = [
             name
             for name in builds
-            if manifests[name]["nvidia"] is None
+            if graphics_vendor(manifests[name]) is None
             or set(assigned).issubset(
                 card["id"] for card in supported_cards(manifests[name], cards)
             )
         ]
-        if gpu_default and not any(manifests[name]["nvidia"] is not None for name in builds):
+        if gpu_default and not any(graphics_vendor(manifests[name]) is not None for name in builds):
             builds = []
     if requested is not None and requested not in builds:
         raise ValueError("That build is not supported on this computer.")
@@ -244,14 +269,16 @@ def hardware_selection(
         "choices": [
             {
                 "variant": name,
-                "label": build_label(name),
+                "label": manifests[name].get("displayName", build_label(name)),
                 "reason": build_reason(manifests[name]),
                 "gpus": assignments[name],
             }
             for name in builds
         ],
         "variant": variant,
-        "buildLabel": build_label(variant) if variant is not None else None,
+        "buildLabel": manifests[variant].get("displayName", build_label(variant))
+        if variant is not None
+        else None,
         "buildReason": build_reason(manifests[variant]) if variant is not None else None,
         "gpus": assignments[variant] if variant is not None else [],
         "refusal": None

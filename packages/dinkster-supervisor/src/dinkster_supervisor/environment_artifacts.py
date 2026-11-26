@@ -200,6 +200,33 @@ def validate_manifest(
             payload = {key: document[key] for key in _BASE_IDENTITY}
         except KeyError as exc:
             raise EnvironmentError("base manifest identity fields are missing") from exc
+        for key in ("amd", "intel", "displayName"):
+            if key in document:
+                payload[key] = document[key]
+        requirements = [document.get(vendor) for vendor in ("nvidia", "amd", "intel")]
+        if sum(requirement is not None for requirement in requirements) > 1:
+            raise EnvironmentError("a base must require at most one graphics vendor")
+        for vendor in ("amd", "intel"):
+            requirement = document.get(vendor)
+            if requirement is None:
+                continue
+            if not isinstance(requirement, dict):
+                raise EnvironmentError(f"invalid {vendor} base requirement")
+            requirement = cast("dict[str, object]", requirement)
+            minimum = requirement.get("minimumDriver")
+            if (
+                set(requirement) != {"minimumDriver"}
+                or not isinstance(minimum, str)
+                or re.fullmatch(r"\d+(?:\.\d+)*", minimum) is None
+            ):
+                raise EnvironmentError(f"invalid {vendor} minimum driver")
+            label = document.get("displayName")
+            if not isinstance(label, str) or not label.strip():
+                raise EnvironmentError("graphics base requires a displayName")
+        if "displayName" in document and (
+            not isinstance(document["displayName"], str) or not document["displayName"].strip()
+        ):
+            raise EnvironmentError("base displayName must be nonempty text")
         raw_archive = document.get("archive")
         if not isinstance(raw_archive, dict):
             raise EnvironmentError("unsupported base archive format")
