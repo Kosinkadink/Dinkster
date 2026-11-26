@@ -50,6 +50,7 @@ class ProjectFolders:
         self._projects: dict[str, list[str]] = {}
         self._excluded: dict[str, list[str]] = {}
         self._outputs: dict[str, str | None] = {}
+        self._inputs: dict[str, str] = {}
         self._hidden_models: dict[str, list[HiddenModelPreference]] = {}
         self._initialized = self._path is not None and self._path.exists()
         if self._helper is not None:
@@ -68,6 +69,7 @@ class ProjectFolders:
         self._projects = {}
         self._excluded = {}
         self._outputs = {}
+        self._inputs = {}
         self._hidden_models = {}
         try:
             if (
@@ -75,10 +77,7 @@ class ProjectFolders:
                 or not {"version", "shared", "projects", "excluded", "outputs"} <= set(raw)
                 or self._helper is None
                 and set(raw)
-                not in (
-                    {"version", "shared", "projects", "excluded", "outputs"},
-                    {"version", "shared", "projects", "excluded", "outputs", "hiddenModels"},
-                )
+                - {"version", "shared", "projects", "excluded", "outputs", "inputs", "hiddenModels"}
                 or raw["version"] != 1
             ):
                 raise ValueError("invalid project folders document")
@@ -96,6 +95,13 @@ class ProjectFolders:
                 if mount_id is not None:
                     self._mount_ids([mount_id])
                 self._outputs[project] = mount_id
+            inputs = raw.get("inputs", {})
+            if not isinstance(inputs, dict):
+                raise ValueError("inputs must be an object")
+            for project, mount_id in inputs.items():
+                self.validate_project(project)
+                self._mount_ids([mount_id])
+                self._inputs[project] = mount_id
             hidden = raw.get("hiddenModels", {})
             if not isinstance(hidden, dict):
                 raise ValueError("hidden models must be an object")
@@ -128,9 +134,14 @@ class ProjectFolders:
             ):
                 self._persist(self._state())
         except (OSError, UnicodeError, ValueError, MountsError) as exc:
-            (self._shared, self._projects, self._excluded, self._outputs, self._hidden_models) = (
-                previous
-            )
+            (
+                self._shared,
+                self._projects,
+                self._excluded,
+                self._outputs,
+                self._inputs,
+                self._hidden_models,
+            ) = previous
             raise MountsError(f"cannot load project asset folders: {exc}") from exc
 
     def _sync(self) -> None:
@@ -210,6 +221,11 @@ class ProjectFolders:
         self.validate_project(project)
         return self._outputs.get(project, fallback)
 
+    def input(self, project: str, fallback: str | None) -> str | None:
+        self._sync()
+        self.validate_project(project)
+        return self._inputs.get(project, fallback)
+
     @property
     def grants(self) -> MountConfiguration:
         self._sync()
@@ -251,6 +267,7 @@ class ProjectFolders:
             for owner, ids in memberships.items():
                 memberships[owner] = [item for item in ids if item != mount_id]
         self._outputs = {key: value for key, value in self._outputs.items() if value != mount_id}
+        self._inputs = {key: value for key, value in self._inputs.items() if value != mount_id}
         if shared:
             self._shared.append(mount_id)
         else:
@@ -306,6 +323,7 @@ class ProjectFolders:
         *,
         available: tuple[str, ...],
         output: str | None,
+        input_mount: str | None = None,
         required: tuple[str, ...] = (),
         groups: tuple[tuple[str, ...], ...] = (),
         grant_revision: int | None = None,
@@ -330,12 +348,17 @@ class ProjectFolders:
             raise MountsError("project refers to an unknown mount")
         if output is not None and output not in ordered:
             raise MountsError("project output must be included in its folders")
+        selected_input = input_mount if input_mount is not None else self._inputs.get(project)
+        if selected_input is not None and selected_input not in ordered:
+            raise MountsError("select an enabled input folder for the project")
         if preserve_output and output is None and self._outputs.get(project) is not None:
             raise MountsError("select a replacement output folder for the project")
         state = self._state()
         self._projects[project] = ordered
         self._excluded[project] = [mount_id for mount_id in self._shared if mount_id not in ordered]
         self._outputs[project] = output
+        if selected_input is not None:
+            self._inputs[project] = selected_input
         self._persist(state)
 
     def hidden_models(self, project: str) -> tuple[str, ...]:
@@ -383,6 +406,7 @@ class ProjectFolders:
         dict[str, list[str]],
         dict[str, list[str]],
         dict[str, str | None],
+        dict[str, str],
         dict[str, list[HiddenModelPreference]],
     ]:
         return (
@@ -390,6 +414,7 @@ class ProjectFolders:
             {key: list(value) for key, value in self._projects.items()},
             {key: list(value) for key, value in self._excluded.items()},
             dict(self._outputs),
+            dict(self._inputs),
             {key: list(value) for key, value in self._hidden_models.items()},
         )
 
@@ -400,6 +425,7 @@ class ProjectFolders:
             dict[str, list[str]],
             dict[str, list[str]],
             dict[str, str | None],
+            dict[str, str],
             dict[str, list[HiddenModelPreference]],
         ],
         *,
@@ -412,6 +438,7 @@ class ProjectFolders:
                 "projects": self._projects,
                 "excluded": self._excluded,
                 "outputs": self._outputs,
+                "inputs": self._inputs,
                 "hiddenModels": {
                     project: [row.to_wire() for row in rows]
                     for project, rows in self._hidden_models.items()
@@ -477,6 +504,7 @@ class ProjectFolders:
                     self._projects,
                     self._excluded,
                     self._outputs,
+                    self._inputs,
                     self._hidden_models,
                 ) = previous
                 raise MountsError(f"cannot save project asset folders: {exc}") from exc
@@ -503,6 +531,7 @@ class ProjectFolders:
                         "excluded": self._excluded,
                         "outputs": self._outputs,
                         # Releases through 0.0.14 reject even an empty unknown field.
+                        **({"inputs": self._inputs} if self._inputs else {}),
                         **({"hiddenModels": hidden_models} if hidden_models else {}),
                     },
                     file,
@@ -514,9 +543,14 @@ class ProjectFolders:
                 os.fsync(file.fileno())
             os.replace(temporary, self._path)
         except OSError:
-            (self._shared, self._projects, self._excluded, self._outputs, self._hidden_models) = (
-                previous
-            )
+            (
+                self._shared,
+                self._projects,
+                self._excluded,
+                self._outputs,
+                self._inputs,
+                self._hidden_models,
+            ) = previous
             raise
         finally:
             if temporary is not None:

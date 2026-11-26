@@ -2049,6 +2049,116 @@ def test_operator_default_import_destination_matches_upload_and_survives_revocat
     run_scenario(scenario())
 
 
+def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path) -> None:
+    from dinkster_assets import MountConfiguration
+    from dinkster_library import LibraryClient
+    from dinkster_server.projects import add_project_routes
+
+    root = tmp_path / "library"
+    mounts = tuple(
+        MountDef(name, tmp_path / name, "read" if name == "reference" else "readwrite")
+        for name in ("film-input", "portrait-input", "imports", "renders", "reference")
+    )
+    for mount in mounts:
+        mount.path.mkdir()
+
+    async def scenario() -> None:
+        for restarted in (False, True):
+            with LibraryClient(root) as helper:
+                if not restarted:
+                    MountConfiguration.load(helper).save(mounts, output_mount="renders")
+                table = MountTable()
+                service = MountService(table, library=helper, allow_changes=True)
+                for mount in mounts:
+                    table.scan(mount.id)
+                library = ServerLibrary(
+                    vault=AssetVault(root / "vault"),
+                    store=LibraryStore(helper),
+                    local_resolver=table,
+                    project_folders_for=service.project_context,
+                    upload_writer=AssetWriter(table),
+                    import_mount=lambda project, folders=service.projects: (
+                        folders.input(project, "imports") or "imports"
+                    ),
+                )
+                app = create_app(make_engine, SCHEMAS, library=library)
+                add_project_routes(app, helper, engine_version="0.0.18")
+                add_mount_routes(app, service)
+                async with TestClient(TestServer(app)) as client:
+                    if not restarted:
+                        for project in ("film", "portrait"):
+                            assert (
+                                await client.post("/api/projects", json={"id": project})
+                            ).status == 200
+                            response = await client.put(
+                                f"/api/mounts/projects/{project}",
+                                json={
+                                    "mounts": [f"{project}-input", "renders"],
+                                    "outputMount": "renders",
+                                    "inputMount": f"{project}-input",
+                                },
+                            )
+                            assert response.status == 200, await response.text()
+                            response = await client.post(
+                                "/api/assets",
+                                params={"scope": "local", "project": project, "name": "source.txt"},
+                                data=project.encode(),
+                            )
+                            assert response.status == 201, await response.text()
+                            assert (
+                                tmp_path / f"{project}-input" / "source.txt"
+                            ).read_bytes() == project.encode()
+                        for destination in ("reference", "unknown", "portrait-input"):
+                            response = await client.put(
+                                "/api/mounts/projects/film",
+                                json={
+                                    "mounts": ["film-input", "renders", "reference"],
+                                    "outputMount": "renders",
+                                    "inputMount": destination,
+                                },
+                            )
+                            assert response.status == 400, await response.text()
+                    else:
+                        for project in ("film", "portrait"):
+                            locations = await (
+                                await client.get(
+                                    "/api/mounts/locations", params={"project": project}
+                                )
+                            ).json()
+                            assert locations["importMount"] == f"{project}-input"
+                        response = await client.put(
+                            "/api/mounts/projects/portrait",
+                            json={
+                                "mounts": ["film-input", "renders"],
+                                "outputMount": "renders",
+                                "inputMount": "film-input",
+                            },
+                        )
+                        assert response.status == 200, await response.text()
+                        response = await client.post(
+                            "/api/assets",
+                            params={"scope": "local", "project": "portrait", "name": "source.txt"},
+                            data=b"portrait",
+                        )
+                        assert response.status == 201, await response.text()
+                        assert (
+                            tmp_path / "film-input" / "source_00001.txt"
+                        ).read_bytes() == b"portrait"
+                        assert (tmp_path / "film-input" / "source.txt").read_bytes() == b"film"
+                        assert (await client.delete("/api/mounts/film-input")).status == 200
+                        response = await client.post(
+                            "/api/assets",
+                            params={"scope": "local", "project": "portrait", "name": "refused.txt"},
+                            data=b"refused",
+                        )
+                        assert response.status == 403, await response.text()
+                        assert not (tmp_path / "imports" / "refused.txt").exists()
+                        assert not (tmp_path / "renders" / "refused.txt").exists()
+                await service.close()
+
+    run_scenario(scenario())
+
+
 def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) -> None:
     table = MountTable()
     seed(tmp_path / "imports", {"first.bin": b"first", "other.bin": b"other"})

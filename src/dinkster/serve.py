@@ -2488,7 +2488,13 @@ def _serve(
                 local_resolver=(mount_service.table if mount_service is not None else None),
                 project_folders_for=(mount_service.project_context if mount_service else None),
                 upload_writer=AssetWriter(mount_service.table) if mount_service else None,
-                import_mount=import_mount,
+                import_mount=(
+                    lambda project: (
+                        (mount_service.projects.input(project, import_mount) or import_mount)
+                        if mount_service
+                        else import_mount
+                    )
+                ),
                 acquire_model=model_downloads.acquire if model_downloads else None,
                 model_destination=model_downloads.destination if model_downloads else None,
                 model_sources_for_name=TemplateModelSources().for_name,
