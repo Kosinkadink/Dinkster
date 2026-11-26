@@ -404,20 +404,61 @@ def test_render_endpoint_persists_output_and_provenance_cache(tmp_path: Path) ->
             assert library.store.get_derivation(first["cacheKey"]) == first["provenance"]
             with library.store.hold_asset_references() as roots:
                 assert roots == {source_digest, document_digest, first["asset"]["digest"]}
+            other_upload = await client.post(
+                "/api/assets/media?scope=other&kind=media/image&name=source.png",
+                data=source,
+                headers={"Content-Type": "image/png"},
+            )
+            assert other_upload.status == 201
+            for headers in ({}, {"If-None-Match": f'"{document_digest}"'}):
+                dependencies = await client.get(
+                    f"/api/assets/{document_digest}/dependencies?scope=other", headers=headers
+                )
+                assert dependencies.status == 404
             wrong_scope = await client.post(
                 f"/api/assets/{document_digest}/render?scope=other",
                 json={"selector": "composite"},
             )
-            assert wrong_scope.status == 409
-            assert (await wrong_scope.json())["error"]["code"] == (
-                "asset.image_document.dependency_missing"
+            assert wrong_scope.status == 404
+            denied_output = await client.get(f"/api/assets/{first['asset']['digest']}?scope=other")
+            assert denied_output.status == 404
+            other_adoption = await client.post(
+                "/api/assets/image-document?scope=other",
+                data=body,
+                headers={"Content-Type": MEDIA_TYPE},
             )
+            assert other_adoption.status == 201
+            dependencies = await client.get(
+                f"/api/assets/{document_digest}/dependencies?scope=other"
+            )
+            assert dependencies.status == 200
+            assert (await dependencies.json())["dependencies"] == (await other_adoption.json())[
+                "dependencies"
+            ]
+            other_render = await client.post(
+                f"/api/assets/{document_digest}/render?scope=other", json={}
+            )
+            assert other_render.status == 200
+            assert (await other_render.json())["asset"] == first["asset"]
+            granted_output = await client.get(f"/api/assets/{first['asset']['digest']}?scope=other")
+            assert granted_output.status == 200
+            assert digest_bytes(await granted_output.read()) == first["asset"]["digest"]
             with sqlite3.connect(tmp_path / "library.sqlite") as connection:
                 connection.execute("UPDATE asset_derivations SET asset_digests = 'broken'")
             corrupt = await client.post(
                 f"/api/assets/{document_digest}/render?scope=local", json={}
             )
             assert corrupt.status == 503
+            library.vault.delete(document_digest)
+            missing_parent = await client.get(
+                f"/api/assets/{document_digest}/dependencies?scope=local",
+                headers={"If-None-Match": f'"{document_digest}"'},
+            )
+            assert missing_parent.status == 404
+            missing_render = await client.post(
+                f"/api/assets/{document_digest}/render?scope=local", json={}
+            )
+            assert missing_render.status == 404
         finally:
             await client.close()
 

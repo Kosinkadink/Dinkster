@@ -50,6 +50,7 @@ from .library import (
     DIGEST_HEADER,
     LIBRARY_KEY,
     ServerLibrary,
+    require_asset_read,
     run_media_publication,
     run_owned_thread,
 )
@@ -373,20 +374,26 @@ async def handle_dependencies(request: web.Request) -> web.Response:
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _error(400, "invalid_digest", "digest is not canonical")
+    await require_asset_read(request, digest)
+    library = request.app[LIBRARY_KEY]
+    if await asyncio.to_thread(library.locate, digest) is None:
+        return _error(404, "not_held", "image document is not held")
     try:
-        dependencies = await asyncio.to_thread(
-            request.app[LIBRARY_KEY].store.get_dependencies, digest
-        )
+        dependencies = await asyncio.to_thread(library.store.get_dependencies, digest)
     except (AssetError, ValueError, sqlite3.Error):
         return _error(503, "storage_unavailable", "dependency manifest storage is unavailable")
     if dependencies is None:
         return _error(404, "not_adopted", "asset has no adopted dependency manifest")
     etag = f'"{digest}"'
     if any(tag.value in (digest, "*") for tag in (request.if_none_match or ())):
-        return web.Response(status=304, headers={"ETag": etag})
+        return web.Response(status=304, headers={"ETag": etag, "Vary": "Authorization"})
     return web.json_response(
         {"digest": digest, "dependencies": dependencies},
-        headers={"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"},
+        headers={
+            "ETag": etag,
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "Vary": "Authorization",
+        },
     )
 
 
@@ -494,6 +501,10 @@ async def handle_render(request: web.Request) -> web.Response:
     document_digest = request.match_info["digest"]
     if not is_digest(document_digest):
         return _error(400, "invalid_digest", "digest is not canonical")
+    await require_asset_read(request, document_digest, scope=scope)
+    library = request.app[LIBRARY_KEY]
+    if await asyncio.to_thread(library.locate, document_digest) is None:
+        return _error(404, "not_held", "image document is not held")
     try:
         body: object = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
@@ -511,7 +522,6 @@ async def handle_render(request: web.Request) -> web.Response:
         parse_selector(selector_text)
     except InvalidDocument as error:
         return _error(400, "invalid_selector", str(error))
-    library = request.app[LIBRARY_KEY]
     cache_key, contract = _render_cache_key(document_digest, selector_text)
     ownership = ExitStack()
     try:
