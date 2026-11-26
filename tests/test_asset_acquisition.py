@@ -449,7 +449,12 @@ class ModelSize(AssetSize):
         return NodeSchema(
             node_type="test.model.size",
             body=(
-                Input("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),
+                Input(
+                    "asset",
+                    ASSET,
+                    default=AssetRef(MODEL_DIGEST, "model.bin", len(MODEL_BYTES)).to_wire(),
+                    widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT),
+                ),
                 Output("bytes", INT),
             ),
         )
@@ -637,7 +642,10 @@ def test_submit_bare_model_name_before_mount_hashing(tmp_path: Path, present: bo
 
 
 @pytest.mark.parametrize("declared", [False, True], ids=["model-input", "declared-model"])
-def test_submit_model_consent_does_not_download(tmp_path: Path, declared: bool) -> None:
+@pytest.mark.parametrize("default", [False, True], ids=["explicit", "default"])
+def test_submit_model_consent_does_not_download(
+    tmp_path: Path, declared: bool, default: bool
+) -> None:
     async def scenario() -> None:
         hits: list[str] = []
         host = TestServer(make_asset_host({"model": MODEL_BYTES}, hits))
@@ -660,8 +668,10 @@ def test_submit_model_consent_does_not_download(tmp_path: Path, declared: bool) 
             graph = Graph(
                 {
                     "s": GraphNode(
-                        "test.asset.size" if declared else "test.model.size",
-                        {"asset": asset_literal(MODEL_DIGEST, "model.bin", len(MODEL_BYTES))},
+                        "test.model.size",
+                        {}
+                        if default
+                        else {"asset": asset_literal(MODEL_DIGEST, "model.bin", len(MODEL_BYTES))},
                     )
                 }
             )

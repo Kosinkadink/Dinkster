@@ -94,6 +94,13 @@ def bind_model_names(
             ) or file3d_union
             if file3d and spec.id not in inputs and spec.required and spec.default is None:
                 continue
+            if (
+                isinstance(widget, AssetWidget)
+                and widget.kind.startswith("model/")
+                and spec.id not in inputs
+                and spec.default is not None
+            ):
+                inputs[spec.id] = spec.default
             raw = inputs.get(spec.id, spec.default if file3d else None)
             value = raw.value if isinstance(raw, TypedLiteral) else raw
             if file3d and (value is None or isinstance(value, str) and value in {"", "none"}):
@@ -411,8 +418,8 @@ def asset_preflight(
 
     Returns the acquisition plan for identities that are still missing
     after consented acquisitions - empty means the job may run. Runs in a
-    worker thread: consented media acquisitions may download for a while.
-    Models are acquired only by the standalone plan/start routes, never submission.
+    worker thread: consented media and intrinsic pack assets may download for a while.
+    Selectable model inputs and defaults use the standalone plan/start routes.
 
     Pack declarations ([[pack.assets]]) join here: when the composed
     surface's catalog knows a referenced digest, its declared sources -
@@ -492,7 +499,7 @@ def asset_preflight(
             component_manifest=declared.component_manifest if declared is not None else None,
             sources=tuple(sources),
         )
-        if digest in consented and not need.kind.startswith("model/"):
+        if digest in consented and digest not in (model_kinds or {}):
             try:
                 result = acquire_library_asset(library, need, scope=scope, project=project)
             except (AssetPublicationError, OSError, sqlite3.Error):
