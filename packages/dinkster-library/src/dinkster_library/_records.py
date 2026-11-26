@@ -390,9 +390,72 @@ class Records:
         )
         return document
 
-    def _register(self, identifier: str, name: object) -> dict[str, object]:
+    def _register(
+        self, identifier: str, name: object, *, files_folder: object = None
+    ) -> dict[str, object]:
         if not isinstance(name, str) or not name.strip():
             raise LibraryError("invalid", "project name must be nonempty")
+        parent: Path | None = None
+        if files_folder is not None:
+            from ._settings import preference
+
+            if not isinstance(files_folder, str) or not Path(files_folder).is_absolute():
+                raise LibraryError("invalid", "filesFolder must be an absolute folder path")
+            try:
+                parent = Path(files_folder).resolve()
+                output = parent / "output"
+                grants = cast(
+                    "dict[str, object]", preference(self, "folders.grants.get", {})["folders"]
+                )
+                projects = cast(
+                    "dict[str, object]", preference(self, "folders.projects.get", {})["folders"]
+                )
+                grant_values = cast("dict[str, object]", grants["values"])
+                mounts = cast("dict[str, dict[str, object]]", grant_values.get("mounts", {}))
+                if any(
+                    Path(cast(str, mount["path"])).resolve() == output.resolve()
+                    for mount in mounts.values()
+                ):
+                    raise LibraryError("invalid", "project output folder is already a known folder")
+                mount_id = f"{identifier}-output"
+                suffix = 2
+                while mount_id in mounts:
+                    mount_id = f"{identifier}-output-{suffix}"
+                    suffix += 1
+                output.mkdir(parents=True, exist_ok=True)
+            except (OSError, ValueError) as exc:
+                raise LibraryError(
+                    "invalid", f"cannot create project output folder: {exc}"
+                ) from exc
+            values = cast("dict[str, object]", projects["values"])
+            defaults: dict[str, object] = {
+                "version": 1,
+                "shared": list(mounts),
+                "projects": {},
+                "excluded": {},
+                "outputs": {},
+            }
+            membership = cast("dict[str, list[str]]", values.get("projects", {}))
+            preference(
+                self,
+                "folders.grants.patch",
+                {
+                    "revision": grants["revision"],
+                    "patch": {"mounts": {mount_id: {"path": str(output), "mode": "readwrite"}}},
+                },
+            )
+            preference(
+                self,
+                "folders.projects.patch",
+                {
+                    "revision": projects["revision"],
+                    "patch": {
+                        **{key: value for key, value in defaults.items() if key not in values},
+                        "projects": {identifier: [*membership.get(identifier, []), mount_id]},
+                        "outputs": {identifier: mount_id},
+                    },
+                },
+            )
         now = datetime.now(UTC).isoformat()
         return self._save(
             {
@@ -406,6 +469,7 @@ class Records:
                 "environment": None,
                 "accountProject": None,
                 "deleted": False,
+                **({"filesFolder": str(parent)} if parent is not None else {}),
             }
         )
 
@@ -648,7 +712,11 @@ class Records:
                 return {
                     "project": document
                     if document is not None
-                    else self._register(identifier, arguments.get("name", identifier))
+                    else self._register(
+                        identifier,
+                        arguments.get("name", identifier),
+                        files_folder=arguments.get("filesFolder"),
+                    )
                 }
             if document is None:
                 raise LibraryError("missing", "project does not exist")
