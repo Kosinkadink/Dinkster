@@ -108,7 +108,14 @@ from .home_frontend import (
     is_engine_path,
     proxy_dev,
 )
-from .home_setup import SETUP_KEY, SetupJobs, handle_job, handle_plan, handle_start
+from .home_setup import (
+    SETUP_KEY,
+    SetupJobs,
+    handle_active_job,
+    handle_job,
+    handle_plan,
+    handle_start,
+)
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -1179,6 +1186,7 @@ def create_home_app(
     app.router.add_get("/supervisor/engine/log", _handle_engine_log)
     app.router.add_get("/supervisor/setup", handle_plan)
     app.router.add_post("/supervisor/setup", handle_start)
+    app.router.add_get("/supervisor/setup/active", handle_active_job)
     app.router.add_get("/supervisor/setup/{id}", handle_job)
     app.router.add_delete("/supervisor/setup/{id}", handle_job)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)

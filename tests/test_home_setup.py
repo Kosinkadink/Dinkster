@@ -16,6 +16,37 @@ from tests.async_scenarios import run_scenario
 from tests.fixtures.environments.build import KEYS, build
 
 
+def test_retained_setup_job_discovery_does_not_wait_for_planning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def blocked_plan(
+            self: home_setup.SetupJobs, root: Path, channel: str, variant: str | None
+        ) -> dict[str, object]:
+            entered.set()
+            await release.wait()
+            return {"refusal": None}
+
+        monkeypatch.setattr(home_setup.SetupJobs, "plan", blocked_plan)
+        home = Home(installations=frozenset)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            planning = asyncio.ensure_future(client.get("/supervisor/setup"))
+            try:
+                await entered.wait()
+                response = await client.get("/supervisor/setup/active")
+                assert response.status == 200
+                assert await response.json() == {"activeJob": None}
+                assert not planning.done()
+            finally:
+                release.set()
+                response = await planning
+                assert response.status == 200
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize(
     "outcome", ["completed", "cancelled", "opening-failed", "metadata-changed"]
 )
@@ -112,6 +143,9 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
                 "total": 83,
                 "unit": "bytes",
             }
+            active = await (await client.get("/supervisor/setup/active")).json()
+            assert active["activeJob"] == await (await client.get(path)).json()
+            assert active["activeJob"]["state"] == "running"
             reloaded = await (
                 await client.get("/supervisor/setup", params={"root": str(root)})
             ).json()
@@ -121,6 +155,9 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
             if cancel:
                 response = await client.delete(path)
                 assert response.status == 202 and (await response.json())["state"] == "cancelling"
+                active = await (await client.get("/supervisor/setup/active")).json()
+                assert active["activeJob"]["id"] == job["id"]
+                assert active["activeJob"]["state"] == "cancelling"
                 finish.set()
                 await asyncio.sleep(0)
                 assert (await (await client.get(path)).json())["state"] == "cancelling"
@@ -151,6 +188,9 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
                     "message": "installation registration is unavailable",
                 }
             assert opened == ([root] if outcome == "completed" else [])
+            assert await (await client.get("/supervisor/setup/active")).json() == {
+                "activeJob": final
+            }
             assert (await client.delete(path)).status == 200
 
     run_scenario(scenario())
@@ -485,6 +525,7 @@ def test_held_library_preserves_read_only_facts_and_refuses_start_without_acquis
             assert refused.status == 409 and (await refused.json())["error"] == "library-held"
             for method, path in (
                 ("GET", "/supervisor/setup"),
+                ("GET", "/supervisor/setup/active"),
                 ("POST", "/supervisor/setup"),
                 ("DELETE", "/supervisor/setup/job"),
             ):
