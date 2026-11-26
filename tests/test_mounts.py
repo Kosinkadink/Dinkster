@@ -2330,6 +2330,136 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("limited", (False, True))
+def test_native_file_import_copies_with_upload_policy_and_operator_authority(
+    tmp_path: Path, limited: bool
+) -> None:
+    import io
+
+    import numpy as np
+    from dinkster_assets import LATENT_MEDIA_TYPE
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+    from PIL import Image
+    from safetensors.numpy import save
+
+    source = tmp_path / "outside-mounts.bin"
+    data = b"native source\n" * 700_000
+    source.write_bytes(data)
+    encoded = io.BytesIO()
+    Image.new("RGB", (3, 2), (19, 37, 89)).save(encoded, "PNG")
+    image = encoded.getvalue()
+    image_source = tmp_path / "outside-mounts.png"
+    image_source.write_bytes(image)
+    latent = save({"latent_tensor": np.array([1.25], dtype=np.float32)})
+    latent_source = tmp_path / "outside-mounts.latent"
+    latent_source.write_bytes(latent)
+    small = bytes(range(63))
+    small_source = tmp_path / "below-limit.bin"
+    small_source.write_bytes(small)
+    imports = tmp_path / "imports"
+    imports.mkdir()
+    table = MountTable(index_root=tmp_path / "indexes")
+    table.add(MountDef("imports", imports, "readwrite"))
+    table.scan("imports")
+    service = MountService(table, allow_changes=True)
+    store = LibraryStore(tmp_path / "catalog.sqlite")
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=store,
+            local_resolver=table,
+            project_folders_for=service.project_context,
+            upload_writer=AssetWriter(table),
+            upload_limits={
+                "generic": 64,
+                "media/image": len(image) - 1,
+                "data/latent": len(latent) - 1,
+            }
+            if limited
+            else None,
+        )
+        app = create_app(
+            make_engine,
+            SCHEMAS,
+            library=library,
+            authenticator=StaticBearerAuthenticator(
+                {
+                    "operator": Principal(
+                        "operator", {"local": frozenset({"settings:write", "assets:write"})}
+                    ),
+                    "writer": Principal("writer", {"local": frozenset({"assets:write"})}),
+                }
+            ),
+        )
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for native, body, media_type, kind, limit in (
+                (source, data, "application/octet-stream", None, 64),
+                (small_source, small, "application/octet-stream", None, 64),
+                (image_source, image, "image/png", "media/image", len(image) - 1),
+                (latent_source, latent, LATENT_MEDIA_TYPE, "data/latent", len(latent) - 1),
+            ):
+                params = {"scope": "local", "name": native.name}
+                if kind is not None:
+                    params["kind"] = kind
+                payload = {"path": str(native), "mediaType": media_type}
+                url = "/api/mounts/import-file"
+                response = await client.post(
+                    url, params=params, json=payload, headers={"Authorization": "Bearer writer"}
+                )
+                assert response.status == 403
+                service.allow_changes = False
+                response = await client.post(
+                    url, params=params, json=payload, headers={"Authorization": "Bearer operator"}
+                )
+                assert response.status == 403
+                service.allow_changes = True
+                before = store.query_assets("local", limit=10)
+                response = await client.post(
+                    url, params=params, json=payload, headers={"Authorization": "Bearer operator"}
+                )
+                refused = limited and len(body) > limit
+                assert response.status == (413 if refused else 201), await response.text()
+                assert str(tmp_path) not in await response.text()
+                if refused:
+                    assert not (imports / native.name).exists()
+                    assert store.query_assets("local", limit=10) == before
+                else:
+                    result = await response.json()
+                    assert result["asset"] == {
+                        "digest": digest_bytes(body),
+                        "name": native.name,
+                        "size": len(body),
+                        "mediaType": media_type,
+                        "virtualPath": ""
+                        if kind == "data/latent"
+                        else f"mounts/imports/{native.name}",
+                    }
+                    if kind == "data/latent":
+                        stored = library.vault.resolve(digest_bytes(body))
+                        assert stored is not None and stored.read_bytes() == body
+                    else:
+                        assert (imports / native.name).read_bytes() == body
+                    if kind is not None:
+                        assert store.media_grant("local", digest_bytes(body), kind) is not None
+                assert native.read_bytes() == body
+            response = await client.post(
+                "/api/mounts/import-file",
+                params={"scope": "local", "name": "not-a-file.bin"},
+                json={"path": str(tmp_path), "mediaType": "application/octet-stream"},
+                headers={"Authorization": "Bearer operator"},
+            )
+            assert response.status == 400
+            assert str(tmp_path) not in await response.text()
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_operator_asset_locations_verify_scoped_project_content(tmp_path: Path) -> None:
     table = MountTable()
     seed(tmp_path / "imports", {"first.bin": b"first", "other.bin": b"other"})

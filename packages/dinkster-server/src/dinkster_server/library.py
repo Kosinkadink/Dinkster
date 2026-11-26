@@ -138,7 +138,7 @@ if TYPE_CHECKING:
     from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
-__all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
+__all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes", "import_file"]
 
 DIGEST_HEADER = "X-Dinkster-Digest"
 IMAGE_DOCUMENT_MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
@@ -536,6 +536,11 @@ async def _write_media_upload_chunk(temporary: Any, hasher: Any, chunk: bytes) -
     await run_owned_thread(lambda: _spool_media_upload_chunk(temporary, hasher, chunk))
 
 
+async def _file_chunks(source: BinaryIO) -> AsyncIterator[bytes]:
+    while chunk := await run_owned_thread(lambda: source.read(_MEDIA_UPLOAD_CHUNK_SIZE)):
+        yield chunk
+
+
 def _finish_upload_spool(temporary: BinaryIO) -> None:
     temporary.flush()
     os.fsync(temporary.fileno())
@@ -646,7 +651,7 @@ async def handle_upload(request: web.Request) -> web.Response:
 
 
 def _file_upload_query(
-    request: web.Request, *, classified: bool
+    request: web.Request, *, classified: bool, kinds: frozenset[str] = _MEDIA_KINDS
 ) -> tuple[str, str | None, str] | web.Response:
     error: Callable[[int, str, str], web.Response] = (
         _media_error if classified else lambda status, _code, message: _json_error(status, message)
@@ -674,7 +679,7 @@ def _file_upload_query(
     name = request.query["name"]
     if not scope or scope != scope.strip() or any(character.isspace() for character in scope):
         return error(400, "invalid_scope", "scope must be non-empty and whitespace-free")
-    if classified and kind not in _MEDIA_KINDS:
+    if classified and kind not in kinds:
         return error(400, "invalid_kind", "kind is not a supported media kind")
     if not _safe_asset_name(name):
         return error(
@@ -705,10 +710,26 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
     if isinstance(query, web.Response):
         return query
     scope, name = query
+    return await _ingest_latent_upload(request, scope, name)
+
+
+async def _ingest_latent_upload(
+    request: web.Request,
+    scope: str,
+    name: str,
+    *,
+    source: BinaryIO | None = None,
+    source_media_type: str | None = None,
+) -> web.Response:
     principal = principal_for(request)
     if principal is not LOCAL_PRINCIPAL and not principal.allows_in(scope, "assets:write"):
         return _media_error(403, "scope_forbidden", f"scope {scope} does not grant assets:write")
-    media_type = request.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    media_type = (
+        (source_media_type or request.headers.get("Content-Type", ""))
+        .split(";", 1)[0]
+        .strip()
+        .lower()
+    )
     if media_type not in {LATENT_MEDIA_TYPE, "application/octet-stream"}:
         return _media_error(415, "unsupported_content_type", "unsupported latent Content-Type")
     declared = request.headers.get(DIGEST_HEADER)
@@ -716,7 +737,10 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
         return _media_error(400, "invalid_digest", "X-Dinkster-Digest is not canonical")
     library = request.app[LIBRARY_KEY]
     limit = library.upload_limits[LATENT_ASSET_KIND] if library.upload_limits is not None else None
-    if limit is not None and request.content_length is not None and request.content_length > limit:
+    content_length = (
+        os.fstat(source.fileno()).st_size if source is not None else request.content_length
+    )
+    if limit is not None and content_length is not None and content_length > limit:
         return _media_error(413, "too_large", f"latent upload exceeds {limit} bytes")
     try:
         await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=0.001)
@@ -740,10 +764,13 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
         temporary_path = Path(temp_name)
         hasher = new_hasher()
         size = 0
+        chunks = _file_chunks(source) if source is not None else None
         try:
-            while not request.content.at_eof():
+            while source is not None or not request.content.at_eof():
                 chunk = await asyncio.wait_for(
-                    request.content.read(_MEDIA_UPLOAD_CHUNK_SIZE),
+                    anext(chunks, b"")
+                    if chunks is not None
+                    else request.content.read(_MEDIA_UPLOAD_CHUNK_SIZE),
                     timeout=_LATENT_UPLOAD_IDLE_SECONDS,
                 )
                 if not chunk:
@@ -869,6 +896,30 @@ async def handle_transfer_upload(request: web.Request) -> web.Response:
     return await _ingest_file_upload(request, scope, None, name, transfer_from=machine)
 
 
+async def import_file(request: web.Request, source: BinaryIO, media_type: str) -> web.Response:
+    """Ingest a host-authorized open file using the upload publication contract."""
+    query = _file_upload_query(
+        request, classified="kind" in request.query, kinds=_MEDIA_KINDS | {LATENT_ASSET_KIND}
+    )
+    if isinstance(query, web.Response):
+        return query
+    scope, claimed_kind, name = query
+    if claimed_kind == LATENT_ASSET_KIND:
+        if {"mount", "folder"}.intersection(request.query):
+            return _media_error(
+                400, "invalid_destination", "latent imports do not accept a folder destination"
+            )
+        from .projects import validate_project
+
+        await validate_project(request, request.query.get("project", "default"))
+        return await _ingest_latent_upload(
+            request, scope, name, source=source, source_media_type=media_type
+        )
+    return await _ingest_file_upload(
+        request, scope, claimed_kind, name, source=source, source_media_type=media_type
+    )
+
+
 async def _ingest_file_upload(
     request: web.Request,
     scope: str,
@@ -876,6 +927,8 @@ async def _ingest_file_upload(
     name: str,
     *,
     transfer_from: str | None = None,
+    source: BinaryIO | None = None,
+    source_media_type: str | None = None,
 ) -> web.Response:
     error: Callable[[int, str, str], web.Response] = (
         _media_error
@@ -891,7 +944,10 @@ async def _ingest_file_upload(
             f"scope {scope} does not grant assets:write",
         )
 
-    raw_media_type = request.headers.get("Content-Type", "")
+    raw_media_type = (
+        source_media_type if source is not None else request.headers.get("Content-Type", "")
+    )
+    assert raw_media_type is not None
     media_type = raw_media_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
     if claimed_kind is not None and media_type not in _MEDIA_TYPES:
         return error(
@@ -936,7 +992,10 @@ async def _ingest_file_upload(
         if library.upload_limits is not None
         else None
     )
-    if limit is not None and request.content_length is not None and request.content_length > limit:
+    content_length = (
+        os.fstat(source.fileno()).st_size if source is not None else request.content_length
+    )
+    if limit is not None and content_length is not None and content_length > limit:
         return error(413, "too_large", f"{upload_label} exceeds {limit} bytes")
     temporary = tempfile.NamedTemporaryFile(
         mode="w+b",
@@ -950,7 +1009,12 @@ async def _ingest_file_upload(
     publication_handoff = asyncio.Event()
     try:
         try:
-            async for chunk in request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE):
+            chunks = (
+                _file_chunks(source)
+                if source is not None
+                else request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE)
+            )
+            async for chunk in chunks:
                 received += len(chunk)
                 if limit is not None and received > limit:
                     return error(

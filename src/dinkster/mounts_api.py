@@ -41,6 +41,8 @@ import asyncio
 import contextlib
 import json
 import os
+import re
+import stat
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -68,7 +70,7 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
-from dinkster_server.library import LIBRARY_KEY, run_owned_thread
+from dinkster_server.library import LIBRARY_KEY, import_file, run_owned_thread
 from dinkster_server.lookups import announce_asset_kinds
 from dinkster_server.projects import PROJECTS_KEY, validate_project
 from dinkster_values.asset_folders import use_asset_folders
@@ -639,12 +641,17 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         return _json_error(400, "unknown or repeated location query field")
     project = request.query.get("project", "default")
     await validate_project(request, project)
-    body: dict[str, object] = {"importMount": None, "resolvePath": True}
+    body: dict[str, object] = {
+        "importMount": None,
+        "resolvePath": True,
+        "importFile": False,
+    }
     library = request.app.get(LIBRARY_KEY)
     if library is not None:
         body["vault"] = str(library.vault.root.resolve())
         if library.upload_writer is not None and library.project_folders_for is not None:
             body["importMount"] = library.import_mount_for(project)
+            body["importFile"] = service.allow_changes
     if "digest" in request.query:
         scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
         try:
@@ -737,6 +744,42 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
             row["path"] = str(mount.path)
     body.update(mounts=rows, activeMounts=active_rows, **service.pending_changes())
     return web.json_response(body, headers={"Cache-Control": "no-store"})
+
+
+async def handle_mount_import_file(request: web.Request) -> web.Response:
+    _require_operator(request)
+    service = request.app[MOUNTS_KEY]
+    if not service.allow_changes:
+        return _json_error(403, "mount-changes-disabled")
+    if LIBRARY_KEY not in request.app:
+        return _json_error(503, "file-import-unavailable")
+    resolve_scope(principal_for(request), "assets:write", request.query.get("scope"))
+    try:
+        body = await request.json()
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"path", "mediaType"}
+            or not isinstance(body["path"], str)
+            or "\0" in body["path"]
+            or not Path(body["path"]).is_absolute()
+            or not isinstance(body["mediaType"], str)
+            or re.fullmatch(r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+", body["mediaType"])
+            is None
+        ):
+            return _json_error(400, "invalid-file-import")
+        descriptor = os.open(
+            body["path"],
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        with os.fdopen(descriptor, "rb") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                return _json_error(400, "invalid-file-import")
+            return await import_file(request, source, body["mediaType"])
+    except (ValueError, OSError):
+        return _json_error(400, "file-import-failed")
 
 
 async def handle_mount_resolve_path(request: web.Request) -> web.Response:
@@ -1203,6 +1246,7 @@ def add_mount_routes(app: web.Application, service: MountService) -> None:
     app.router.add_get("/api/mounts/locations", handle_mount_locations)
     app.router.add_get("/api/mounts/entries", handle_mount_entries)
     app.router.add_post("/api/mounts/resolve-path", handle_mount_resolve_path)
+    app.router.add_post("/api/mounts/import-file", handle_mount_import_file)
     app.router.add_get("/api/mounts/{mountId}/list", handle_mount_folder)
     app.router.add_get("/api/mounts/{mountId}/entries", handle_mount_entries)
     app.router.add_put("/api/mounts/output", handle_output_mount_update)
