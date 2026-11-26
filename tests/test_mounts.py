@@ -1299,6 +1299,7 @@ def test_mount_entries_immediate_children_include_first_page_folders(
         resp = await client.get("/api/mounts/mixed/entries", params=params)
         first = await resp.json()
         assert first["folders"] == listed["folders"] == ["deep", "other"]
+        assert first["folderCounts"] == {"deep": 2, "other": 1}
         assert [row["virtualPath"] for row in first["entries"]] == [
             "mounts/mixed/models/a-cat.safetensors"
         ]
@@ -1308,6 +1309,7 @@ def test_mount_entries_immediate_children_include_first_page_folders(
         )
         second = await resp.json()
         assert "folders" not in second
+        assert "folderCounts" not in second
         assert [row["virtualPath"] for row in second["entries"]] == [
             "mounts/mixed/models/b-dog.safetensors"
         ]
@@ -1315,10 +1317,18 @@ def test_mount_entries_immediate_children_include_first_page_folders(
         resp = await client.get("/api/mounts/mixed/entries", params={"recursive": "false"})
         root = await resp.json()
         assert root["folders"] == ["models", "notes"]
+        assert root["folderCounts"] == {"models": 5, "notes": 1}
         assert [row["name"] for row in root["entries"]] == [
             "alpha.txt",
             "root-dog.txt",
         ]
+        resp = await client.get(
+            "/api/mounts/mixed/entries",
+            params={"path": "models", "recursive": "false", "q": "cat"},
+        )
+        filtered = await resp.json()
+        assert filtered["folderCounts"] == {"deep": 1, "other": 0}
+        assert [row["name"] for row in filtered["entries"]] == ["a-cat.safetensors"]
         await client.close()
 
     run_scenario(scenario())
