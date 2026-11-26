@@ -61,14 +61,15 @@ def test_video_exact_frames_and_audio_duration(tmp_path: Path) -> None:
                 output.mux(packet)
         for packet in stream.encode():
             output.mux(packet)
-    data = bytearray(buffer.getvalue())
-    for kind, start, end in bmff_boxes(data, 0, len(data)):
+    source = buffer.getvalue()
+    data = bytearray(source)
+    for kind, start, end in bmff_boxes(source, 0, len(source)):
         if kind != b"moov":
             continue
-        for kind, track_start, track_end in bmff_boxes(data, start, end):
+        for kind, track_start, track_end in bmff_boxes(source, start, end):
             if kind != b"trak":
                 continue
-            for kind, header_start, _ in bmff_boxes(data, track_start, track_end):
+            for kind, header_start, _ in bmff_boxes(source, track_start, track_end):
                 if kind == b"tkhd":
                     struct.pack_into(
                         ">9i",
