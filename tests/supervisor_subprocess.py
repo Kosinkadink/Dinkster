@@ -13,7 +13,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterable
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from itertools import count
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -504,29 +504,35 @@ def _main() -> None:
         _trace_nested_commands(Path(location))
     else:
         trace_path = Path(location).with_suffix(".stack")
-        # A Windows virtualenv launcher has a different PID from its interpreter.
-        temporary = Path(location).with_suffix(".pid.tmp")
-        temporary.write_text(str(os.getpid()))
-        temporary.replace(Path(location).with_suffix(".pid"))
+        if mode != "snapshot":
+            # A Windows virtualenv launcher has a different PID from its interpreter.
+            temporary = Path(location).with_suffix(".pid.tmp")
+            temporary.write_text(str(os.getpid()))
+            temporary.replace(Path(location).with_suffix(".pid"))
     sys.argv = [module, *(arguments[1:] if module == "-c" else arguments)]
     operations = (
         _trace_operations(trace_path.with_suffix(".operations"))
         if mode == "supervisor"
         else nullcontext()
     )
-    with _open_trace(trace_path) as trace, operations:
-        faulthandler.enable(file=trace)
+    with ExitStack() as trace_files, operations:
+        trace = None if mode == "snapshot" else trace_files.enter_context(_open_trace(trace_path))
+        if trace is not None:
+            faulthandler.enable(file=trace)
         finished = threading.Event()
         interval = 25 if mode == "supervisor" else 5
         request = trace_path.parent / "snapshot.request"
         acknowledgment = trace_path.with_suffix(".snapshot")
 
         def observe() -> None:
+            nonlocal trace
             next_sample = time.monotonic() + interval
             while not finished.wait(0.05):
                 requested = request.exists() and not acknowledgment.exists()
-                if not requested and time.monotonic() < next_sample:
+                if not requested and (mode == "snapshot" or time.monotonic() < next_sample):
                     continue
+                if trace is None:
+                    trace = trace_files.enter_context(_open_trace(trace_path))
                 # The asynchronous walker can race freed frames on CPython 3.12.
                 # An attached Python thread holds the GIL while dumping stacks.
                 started = time.monotonic()
@@ -566,7 +572,8 @@ def _main() -> None:
         finally:
             finished.set()
             observer.join()
-            faulthandler.enable()
+            if mode != "snapshot":
+                faulthandler.enable()
 
 
 if __name__ == "__main__":
