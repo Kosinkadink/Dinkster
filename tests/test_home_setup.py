@@ -239,6 +239,7 @@ environment.preparation_progress = progress
             assert plan["choices"] == [
                 {
                     "variant": "fixture-cpu",
+                    "vendor": None,
                     "label": "fixture-cpu",
                     "reason": plan["buildReason"],
                     "gpus": [],

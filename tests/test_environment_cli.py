@@ -2270,6 +2270,11 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     ]
     pci = tmp_path / "pci"
     vendor_ids = {"nvidia": "10de", "amd": "1002", "intel": "8086", "unknown": "9999"}
+
+    def card_address(card: dict) -> str:
+        slot = list(vendor_ids).index(card["vendor"])
+        return f"0000:0{card['id']}:0{slot}.0"
+
     if not native:
         monkeypatch.setattr(environment, "detect_graphics_cards", lambda: cards)
     else:
@@ -2309,7 +2314,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
             if arguments[0] == "nvidia-smi":
                 output = "\n".join(
                     f"{card['id']}, {card['name']}, {card['driver']}, "
-                    f"{card['computeCapability']}, 8192 MiB, 00000000:0{card['id']}:00.0"
+                    f"{card['computeCapability']}, 8192 MiB, 0000{card_address(card)}"
                     for card in selected
                 )
                 return subprocess.CompletedProcess(arguments, 0, output)
@@ -2320,7 +2325,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
                             "gpu": int(card["id"]),
                             "asic": {"market_name": card["name"]},
                             "driver": {"version": card["driver"]},
-                            "bus": {"bdf": f"0000:0{card['id']}:00.0"},
+                            "bus": {"bdf": card_address(card)},
                             "vram": {"size": {"value": 8192, "unit": "MB"}},
                         }
                         for card in selected
@@ -2333,7 +2338,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
                 output = {
                     "device_name": card["name"],
                     "driver_version": card["driver"],
-                    "pci_bdf_address": f"0000:0{card['id']}:00.0",
+                    "pci_bdf_address": card_address(card),
                     "memory_physical_size_byte": 8192 * 1024 * 1024,
                 }
             else:
@@ -2362,7 +2367,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
             for device in pci.iterdir():
                 shutil.rmtree(device)
             for card in cards:
-                device = pci / f"0000:0{card['id']}:00.0"
+                device = pci / card_address(card)
                 device.mkdir()
                 (device / "vendor").write_text("0x" + vendor_ids[card["vendor"]])
                 (device / "class").write_text("0x030000")
@@ -2374,7 +2379,9 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     assert result["variant"] == "fixture-" + vendor
     assert result["buildLabel"] == f"{brand} graphics"
     assert result["buildReason"] == f"Needs {brand} driver 31.2 or newer."
+    assert result["graphicsVendor"] == vendor
     assert result["gpus"] == ["7"]
+    assert result["detectedCards"][0]["memoryMiB"] == 8192
     assert [choice["variant"] for choice in result["choices"]] == [
         "fixture-" + vendor,
         "fixture-cpu",
@@ -2383,6 +2390,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     cards[0]["driver"] = "31.1"
     result = catalog()
     assert result["variant"] is None and result["refusal"] is None
+    assert result["graphicsVendor"] is None
     assert [choice["variant"] for choice in result["choices"]] == ["fixture-cpu"]
     assert result["unusableCards"] == [
         {
@@ -2406,7 +2414,11 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         assert [choice["variant"] for choice in result["choices"]] == ["fixture-cpu"]
         assert result["unusableCards"] == [
             {
-                "id": ("0000:07:00.0" if system == "linux" else f"PCI\\VEN_{vendor_ids[vendor]}\\7")
+                "id": (
+                    card_address(cards[0])
+                    if system == "linux"
+                    else f"PCI\\VEN_{vendor_ids[vendor]}\\7"
+                )
                 if native
                 else "7",
                 "name": None if native and system == "linux" else f"{vendor} card",
@@ -2429,6 +2441,19 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     result = catalog()
     assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
     assert [card["id"] for card in result["unusableCards"]] == ["8"]
+    if native:
+        other_vendor = "amd" if vendor != "amd" else "intel"
+        cards.append({**cards[0], "vendor": other_vendor})
+        mixed = catalog()
+        assert {choice["vendor"] for choice in mixed["choices"]} == {vendor, other_vendor, None}
+        assert mixed["graphicsVendor"] in {vendor, other_vendor}
+        assert mixed["gpus"] == ["7"]
+        cards.pop()
+        cards[1]["driver"] = "N/A"
+        result = catalog()
+        assert result["variant"] == "fixture-" + vendor and result["gpus"] == ["7"]
+        assert len(result["unusableCards"]) == 1
+        assert result["unusableCards"][0]["reason"] == "detection-tool-failed"
     cards.pop()
     if native:
         # A detected vendor without a published build is not a CPU build.

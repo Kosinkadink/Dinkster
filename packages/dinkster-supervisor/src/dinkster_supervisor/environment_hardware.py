@@ -108,14 +108,18 @@ def vendor_cards(vendor: str, tool: str) -> list[GraphicsCard]:
         )
         for row in csv.reader(io.StringIO(output), skipinitialspace=True):
             if len(row) != 6:
-                raise ValueError("Incomplete NVIDIA card facts")
+                continue
             index, name, driver, capability, memory, address = (value.strip() for value in row)
             if (
                 not re.fullmatch(r"\d+\.\d+", capability)
                 or version(capability) == (0,)
                 or not re.fullmatch(r"[1-9]\d* MiB", memory)
             ):
-                raise ValueError("Invalid NVIDIA card facts")
+                continue
+            try:
+                address = pci_address(address)
+            except ValueError:
+                continue
             cards.append(
                 {
                     "id": index,
@@ -124,7 +128,7 @@ def vendor_cards(vendor: str, tool: str) -> list[GraphicsCard]:
                     "driver": driver,
                     "computeCapability": capability,
                     "memoryMiB": int(memory.removesuffix(" MiB")),
-                    "pciAddress": pci_address(address),
+                    "pciAddress": address,
                 }
             )
     else:
@@ -146,24 +150,32 @@ def vendor_cards(vendor: str, tool: str) -> list[GraphicsCard]:
         if not isinstance(rows, list):
             raise ValueError("Invalid graphics-card facts")
         for row in cast("list[dict[str, Any]]", rows):
-            if vendor == "intel":
-                index = str(row["device_id"])
-                row = json.loads(hardware_command([tool, "discovery", "-d", index, "-j"]))
-                name, driver = row["device_name"], row["driver_version"]
-                address = row["pci_bdf_address"]
-                memory = row.get("memory_physical_size_byte")
-                memory = int(str(memory)) // (1024 * 1024) if str(memory).isdecimal() else None
-            else:
-                index = str(row["gpu"])
-                name, driver = row["asic"]["market_name"], row["driver"]["version"]
-                address = row["bus"]["bdf"]
-                memory = row.get("vram", {}).get("size")
-                if isinstance(memory, dict):
-                    size = cast("dict[str, Any]", memory)
-                    memory = size["value"] if size.get("unit") == "MB" else None
-                memory = int(str(memory)) if str(memory).isdecimal() else None
+            try:
+                if vendor == "intel":
+                    index = str(row["device_id"])
+                    if not index.isdecimal():
+                        continue
+                    row = json.loads(hardware_command([tool, "discovery", "-d", index, "-j"]))
+                    name, driver = row["device_name"], row["driver_version"]
+                    address = pci_address(row["pci_bdf_address"])
+                    memory = row.get("memory_physical_size_byte")
+                    memory = int(str(memory)) // (1024 * 1024) if str(memory).isdecimal() else None
+                else:
+                    index = str(row["gpu"])
+                    name, driver = row["asic"]["market_name"], row["driver"]["version"]
+                    address = pci_address(row["bus"]["bdf"])
+                    vram = row.get("vram")
+                    memory = (
+                        cast("dict[str, Any]", vram).get("size") if isinstance(vram, dict) else None
+                    )
+                    if isinstance(memory, dict):
+                        size = cast("dict[str, Any]", memory)
+                        memory = size["value"] if size.get("unit") == "MB" else None
+                    memory = int(str(memory)) if str(memory).isdecimal() else None
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+                continue
             if not isinstance(name, str) or not isinstance(driver, str):
-                raise ValueError("Invalid graphics-card facts")
+                continue
             cards.append(
                 {
                     "id": index,
@@ -172,19 +184,18 @@ def vendor_cards(vendor: str, tool: str) -> list[GraphicsCard]:
                     "driver": driver,
                     "computeCapability": None,
                     "memoryMiB": memory,
-                    "pciAddress": pci_address(address),
+                    "pciAddress": address,
                 }
             )
-    for card in cards:
-        if (
-            not card["id"].isdecimal()
-            or not card["name"]
-            or not isinstance(card["driver"], str)
-            or not re.fullmatch(r"\d+(?:\.\d+)*", card["driver"])
-            or sum(other["id"] == card["id"] for other in cards) != 1
-        ):
-            raise ValueError("Invalid graphics-card facts")
-    return cards
+    return [
+        card
+        for card in cards
+        if card["id"].isdecimal()
+        and card["name"]
+        and isinstance(card["driver"], str)
+        and re.fullmatch(r"\d+(?:\.\d+)*", card["driver"])
+        and sum(other["id"] == card["id"] for other in cards) == 1
+    ]
 
 
 def detect_graphics_cards() -> list[GraphicsCard] | None:
@@ -407,6 +418,7 @@ def hardware_selection(
             "detectedCards": None,
             "choices": None,
             "variant": None,
+            "graphicsVendor": None,
             "buildLabel": None,
             "buildReason": None,
             "gpus": [],
@@ -456,6 +468,7 @@ def hardware_selection(
         "choices": [
             {
                 "variant": name,
+                "vendor": graphics_vendor(manifests[name]),
                 "label": manifests[name].get("displayName", build_label(name)),
                 "reason": build_reason(manifests[name]),
                 "gpus": assignments[name],
@@ -463,6 +476,7 @@ def hardware_selection(
             for name in builds
         ],
         "variant": variant,
+        "graphicsVendor": graphics_vendor(manifests[variant]) if variant is not None else None,
         "buildLabel": manifests[variant].get("displayName", build_label(variant))
         if variant is not None
         else None,
