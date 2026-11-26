@@ -881,6 +881,9 @@ async def _route(request: web.Request) -> web.StreamResponse:
         refused = await _check_execution_binding(request)
         if refused is not None:
             return refused
+        headers = request.headers.copy()
+        del headers["X-Dinkster-Execution"]
+        request = request.clone(headers=headers)
     # No suspension after binding validation: the proxy captures this selection's
     # URL and registers for selection-change cancellation before its first await.
     origin = request.headers.get("Origin")

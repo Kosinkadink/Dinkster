@@ -1048,6 +1048,7 @@ def test_native_path_post_refuses_changed_execution_before_forwarding(
 
             async def resolve(request: web.Request, recipient: int = index) -> web.Response:
                 assert request.headers["Origin"] == str(servers[recipient].make_url("").origin())
+                assert "X-Dinkster-Execution" not in request.headers
                 received.append((recipient, await request.read()))
                 return web.json_response({"recipient": recipient})
 
