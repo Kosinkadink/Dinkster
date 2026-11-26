@@ -15,6 +15,7 @@ import av
 import numpy as np
 import pytest
 from dinkster_assets import digest_bytes
+from dinkster_assets.integrity import AssetIntegrityError
 from dinkster_assets.probe import probe_cached, probe_file
 from dinkster_values import file_facts
 from dinkster_values.media_containers import bmff_boxes
@@ -155,4 +156,14 @@ def test_concurrent_and_later_reads_share_decoded_answer(
         assert first.result()["facts"] == expected
         assert second.result()["facts"] == expected
     assert probe_cached(path, digest, cache)["facts"] == expected
+    assert count == 1
+    moved = tmp_path / "moved-source"
+    path.rename(moved)
+    with pytest.raises(FileNotFoundError):
+        probe_cached(path, digest, cache)
+    assert probe_cached(moved, digest, cache)["facts"] == expected
+    path.write_bytes(b"not the retained image")
+    with pytest.raises(AssetIntegrityError):
+        probe_cached(path, digest, cache)
+    assert probe_cached(moved, digest, cache)["facts"] == expected
     assert count == 1

@@ -115,15 +115,15 @@ def probe_cached(path: Path, digest: str, cache_root: Path) -> dict[str, object]
     root.mkdir(parents=True, exist_ok=True)
     target = root / f"{hex_digest}.json"
     with FileLock(root / f"{hex_digest}.lock"):
-        try:
-            stored: object = json.loads(target.read_text("utf-8"))
-        except FileNotFoundError:
-            pass
-        else:
-            if not isinstance(stored, dict):
-                raise AssetError("invalid cached asset metadata")
-            return cast(dict[str, object], stored)
         with open_verified(path, digest) as handle:
+            try:
+                stored: object = json.loads(target.read_text("utf-8"))
+            except FileNotFoundError:
+                pass
+            else:
+                if not isinstance(stored, dict):
+                    raise AssetError("invalid cached asset metadata")
+                return cast(dict[str, object], stored)
             metadata = probe_handle(handle)
         with NamedTemporaryFile(mode="w", encoding="utf-8", dir=root, delete=False) as pending:
             temporary = Path(pending.name)
