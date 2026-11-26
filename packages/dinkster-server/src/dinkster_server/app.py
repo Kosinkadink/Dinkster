@@ -2621,11 +2621,12 @@ def write_node_table_record(state: ServerState, path: Path, snapshot: str | None
     """Record the whole node table so the always-on process can serve it while no engine is up.
 
     The record leaves out what only means something within this engine run:
-    the epoch, the extension snapshot digest and the composing flag.
+    the epoch, the extension snapshot digest, the composing flag and services.
     """
     wire = nodes_wire(state)
     for key in ("epoch", "extensionSnapshotDigest", "composing"):
         wire.pop(key, None)
+    cast("dict[str, object]", wire["dinkster"]).pop("services", None)
     wire["recordedAt"] = int(time.time() * 1000)
     if snapshot is not None:
         wire["snapshot"] = snapshot

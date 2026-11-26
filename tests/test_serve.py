@@ -2230,7 +2230,15 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
         stop_logged_serve(process, log, pending_error)
 
 
-def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
+def test_serve_records_its_node_table_once_composed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for name in (
+        "DINKSTER_REMOTE_CATALOG_BASE",
+        "DINKSTER_REMOTE_GATEWAY_BASE",
+        "DINKSTER_ACCOUNT_IDENTITY_BASE",
+    ):
+        monkeypatch.delenv(name, raising=False)
     port = free_port()
     record = tmp_path / "node-tables" / "main.json"
     pack = Path(__file__).resolve().parent.parent / "packages/dinkster-nodes-dev"
@@ -2245,6 +2253,8 @@ def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
             "linux-cpu",
             "--node-table-record",
             str(record),
+            "--services",
+            "qa",
         ),
         tmp_path,
     )
@@ -2267,6 +2277,8 @@ def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
         assert any(entry["pack"] == "dinkster-nodes-dev" for entry in recorded["nodes"].values())
         assert recorded["packs"] == table["packs"]
         assert recorded["dinkster"]["version"] == table["dinkster"]["version"]
+        assert table["dinkster"]["services"]["name"] == "qa"
+        assert "services" not in recorded["dinkster"]
         # What only means something within this engine run is left out.
         assert {"epoch", "extensionSnapshotDigest", "composing"}.isdisjoint(recorded)
         assert abs(recorded["recordedAt"] - time.time() * 1000) < 120_000
