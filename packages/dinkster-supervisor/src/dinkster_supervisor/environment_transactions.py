@@ -233,7 +233,7 @@ def activate(root: Path, path: Path, *, revalidate: Callable[[], None]) -> None:
                     cast("str", binding["name"]),
                     cast("int", binding["targetPort"]),
                     tuple(cast("list[str]", binding["gpus"])),
-                    activation_journal=path if journal.previous is not None else None,
+                    activation_journal=path,
                     sandbox_packs=binding.get("sandboxPacks") is True,
                 )
                 journal = Journal.read(path)
