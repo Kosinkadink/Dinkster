@@ -644,7 +644,11 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 )
             assert not list((tmp_path / "models").rglob("*.safetensors"))
 
+            import ctypes
             from types import SimpleNamespace
+            from unittest.mock import Mock
+
+            from dinkster import model_settings
 
             for free in (4096, 136, 0, None):
                 with monkeypatch.context() as disk:
@@ -654,7 +658,24 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                             raise PermissionError("cannot observe this filesystem")
                         return SimpleNamespace(free=available)
 
+                    def windows_space(
+                        _path: str,
+                        pointer: ctypes.c_void_p,
+                        _total: object,
+                        _free: object,
+                        available: int | None = free,
+                    ) -> int:
+                        if available is None:
+                            return 0
+                        ctypes.cast(
+                            pointer, ctypes.POINTER(ctypes.c_ulonglong)
+                        ).contents.value = available
+                        return 1
+
                     disk.setattr("dinkster.model_settings.shutil.disk_usage", disk_usage)
+                    kernel = Mock()
+                    kernel.GetDiskFreeSpaceExW.side_effect = windows_space
+                    disk.setattr(ctypes, "WinDLL", Mock(return_value=kernel), raising=False)
                     response = await client.post("/api/models/downloads/plan", json=body)
                     assert response.status == 200
                     observed = (await response.json())["destinationSpace"]
@@ -667,6 +688,69 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                             "filesystem": space["filesystem"],
                         }
                     )
+
+            with monkeypatch.context() as disk:
+                disk.setattr(model_settings, "sys", SimpleNamespace(platform="win32"))
+                disk.setattr(
+                    model_settings.shutil, "disk_usage", lambda _: SimpleNamespace(free=4096)
+                )
+                kernel = Mock()
+                kernel.GetDiskFreeSpaceExW.side_effect = windows_space
+                disk.setattr(ctypes, "WinDLL", Mock(return_value=kernel), raising=False)
+
+                # The volume has 4096 free bytes, but this account can use only 73.
+                def caller_space(
+                    path: str, pointer: ctypes.c_void_p, total: object, free: object
+                ) -> int:
+                    return windows_space(path, pointer, total, free, 73)
+
+                kernel.GetDiskFreeSpaceExW.side_effect = caller_space
+                response = await client.post("/api/models/downloads/plan", json=body)
+                assert response.status == 200
+                assert (await response.json())["destinationSpace"]["freeBytes"] == 73
+
+            import sys
+
+            if sys.platform == "linux":
+                import fcntl
+                import os
+
+                real_stat = Path.stat
+                identities = []
+                for device, fsid in (
+                    (101, "123456789abcdef0123456789abcdef0"),
+                    (202, "123456789abcdef0123456789abcdef0"),
+                    (101, "abcdef0123456789abcdef0123456789"),
+                ):
+                    with monkeypatch.context() as disk:
+
+                        def subvolume_stat(
+                            path: Path, *, follow_symlinks: bool = True, device: int = device
+                        ) -> os.stat_result:
+                            values = list(real_stat(path, follow_symlinks=follow_symlinks))
+                            values[2] = device
+                            return os.stat_result(values)
+
+                        def fs_info(
+                            _fd: int,
+                            _request: int,
+                            buffer: bytearray,
+                            _mutate: bool,
+                            fsid: str = fsid,
+                        ) -> int:
+                            assert _request == 0x8400941F and len(buffer) == 1024
+                            buffer[16:32] = bytes.fromhex(fsid)
+                            return 0
+
+                        disk.setattr(Path, "stat", subvolume_stat)
+                        disk.setattr(fcntl, "ioctl", fs_info)
+                        response = await client.post("/api/models/downloads/plan", json=body)
+                        assert response.status == 200
+                        result = (await response.json())["destinationSpace"]
+                        assert result["status"] == "available"
+                        identities.append(result["filesystem"])
+                assert identities[0] == identities[1]
+                assert identities[0] != identities[2]
 
             from dinkster_assets import civitai
 

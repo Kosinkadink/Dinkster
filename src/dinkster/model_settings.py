@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -40,12 +41,49 @@ def filesystem_space(path: Path) -> dict[str, object]:
         for candidate in (resolved, *resolved.parents):
             try:
                 device = candidate.stat().st_dev
-                free = shutil.disk_usage(candidate).free
+                identity = f"device:{device}"
+                if sys.platform == "win32":
+                    import ctypes
+                    from ctypes import wintypes
+
+                    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                    kernel.GetDiskFreeSpaceExW.argtypes = (
+                        wintypes.LPCWSTR,
+                        ctypes.POINTER(ctypes.c_ulonglong),
+                        ctypes.c_void_p,
+                        ctypes.c_void_p,
+                    )
+                    kernel.GetDiskFreeSpaceExW.restype = wintypes.BOOL
+                    available = ctypes.c_ulonglong()
+                    if not kernel.GetDiskFreeSpaceExW(
+                        str(candidate), ctypes.byref(available), None, None
+                    ):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    free = available.value
+                else:
+                    if sys.platform == "linux":
+                        import errno
+                        import fcntl
+
+                        descriptor = os.open(candidate, os.O_RDONLY | os.O_DIRECTORY)
+                        try:
+                            info = bytearray(1024)
+                            try:
+                                # BTRFS_IOC_FS_INFO identifies the pool, unlike subvolume st_dev.
+                                fcntl.ioctl(descriptor, 0x8400941F, info, True)
+                            except OSError as error:
+                                if error.errno != errno.ENOTTY:
+                                    raise
+                            else:
+                                identity = f"btrfs:{info[16:32].hex()}"
+                        finally:
+                            os.close(descriptor)
+                    free = shutil.disk_usage(candidate).free
             except FileNotFoundError:
                 continue
             return {
                 "status": "available",
-                "filesystem": hashlib.sha256(str(device).encode("ascii")).hexdigest(),
+                "filesystem": hashlib.sha256(identity.encode("ascii")).hexdigest(),
                 "freeBytes": free,
             }
     except (OSError, RuntimeError):
