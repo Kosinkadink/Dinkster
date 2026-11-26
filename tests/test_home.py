@@ -79,10 +79,12 @@ def make_engine(
     return app
 
 
-async def wait_for(client: TestClient, predicate: Callable[[dict], bool]) -> dict:
+async def wait_for(
+    client: TestClient, predicate: Callable[[dict], bool], path: str = "/supervisor/status"
+) -> dict:
     status: dict = {}
     for _ in range(200):
-        status = await (await client.get("/supervisor/status")).json()
+        status = await (await client.get(path)).json()
         if predicate(status):
             return status
         await asyncio.sleep(0.02)
@@ -850,16 +852,18 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
                         other_engine["execution"]["engine"]["url"] + "/supervisor/engine/restart"
                     )
                 ).status == 200
-            await wait_for(client, lambda s: s["state"] == "ready")
-            external_restart = await (await client.get("/supervisor/status?project=film")).json()
+            external_restart = await wait_for(
+                client, lambda s: s["execution"] is not None, "/supervisor/status?project=film"
+            )
             assert external_restart["execution"]["engine"] == other_engine["execution"]["engine"]
             assert (
                 external_restart["execution"]["filesystem"]
                 != other_engine["execution"]["filesystem"]
             )
             assert (await client.post("/supervisor/engine/restart")).status == 200
-            await wait_for(client, lambda s: s["state"] == "ready")
-            restarted = await (await client.get("/supervisor/status?project=film")).json()
+            restarted = await wait_for(
+                client, lambda s: s["execution"] is not None, "/supervisor/status?project=film"
+            )
             assert (
                 restarted["execution"]["filesystem"] != external_restart["execution"]["filesystem"]
             )
