@@ -68,8 +68,8 @@ exposing an engine outside a trusted network.
 
 ## Upload size limits
 
-With every environment engine stopped, set upload byte limits in the existing
-managed environment configuration:
+Engines with no saved upload policy have no upload size limits. With every
+environment engine stopped, enable limits in the managed configuration:
 
 ```bash
 dinkster-env --root /absolute/environment uploads \
@@ -79,24 +79,29 @@ dinkster-env --root /absolute/environment uploads \
 
 Without `--yes`, this validates and prints the plan without saving. Each
 invocation replaces the complete override policy; omitted kinds use their
-defaults. `uploads --yes` clears all overrides. Settings apply on the next
-managed start and survive restart, update and recovery launches.
+defaults. `uploads --yes` enables the default ceilings with no overrides;
+`uploads --off --yes` disables size limits. Existing saved override maps stay
+enabled with their values. Settings apply on the next managed start and survive
+restart, update and recovery launches. Standalone engines enable the same
+ceilings with `dinkster-serve --limit-uploads`.
 
 The generic cap covers anonymous assets, named file imports and transfers.
 Classified media imports use their own image, audio, video or model3d cap,
-not the generic cap. Defaults are 16 MiB generic, 256 MiB image and 1 GiB for
-each other media kind. Values must be positive integer byte counts. A saved
-request above a transport/media ceiling is clamped to that ceiling; it does
-not raise it. Codec, decoded-size, digest, content-kind and authentication
-checks still apply. Structured latent and image-document uploads retain
-their separate format-specific safety budgets.
+not the generic cap. Enabled ceilings are 16 MiB generic, 256 MiB image and
+1 GiB for each other media kind and latents. Values must be positive integer
+byte counts. A saved request above a transport/media ceiling is clamped to
+that ceiling; it does not raise it. Codec, decoded-size, digest, content-kind and authentication
+checks still apply, including when size limits are off. Latent uploads reserve
+disk headroom as they stream; image-document decoding retains its separate
+working-set budgets.
 
-`GET /api/assets/upload-limits` returns the effective byte caps as an object
-with keys `generic`, `media/image`, `media/audio`, `media/video` and
-`media/model3d`. Clients should read this no-store response from the running
-engine before uploading rather than assume the defaults. Both declared and
-unknown/chunked lengths enforce the same caps; an oversized upload receives
-413 without publishing a partial asset.
+`GET /api/assets/upload-limits` returns null when size limits are off, or
+effective byte caps as an object with keys `generic`, `media/image`, `media/audio`, `media/video` and
+`media/model3d`, plus `data/latent`. The same policy is reported as
+`dinkster.uploadLimits` in `/api/nodes`. Clients should read the running engine's
+policy rather than infer limits from an address or label. The limits endpoint
+is no-store. Both declared and unknown/chunked lengths enforce enabled caps;
+an oversized upload receives 413 without publishing a partial asset.
 
 ## Vocabulary
 

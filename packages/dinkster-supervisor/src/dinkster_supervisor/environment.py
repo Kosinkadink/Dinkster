@@ -146,7 +146,7 @@ def _settings(root: Path) -> dict[str, object] | None:
     PublicListener.read(document.get("publicListener", {}))
     read_response_compression(document.get("responseCompression", False))
     read_runtime_offline(document.get("runtimeOffline", False))
-    read_upload_limits(document.get("uploadLimits", {}))
+    read_upload_limits(document.get("uploadLimits"))
     read_pack_selection(document.get("packSelection", {}))
     read_node_exclusions(document.get("excludedNodeTypes", []))
     read_scratch_storage(document.get("scratchStorage", {}))
@@ -1873,7 +1873,9 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
     if settings is None:
         raise EnvironmentError("environment has no configuration; run setup first")
     selected = read_upload_limits(
-        {
+        None
+        if args.off
+        else {
             kind: limit
             for kind, limit in (
                 ("generic", args.generic),
@@ -1885,6 +1887,11 @@ def _configure_uploads(args: argparse.Namespace, result: dict[str, object]) -> i
             if limit is not None
         }
     )
+    if args.off and any(
+        limit is not None
+        for limit in (args.generic, args.image, args.audio, args.video, args.model3d)
+    ):
+        raise EnvironmentError("uploadLimits: --off cannot be combined with per-kind limits")
     plan = [f"save upload byte limits {selected}; all engines must be stopped"]
     result.update(plan=plan, uploadLimits=selected, status="planned")
     if not _confirmed(args, plan):
@@ -2685,6 +2692,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     compression = commands.add_parser("compression", help="save HTTP response compression policy")
     compression.add_argument("mode", choices=("on", "off"))
     uploads = commands.add_parser("uploads", help="replace the saved upload byte limits")
+    uploads.add_argument("--off", action="store_true", help="disable upload size limits")
     for kind in ("generic", "image", "audio", "video", "model3d"):
         uploads.add_argument(f"--{kind}", type=int, metavar="BYTES")
     packs = commands.add_parser("packs", help="replace the optional saved launch pack selection")

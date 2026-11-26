@@ -1593,11 +1593,12 @@ def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("destination", ("anonymous", "named", "transfer"))
-def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> None:
+@pytest.mark.parametrize("limited", (False, True))
+def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str, limited: bool) -> None:
     async def oversized_chunks():
         yield b"x" * 32
         await asyncio.sleep(0)
-        yield b"x" * 33
+        yield b"x" * 65
 
     async def scenario() -> None:
         root = tmp_path / "imports"
@@ -1608,7 +1609,7 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
         client = await make_client(
             tmp_path,
             upload_limit=96,
-            upload_limits={"generic": 64, "media/image": 2**40},
+            upload_limits={"generic": 64, "media/image": 2**40} if limited else None,
             resolver=mounts,
             upload_writer=AssetWriter(mounts),
             project_folders_for=lambda _project: AssetFolderContext(("imports",)),
@@ -1623,13 +1624,17 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
             guidance = await client.get("/api/assets/upload-limits")
             assert guidance.status == 200
             assert guidance.headers["Cache-Control"] == "no-store"
-            assert await guidance.json() == {
+            expected_limits = {
                 "generic": 64,
                 "media/image": 256 * 1024**2,
                 "media/audio": 1024**3,
                 "media/video": 1024**3,
                 "media/model3d": 1024**3,
+                "data/latent": 1024**3,
             }
+            assert await guidance.json() == (expected_limits if limited else None)
+            catalog = await (await client.get("/api/nodes")).json()
+            assert catalog["dinkster"]["uploadLimits"] == (expected_limits if limited else None)
             body = b'{"graphs": {}}'
             resp = await client.post(
                 path, data=body, headers={**headers, "X-Dinkster-Digest": DIGEST_B}
@@ -1643,16 +1648,32 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str) -> 
             assert resp.status == 201
             saved_files = sorted(entry.name for entry in root.iterdir())
 
-            assert (await client.post(path, data=b"x" * 65, headers=headers)).status == 413
-            assert (await client.post(path, data=oversized_chunks(), headers=headers)).status == 413
+            oversized = b"x" * 97
+            headers["X-Dinkster-Digest"] = digest_bytes(oversized)
+            for index, data in enumerate((oversized, oversized_chunks())):
+                response = await client.post(path, data=data, headers=headers)
+                expected = 413 if limited else 201 if destination == "named" or index == 0 else 200
+                assert response.status == expected
             assert (await client.post(path, data=b"", headers=headers)).status == 400
             if destination == "named":
                 assert (root / "source.bin").read_bytes() == body
-                assert sorted(entry.name for entry in root.iterdir()) == saved_files
+                if limited:
+                    assert sorted(entry.name for entry in root.iterdir()) == saved_files
+                else:
+                    assert sorted(entry.read_bytes() for entry in root.glob("*.bin")) == [
+                        oversized,
+                        oversized,
+                        body,
+                    ]
                 assert client.app[LIBRARY_KEY].vault.digests() == []
-            elif destination == "transfer":
+            else:
                 assert not (root / "source.bin").exists()
-                assert client.app[LIBRARY_KEY].vault.digests() == [digest_bytes(body)]
+                expected_digests = [digest_bytes(body)]
+                if not limited:
+                    expected_digests.append(digest_bytes(oversized))
+                    fetched = await client.get(f"/api/assets/{digest_bytes(oversized)}")
+                    assert await fetched.read() == oversized
+                assert sorted(client.app[LIBRARY_KEY].vault.digests()) == sorted(expected_digests)
             assert not list(client.app[LIBRARY_KEY].vault.root.glob(".media-upload-*"))
             boundary = b"b" * 64
             accepted = await client.post("/api/assets", data=boundary)

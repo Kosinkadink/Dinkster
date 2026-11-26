@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import closing, suppress
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
+from types import MappingProxyType, SimpleNamespace
 from typing import cast
 
 import pytest
@@ -632,7 +632,7 @@ async def _media_client(
     *,
     upload_limit: int = 1024 * 1024,
     media_upload_limits: Mapping[str, int] | None = None,
-    upload_limits: Mapping[str, int] | None = None,
+    upload_limits: Mapping[str, int] | None = MappingProxyType({}),
     authenticator: _Tokens | None = None,
     mounts: MountTable | None = None,
 ) -> tuple[TestClient, ServerLibrary]:
@@ -1131,9 +1131,12 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
     run_scenario(scenario())
 
 
-def test_latent_ingest_is_classified_scoped_and_idempotent(tmp_path: Path) -> None:
+@pytest.mark.parametrize("limited", (False, True))
+def test_latent_ingest_is_classified_scoped_and_idempotent(tmp_path: Path, limited: bool) -> None:
     async def scenario() -> None:
-        client, library = await _media_client(tmp_path)
+        client, library = await _media_client(
+            tmp_path, upload_limits={"data/latent": len(_latent()) - 1} if limited else None
+        )
         path = "/api/assets/latent?scope=local&name=sample.png"
         try:
             first = await client.post(
@@ -1142,6 +1145,10 @@ def test_latent_ingest_is_classified_scoped_and_idempotent(tmp_path: Path) -> No
                 headers={"Content-Type": "application/octet-stream"},
             )
             digest = digest_bytes(_latent())
+            if limited:
+                assert first.status == 413
+                assert library.vault.digests() == []
+                return
             assert first.status == 201, await first.text()
             assert await first.json() == {
                 "asset": {
@@ -1267,7 +1274,7 @@ def test_latent_ingest_requires_auth_scope_and_admission_capacity(tmp_path: Path
 
 @pytest.mark.parametrize(
     ("free_bytes", "expected_status"),
-    [(2 * 1024**3 - 1, 507), (2 * 1024**3, 201)],
+    [(1024**3 + 2 * len(_latent()) - 1, 507), (1024**3 + 2 * len(_latent()), 201)],
 )
 def test_latent_ingest_preserves_filesystem_headroom(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, free_bytes: int, expected_status: int
@@ -1501,7 +1508,8 @@ def test_media_ingest_digest_and_exact_byte_limits(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
-def test_media_upload_limit_is_selected_by_claimed_kind(tmp_path: Path) -> None:
+@pytest.mark.parametrize("limited", (False, True))
+def test_media_upload_limit_is_selected_by_claimed_kind(tmp_path: Path, limited: bool) -> None:
     async def scenario() -> None:
         image = _png()
         audio = _large_wav(4096)
@@ -1511,15 +1519,21 @@ def test_media_upload_limit_is_selected_by_claimed_kind(tmp_path: Path) -> None:
             "media/audio": 8 * 1024 * 1024,
             "media/video": 8 * 1024 * 1024,
         }
-        client, library = await _media_client(tmp_path, media_upload_limits=limits)
+        client, library = await _media_client(
+            tmp_path, media_upload_limits=limits, upload_limits={} if limited else None
+        )
         try:
             rejected = await client.post(
                 _media_path("local", "media/image", "big.png"),
                 data=image,
                 headers=_media_headers("image/png"),
             )
-            assert rejected.status == 413
-            assert library.vault.digests() == []
+            assert rejected.status == (413 if limited else 201)
+            if limited:
+                assert library.vault.digests() == []
+            else:
+                uploaded = await client.get(f"/api/assets/{digest_bytes(image)}")
+                assert await uploaded.read() == image
             # A body larger than the image bound is accepted under the
             # audio bound: the claimed kind selects the limit.
             accepted = await client.post(
@@ -1560,6 +1574,7 @@ def test_default_image_bound_rejects_oversized_content_length_before_reading(
         library = ServerLibrary(
             vault=AssetVault(tmp_path / "vault"),
             store=LibraryStore(tmp_path / "library.sqlite"),
+            upload_limits={},
         )
         try:
             response = await handle_media_upload(cast(web.Request, OversizedRequest(library)))
@@ -1632,6 +1647,7 @@ def test_media_ingest_interruption_and_store_failure_are_atomic(tmp_path: Path) 
             store=LibraryStore(tmp_path / "limited.sqlite"),
             upload_limit=len(_png()) - 1,
             media_upload_limits=_uniform_media_limits(len(_png()) - 1),
+            upload_limits={},
         )
         misleading = cast(
             web.Request,

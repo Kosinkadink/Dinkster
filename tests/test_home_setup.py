@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import socket
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -197,9 +199,12 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
 
 
 @pytest.mark.usefixtures("signed_channels")
-@pytest.mark.parametrize("cancel", [None, "checking-setup", "starting-engine"])
+@pytest.mark.parametrize(
+    ("cancel", "occupied"),
+    [(None, False), (None, True), ("checking-setup", False), ("starting-engine", False)],
+)
 def test_setup_route_runs_real_cli_completion_or_cancellation_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: str | None, occupied: bool
 ) -> None:
     from dinkster_supervisor.environment_runtime import engine_status, stop_engine
     from dinkster_supervisor.environment_state import shared_library
@@ -263,6 +268,20 @@ environment.preparation_progress = progress
 
     monkeypatch.setattr(home_setup.asyncio, "create_subprocess_exec", signed_process)
     root = tmp_path / "installation"
+    competitor = socket.socket()
+    if sys.platform == "win32":
+        competitor.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    command = home_setup.environment_command
+
+    async def competing_command(root: Path, *arguments: str) -> dict[str, object]:
+        if "--yes" in arguments:
+            port = int(arguments[arguments.index("--port") + 1])
+            competitor.bind(("127.0.0.1", port))
+            competitor.listen()
+        return await command(root, *arguments)
+
+    if occupied:
+        monkeypatch.setattr(home_setup, "environment_command", competing_command)
 
     async def scenario() -> None:
         nonlocal cancel
@@ -453,14 +472,25 @@ environment.preparation_progress = progress
             assert refused["activeJob"]["state"] == "completed"
             assert not other.exists()
             assert engine_status(root)[0]["state"] == "ready"
+            if occupied:
+                assert engine_status(root)[0]["url"] != (
+                    f"http://127.0.0.1:{competitor.getsockname()[1]}"
+                )
             await home.shutdown()
             assert engine_status(root)[0]["state"] == "stopped"
+            if occupied:
+                competitor.setblocking(False)
+                with pytest.raises(BlockingIOError):
+                    competitor.accept()
 
     try:
         run_scenario(scenario())
     finally:
-        if (root / "current").exists():
-            stop_engine(root, "main")
+        try:
+            if (root / "current").exists():
+                stop_engine(root, "main")
+        finally:
+            competitor.close()
 
 
 @pytest.mark.usefixtures("signed_channels")
