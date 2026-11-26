@@ -645,6 +645,7 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         "importMount": None,
         "resolvePath": True,
         "importFile": False,
+        "importProgress": False,
     }
     library = request.app.get(LIBRARY_KEY)
     if library is not None:
@@ -652,6 +653,7 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         if library.upload_writer is not None and library.project_folders_for is not None:
             body["importMount"] = library.import_mount_for(project)
             body["importFile"] = service.allow_changes
+            body["importProgress"] = service.allow_changes
     if "digest" in request.query:
         scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
         try:
@@ -746,7 +748,7 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
     return web.json_response(body, headers={"Cache-Control": "no-store"})
 
 
-async def handle_mount_import_file(request: web.Request) -> web.Response:
+async def handle_mount_import_file(request: web.Request) -> web.StreamResponse:
     _require_operator(request)
     service = request.app[MOUNTS_KEY]
     if not service.allow_changes:

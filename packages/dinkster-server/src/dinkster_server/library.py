@@ -71,7 +71,7 @@ import sqlite3
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import closing
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -720,6 +720,7 @@ async def _ingest_latent_upload(
     *,
     source: BinaryIO | None = None,
     source_media_type: str | None = None,
+    progress: Callable[[str, int, int | None], Awaitable[None]] | None = None,
 ) -> web.Response:
     principal = principal_for(request)
     if principal is not LOCAL_PRINCIPAL and not principal.allows_in(scope, "assets:write"):
@@ -766,6 +767,8 @@ async def _ingest_latent_upload(
         size = 0
         chunks = _file_chunks(source) if source is not None else None
         try:
+            if progress is not None:
+                await progress("copying", 0, content_length)
             while source is not None or not request.content.at_eof():
                 chunk = await asyncio.wait_for(
                     anext(chunks, b"")
@@ -799,6 +802,8 @@ async def _ingest_latent_upload(
                     library.latent_reserved_bytes[0] += len(chunk)
                     reserved += len(chunk)
                     await _write_media_upload_chunk(handle, hasher, chunk)
+                if progress is not None:
+                    await progress("copying", size, content_length)
         except TimeoutError:
             return _media_error(408, "idle_timeout", "latent upload body became idle")
         except (ConnectionError, OSError, web.RequestPayloadError):
@@ -841,6 +846,8 @@ async def _ingest_latent_upload(
         # mid-mutation. Serialization makes rollback of newly created bytes safe.
         await library.media_ingest_lock.acquire()
         try:
+            if progress is not None:
+                await progress("publishing", size, content_length)
             bytes_created, grant_created = await run_owned_thread(publish)
         finally:
             library.media_ingest_lock.release()
@@ -896,8 +903,57 @@ async def handle_transfer_upload(request: web.Request) -> web.Response:
     return await _ingest_file_upload(request, scope, None, name, transfer_from=machine)
 
 
-async def import_file(request: web.Request, source: BinaryIO, media_type: str) -> web.Response:
+async def import_file(
+    request: web.Request, source: BinaryIO, media_type: str
+) -> web.StreamResponse:
     """Ingest a host-authorized open file using the upload publication contract."""
+    if request.headers.get("Accept") != "application/x-ndjson":
+        return await _import_file(request, source, media_type)
+    response = web.StreamResponse(
+        headers={"Content-Type": "application/x-ndjson", "Cache-Control": "no-store"}
+    )
+    await response.prepare(request)
+
+    async def progress(phase: str, received: int, total: int | None) -> None:
+        if request.transport is None or request.transport.is_closing():
+            raise ConnectionResetError("file import consumer disconnected")
+        await response.write(
+            (
+                json.dumps(
+                    {"type": "progress", "phase": phase, "received": received, "total": total}
+                )
+                + "\n"
+            ).encode()
+        )
+
+    try:
+        try:
+            result = await _import_file(request, source, media_type, progress=progress)
+        except web.HTTPException as exc:
+            result = web.json_response({"error": exc.reason}, status=exc.status)
+        assert result.text is not None
+        await response.write(
+            (
+                json.dumps(
+                    {"type": "result", "status": result.status, "body": json.loads(result.text)}
+                )
+                + "\n"
+            ).encode()
+        )
+        await response.write_eof()
+    except ConnectionError:
+        # Disconnects stop staging. Publication, once announced, remains atomic.
+        pass
+    return response
+
+
+async def _import_file(
+    request: web.Request,
+    source: BinaryIO,
+    media_type: str,
+    *,
+    progress: Callable[[str, int, int | None], Awaitable[None]] | None = None,
+) -> web.Response:
     query = _file_upload_query(
         request, classified="kind" in request.query, kinds=_MEDIA_KINDS | {LATENT_ASSET_KIND}
     )
@@ -913,10 +969,16 @@ async def import_file(request: web.Request, source: BinaryIO, media_type: str) -
 
         await validate_project(request, request.query.get("project", "default"))
         return await _ingest_latent_upload(
-            request, scope, name, source=source, source_media_type=media_type
+            request, scope, name, source=source, source_media_type=media_type, progress=progress
         )
     return await _ingest_file_upload(
-        request, scope, claimed_kind, name, source=source, source_media_type=media_type
+        request,
+        scope,
+        claimed_kind,
+        name,
+        source=source,
+        source_media_type=media_type,
+        progress=progress,
     )
 
 
@@ -929,6 +991,7 @@ async def _ingest_file_upload(
     transfer_from: str | None = None,
     source: BinaryIO | None = None,
     source_media_type: str | None = None,
+    progress: Callable[[str, int, int | None], Awaitable[None]] | None = None,
 ) -> web.Response:
     error: Callable[[int, str, str], web.Response] = (
         _media_error
@@ -1014,6 +1077,8 @@ async def _ingest_file_upload(
                 if source is not None
                 else request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE)
             )
+            if progress is not None:
+                await progress("copying", 0, content_length)
             async for chunk in chunks:
                 received += len(chunk)
                 if limit is not None and received > limit:
@@ -1023,6 +1088,8 @@ async def _ingest_file_upload(
                         f"{upload_label} exceeds {limit} bytes",
                     )
                 await _write_media_upload_chunk(temporary, hasher, chunk)
+                if progress is not None:
+                    await progress("copying", received, content_length)
         except (ConnectionError, OSError, web.RequestPayloadError):
             return error(400, "interrupted", f"{upload_label} was interrupted")
         finally:
@@ -1144,7 +1211,12 @@ async def _ingest_file_upload(
 
         try:
             ref, created = await run_media_publication(
-                library, publish, handoff=publication_handoff
+                library,
+                publish,
+                handoff=publication_handoff,
+                before_publish=(lambda: progress("publishing", received, content_length))
+                if progress is not None
+                else None,
             )
         except (AssetError, OSError, sqlite3.Error):
             return error(
@@ -1176,6 +1248,7 @@ async def run_media_publication(
     publish: Callable[[], _T],
     *,
     handoff: asyncio.Event | None = None,
+    before_publish: Callable[[], Awaitable[None]] | None = None,
 ) -> _T:
     """Keep serialization owned until an uncancellable worker actually settles."""
     from dinkster_assets.scratch import hold_produced_vault
@@ -1185,6 +1258,12 @@ async def run_media_publication(
             return publish()
 
     await library.media_ingest_lock.acquire()
+    try:
+        if before_publish is not None:
+            await before_publish()
+    except BaseException:
+        library.media_ingest_lock.release()
+        raise
     task = asyncio.ensure_future(asyncio.to_thread(owned_publish))
     if handoff is not None:
         handoff.set()

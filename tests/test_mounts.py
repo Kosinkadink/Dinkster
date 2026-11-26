@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 from threading import Event
@@ -2331,8 +2331,9 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
 
 
 @pytest.mark.parametrize("limited", (False, True))
+@pytest.mark.parametrize("streaming", (False, True))
 def test_native_file_import_copies_with_upload_policy_and_operator_authority(
-    tmp_path: Path, limited: bool
+    tmp_path: Path, limited: bool, streaming: bool
 ) -> None:
     import io
 
@@ -2386,7 +2387,8 @@ def test_native_file_import_copies_with_upload_policy_and_operator_authority(
             authenticator=StaticBearerAuthenticator(
                 {
                     "operator": Principal(
-                        "operator", {"local": frozenset({"settings:write", "assets:write"})}
+                        "operator",
+                        {"local": frozenset({"settings:write", "assets:write", "assets:read"})},
                     ),
                     "writer": Principal("writer", {"local": frozenset({"assets:write"})}),
                 }
@@ -2412,23 +2414,58 @@ def test_native_file_import_copies_with_upload_policy_and_operator_authority(
                 )
                 assert response.status == 403
                 service.allow_changes = False
+                locations = await client.get(
+                    "/api/mounts/locations", headers={"Authorization": "Bearer operator"}
+                )
+                assert locations.status == 200, await locations.text()
+                assert (await locations.json())["importProgress"] is False
                 response = await client.post(
                     url, params=params, json=payload, headers={"Authorization": "Bearer operator"}
                 )
                 assert response.status == 403
                 service.allow_changes = True
+                locations = await client.get(
+                    "/api/mounts/locations", headers={"Authorization": "Bearer operator"}
+                )
+                assert locations.status == 200, await locations.text()
+                assert (await locations.json())["importProgress"] is True
                 before = store.query_assets("local", limit=10)
                 response = await client.post(
-                    url, params=params, json=payload, headers={"Authorization": "Bearer operator"}
+                    url,
+                    params=params,
+                    json=payload,
+                    headers={
+                        "Authorization": "Bearer operator",
+                        **({"Accept": "application/x-ndjson"} if streaming else {}),
+                    },
                 )
                 refused = limited and len(body) > limit
-                assert response.status == (413 if refused else 201), await response.text()
+                expected_status = 413 if refused else 201
+                assert response.status == (200 if streaming else expected_status), (
+                    await response.text()
+                )
                 assert str(tmp_path) not in await response.text()
+                if streaming:
+                    events = [json.loads(line) for line in (await response.text()).splitlines()]
+                    assert events[-1]["type"] == "result"
+                    assert events[-1]["status"] == expected_status
+                    result = events[-1]["body"]
+                    if not refused:
+                        copying = [
+                            event["received"]
+                            for event in events[:-1]
+                            if event["phase"] == "copying"
+                        ]
+                        assert copying[0] == 0 and copying[-1] == len(body)
+                        assert copying == sorted(copying)
+                        assert all(event["total"] == len(body) for event in events[:-1])
+                        assert events[-2]["phase"] == "publishing"
+                else:
+                    result = await response.json()
                 if refused:
                     assert not (imports / native.name).exists()
                     assert store.query_assets("local", limit=10) == before
                 else:
-                    result = await response.json()
                     assert result["asset"] == {
                         "digest": digest_bytes(body),
                         "name": native.name,
@@ -2446,6 +2483,18 @@ def test_native_file_import_copies_with_upload_policy_and_operator_authority(
                     if kind is not None:
                         assert store.media_grant("local", digest_bytes(body), kind) is not None
                 assert native.read_bytes() == body
+            if streaming:
+                response = await client.post(
+                    "/api/mounts/import-file",
+                    params={"scope": "local", "name": "invalid.bin", "unknown": "value"},
+                    json={"path": str(small_source), "mediaType": "application/octet-stream"},
+                    headers={"Authorization": "Bearer operator", "Accept": "application/x-ndjson"},
+                )
+                events = [json.loads(line) for line in (await response.text()).splitlines()]
+                assert response.status == 200
+                assert len(events) == 1 and events[0]["type"] == "result"
+                assert events[0]["status"] == 400
+                assert not (imports / "invalid.bin").exists()
             response = await client.post(
                 "/api/mounts/import-file",
                 params={"scope": "local", "name": "not-a-file.bin"},
@@ -2456,6 +2505,107 @@ def test_native_file_import_copies_with_upload_policy_and_operator_authority(
             assert str(tmp_path) not in await response.text()
         finally:
             await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("latent", (False, True))
+def test_native_import_disconnect_before_publication_leaves_no_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, latent: bool
+) -> None:
+    import numpy as np
+    from aiohttp import web
+    from aiohttp.web_protocol import RequestHandler
+    from safetensors.numpy import save
+
+    data = (
+        save({"latent_tensor": np.array([2.5], dtype=np.float32)}) if latent else b"uncopied file"
+    )
+    source = tmp_path / "source.bin"
+    source.write_bytes(data)
+    imports = tmp_path / "imports"
+    imports.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    table = MountTable(index_root=tmp_path / "indexes")
+    table.add(MountDef("imports", imports, "readwrite"))
+    table.scan("imports")
+    service = MountService(table, allow_changes=True)
+    store = LibraryStore(tmp_path / "catalog.sqlite")
+
+    async def scenario() -> None:
+        disconnected = asyncio.Event()
+        completed = asyncio.Event()
+        connection_lost = RequestHandler.connection_lost
+
+        def closed(handler: RequestHandler, exc: Exception | None) -> None:
+            connection_lost(handler, exc)
+            disconnected.set()
+
+        monkeypatch.setattr(RequestHandler, "connection_lost", closed)
+
+        @web.middleware
+        async def completion(
+            request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
+        ) -> web.StreamResponse:
+            try:
+                return await handler(request)
+            finally:
+                completed.set()
+
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=store,
+            local_resolver=table,
+            project_folders_for=service.project_context,
+            upload_writer=AssetWriter(table),
+            upload_limits=None,
+            upload_staging_root=staging,
+        )
+        app = create_app(make_engine, SCHEMAS, library=library)
+        app.middlewares.append(completion)
+        add_mount_routes(app, service)
+        async with TestClient(TestServer(app)) as client:
+            assert client.server.runner is not None and client.server.runner.server is not None
+            # Exercise disconnect detection without the test server cancelling the handler.
+            client.server.runner.server.handler_cancellation = False
+            existing_files = set(imports.iterdir())
+            await library.media_ingest_lock.acquire()
+            try:
+                response = await client.post(
+                    "/api/mounts/import-file",
+                    params={
+                        "scope": "local",
+                        "name": "stopped.bin",
+                        **({"kind": "data/latent"} if latent else {}),
+                    },
+                    json={"path": str(source), "mediaType": "application/octet-stream"},
+                    headers={"Accept": "application/x-ndjson"},
+                )
+                async with asyncio.timeout(5):
+                    while True:
+                        line = await response.content.readline()
+                        assert line
+                        event = json.loads(line)
+                        if event["type"] == "progress" and event["received"] == len(data):
+                            break
+                response.close()
+                await asyncio.wait_for(disconnected.wait(), timeout=5)
+            finally:
+                library.media_ingest_lock.release()
+            await asyncio.wait_for(completed.wait(), timeout=5)
+            assert list(staging.iterdir()) == []
+            assert set(imports.iterdir()) == existing_files
+            assert store.query_assets("local", limit=10) == []
+            assert library.vault.resolve(digest_bytes(data)) is None
+            assert source.read_bytes() == data
+            response = await client.post(
+                "/api/mounts/import-file",
+                params={"scope": "local", "name": "kept.bin"},
+                json={"path": str(source), "mediaType": "application/octet-stream"},
+            )
+            assert response.status == 201, await response.text()
+            assert (imports / "kept.bin").read_bytes() == data
 
     run_scenario(scenario())
 
