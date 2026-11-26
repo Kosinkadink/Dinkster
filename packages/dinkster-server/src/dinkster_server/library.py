@@ -469,6 +469,7 @@ class ServerLibrary:
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
+ASSET_GRANTS_KEY: web.AppKey[LibraryStore] = web.AppKey("asset_grants")
 
 
 def _json_error(status: int, message: str) -> web.Response:
@@ -1479,8 +1480,8 @@ async def require_asset_read(request: web.Request, digest: str, *, scope: str | 
             )
         scope = request.query.get("scope")
     scope = resolve_scope(principal_for(request), "assets:read", scope)
-    library = request.app.get(LIBRARY_KEY)
-    if library is None or not await asyncio.to_thread(library.store.has_asset_grant, scope, digest):
+    store = request.app.get(ASSET_GRANTS_KEY)
+    if store is None or not await asyncio.to_thread(store.has_asset_grant, scope, digest):
         raise web.HTTPNotFound(
             text='{"error": "asset not held here"}',
             content_type="application/json",
@@ -2062,6 +2063,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             (library.vault, *library.preview_vaults),
         )
     app[LIBRARY_KEY] = library
+    app[ASSET_GRANTS_KEY] = library.store
     app[POLICY_KEY] = {}
     app[POLICY_WAKE_KEY] = asyncio.Event()
     app.cleanup_ctx.append(cleanup_policy)

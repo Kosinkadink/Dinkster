@@ -233,6 +233,7 @@ from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
     DeclaredAsset,
+    LibraryStore,
     MountsError,
     asset_selection_options,
     digest_bytes,
@@ -306,7 +307,7 @@ from dinkster_schema import (
     validate_remote_choice_authority,
     validate_replacement_references,
 )
-from dinkster_schema.reporting import ImageDocumentArtifact
+from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     ENGINE_EVENT_FRAME_LIMIT_BYTES,
     ENGINE_JOB_SUBMISSION_LIMIT_BYTES,
@@ -345,6 +346,7 @@ from .events import (
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
 from .library import (
+    ASSET_GRANTS_KEY,
     LIBRARY_KEY,
     ServerLibrary,
     add_library_routes,
@@ -4631,14 +4633,12 @@ async def handle_assets_list(request: web.Request) -> web.Response:
         return web.json_response({"error": "at most one scope is allowed"}, status=400)
     scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
     export = request.app[ASSET_EXPORT_KEY]
-    library = request.app.get(LIBRARY_KEY)
+    store = request.app.get(ASSET_GRANTS_KEY)
 
     def available() -> list[str]:
-        if library is None:
+        if store is None:
             return []
-        return [
-            digest for digest in export.digests() if library.store.has_asset_grant(scope, digest)
-        ]
+        return [digest for digest in export.digests() if store.has_asset_grant(scope, digest)]
 
     digests = await asyncio.to_thread(available)
     return web.json_response({"digests": sorted(digests)}, headers={"Cache-Control": "no-store"})
@@ -4778,6 +4778,9 @@ def create_app(
     if library is not None and make_library is not None:
         raise ValueError("supply a library or its factory, not both")
     has_library = library is not None or make_library is not None
+    export_grants = (
+        LibraryStore(":memory:") if asset_export is not None and not has_library else None
+    )
 
     async def publish_image_documents(
         node_id: str, claims: Sequence[ImageDocumentArtifact]
@@ -4987,6 +4990,29 @@ def create_app(
     async def prepare_job(job: Job) -> None:
         from .projects import project_for_run
 
+        if export_grants is not None:
+            assert job.execution is not None
+            store = export_grants
+            execution = job.execution
+            publisher = execution.publish_preview_artifacts
+
+            async def publish_previews(
+                node_id: str, claims: Sequence[EncodedPreviewArtifact]
+            ) -> tuple[SavedArtifact, ...]:
+                assert publisher is not None
+                artifacts = await publisher(node_id, claims)
+                for claim in claims:
+                    await run_owned_thread(
+                        lambda claim=claim: store.grant_asset(
+                            job.scope, digest_bytes(claim.data), claim.data
+                        )
+                    )
+                return artifacts
+
+            job.execution = replace(
+                execution,
+                publish_preview_artifacts=publish_previews if publisher is not None else None,
+            )
         project = await project_for_run(app, job.project)
         if prepare_project_run is not None:
             await prepare_project_run(job.project)
@@ -5168,6 +5194,8 @@ def create_app(
     app.router.add_get("/api/assets/selections", handle_asset_selections)
     if library is not None:
         add_library_routes(app, library)
+    elif export_grants is not None:
+        app[ASSET_GRANTS_KEY] = export_grants
     if history is not None:
         add_history_routes(app, history)
     if training_sessions is not None:
@@ -5205,6 +5233,8 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler_task
         await state.queue.close()
+        if export_grants is not None:
+            await asyncio.to_thread(export_grants.close)
         if library is not None and not library.keep_temporary_files:
             from .cleanup import inspect_engine_temporary
 

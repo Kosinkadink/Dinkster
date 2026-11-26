@@ -41,6 +41,7 @@ from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema.reporting import EncodedPreviewArtifact, capture_preview_artifacts
 from dinkster_server import STATE_KEY, ServerLibrary, create_app
+from dinkster_server.auth import Principal, StaticBearerAuthenticator
 from dinkster_server.library import recover_asset_observations
 from dinkster_server.queue import Job, JobKey
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
@@ -233,10 +234,33 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                 composer.composition.schemas,
                 asset_export=vault,
                 library=library,
+                authenticator=(
+                    StaticBearerAuthenticator(
+                        {
+                            scope: Principal(
+                                scope,
+                                {scope: frozenset({"jobs:submit", "jobs:read", "assets:read"})},
+                            )
+                            for scope in ("local", "other")
+                        }
+                    )
+                    if not retained
+                    else None
+                ),
             )
-            client = TestClient(TestServer(app))
+            client = TestClient(
+                TestServer(app),
+                headers={"Authorization": "Bearer local"} if not retained else {},
+            )
             await client.start_server()
             try:
+                if not retained:
+                    with vault.writer(digest_bytes(mp4)) as writer:
+                        writer.write(mp4)
+                        writer.commit_with_result()
+                    ungranted = await client.get(f"/assets/{digest_bytes(mp4)}")
+                    assert ungranted.status == 404
+                    assert await (await client.get("/assets")).json() == {"digests": []}
                 graph = Graph(
                     nodes={
                         "preview": GraphNode(
@@ -346,6 +370,61 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
                 asset = await client.get(f"/assets/{artifact['digest']}")
                 assert asset.status == 200
                 assert await asset.read() == mp4
+
+                if not retained:
+                    other_headers = {"Authorization": "Bearer other"}
+                    denied = await client.get(
+                        f"/assets/{artifact['digest']}?scope=other", headers=other_headers
+                    )
+                    assert denied.status == 404
+                    assert await (
+                        await client.get("/assets?scope=other", headers=other_headers)
+                    ).json() == {"digests": []}
+                    for job_id, cache_enabled, granted in (
+                        ("cached-before-publication", True, False),
+                        ("fresh-publication", False, True),
+                        ("cached-after-publication", True, True),
+                    ):
+                        response = await client.post(
+                            "/api/jobs",
+                            headers=other_headers,
+                            json={
+                                "clientId": "preview-client",
+                                "jobId": job_id,
+                                "scope": "other",
+                                "cacheEnabled": cache_enabled,
+                                "project": "film",
+                                "graph": graph_to_wire(graph),
+                                "targets": ["preview"],
+                            },
+                        )
+                        assert response.status == 202
+                        async with asyncio.timeout(5):
+                            while True:
+                                repeated = await (
+                                    await client.get(
+                                        f"/api/jobs/preview-client/{job_id}", headers=other_headers
+                                    )
+                                ).json()
+                                if repeated["state"] not in ("pending", "running"):
+                                    break
+                                await asyncio.sleep(0)
+                        assert repeated["state"] == "completed", repeated
+                        if cache_enabled:
+                            assert producing_node in repeated["cached"]
+                            assert repeated["artifacts"] == []
+                        else:
+                            assert producing_node in repeated["executed"]
+                            assert repeated["artifacts"][0]["digest"] == artifact["digest"]
+                        asset = await client.get(
+                            f"/assets/{artifact['digest']}?scope=other", headers=other_headers
+                        )
+                        assert asset.status == (200 if granted else 404)
+                        if granted:
+                            assert await asset.read() == mp4
+                        assert await (
+                            await client.get("/assets?scope=other", headers=other_headers)
+                        ).json() == {"digests": [artifact["digest"]] if granted else []}
 
                 engine = composer.composition.make_engine(lambda _event: None)
                 with pytest.raises(ExecutionError, match="fixture failure"):
