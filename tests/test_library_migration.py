@@ -326,6 +326,7 @@ def test_staging_preserves_legacy_records_and_does_not_activate(tmp_path: Path) 
         skipped=1,
         thumbnail=AssetRef(digest, "preview.png", 12, "image/png"),
         asset_digests=(digest,),
+        workflow_name="Migrated flow",
     )
     history.put(finished)
     history.close()

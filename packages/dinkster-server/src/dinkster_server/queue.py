@@ -113,6 +113,11 @@ class Job:
     graph execution or cache identity; it rides the job wire and history
     so any run can answer "what exact document produced this". Empty
     means unset (omitted on the wire, never null)."""
+    workflow_name: str = field(default="", kw_only=True)
+    """The workflow's name as it read when the job was submitted. Like
+    ``source_document`` it is execution-opaque, and history keeps it, so a
+    later rename leaves past runs as they were. Empty means none was sent
+    (omitted on the wire, never null)."""
     export_snapshot: ExportSnapshot | None = None
     """Opaque compat export payload carried only to output-node invocations."""
     execution: ExecutionRuntime | None = None
@@ -276,6 +281,7 @@ class JobQueue:
         principal_id: str = "local",
         principal_kind: str = "human",
         source_document: str = "",
+        workflow_name: str = "",
         fingerprint: str = "",
         execution: ExecutionRuntime | None = None,
         compiled_graph: CompiledGraph | None = None,
@@ -378,6 +384,7 @@ class JobQueue:
             principal_id=principal_id,
             principal_kind=principal_kind,
             source_document=source_document,
+            workflow_name=workflow_name,
             export_snapshot=export_snapshot,
             execution=execution,
             preview_policy=previews,

@@ -51,6 +51,8 @@ def _validate(document: dict[str, object]) -> None:
         source and re.fullmatch(r"blake3:[0-9a-f]{64}", source) is None
     ):
         raise LibraryError("invalid", "history sourceDocument must be a digest")
+    if "workflowName" in document:
+        text(document["workflowName"], "history workflowName")
     if "assetDigests" not in document:
         raise LibraryError("invalid", "history must state whether asset references are known")
     digests = document["assetDigests"]

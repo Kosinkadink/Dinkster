@@ -9,8 +9,10 @@ written down with its stable per-run identity (runId), its job identity
 (clientId/jobId), timings, terminal state, error payload, run summary
 counts, and - the point of the exercise - the execution-opaque
 ``sourceDocument`` digest naming the exact workflow asset that produced
-it. Since environment stamps live INSIDE documents, persisting the
-document (library) plus this link answers "what exact document and
+it, with ``workflowName``, the name that workflow had when the run was
+submitted (omitted when none was sent, as for runs recorded before it).
+Since environment stamps live INSIDE documents, persisting the document
+(library) plus this link answers "what exact document and
 environment produced this run" with no second channel.
 
 Output values live in the cache and are served by the peek surface with
@@ -106,6 +108,8 @@ class HistoryRecord:
     principal_kind: str = "human"
     attempt: int = 1
     source_document: str = ""  # "" = unset (omitted on the wire, never null)
+    workflow_name: str = field(default="", kw_only=True)
+    """The workflow's name when the run was submitted; "" = none was recorded."""
     error: dict[str, Any] | None = None
     executed: int = 0
     cached: int = 0
@@ -141,6 +145,8 @@ class HistoryRecord:
             wire["startedAt"] = self.started_at
         if self.source_document:
             wire["sourceDocument"] = self.source_document
+        if self.workflow_name:
+            wire["workflowName"] = self.workflow_name
         if self.error is not None:
             wire["error"] = self.error
         if self.automatic:
@@ -199,6 +205,7 @@ def record_from_job(job: Job) -> HistoryRecord:
         finished_at=job.finished_at if job.finished_at is not None else 0.0,
         attempt=job.attempt,
         source_document=job.source_document,
+        workflow_name=job.workflow_name,
         error=job.error,
         executed=len(job.result.executed) if job.result is not None else 0,
         cached=len(job.result.cached) if job.result is not None else 0,
@@ -333,6 +340,10 @@ class HistoryStore:
                 self._conn.execute(
                     "ALTER TABLE history ADD COLUMN automatic TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "workflow_name" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE history ADD COLUMN workflow_name TEXT NOT NULL DEFAULT ''"
+                )
             if "asset_digests" not in columns:
                 # Old rows did not record output identities. NULL blocks
                 # collection rather than claiming those outputs had no assets.
@@ -368,6 +379,13 @@ class HistoryStore:
                 )
                 """
             )
+            columns = {
+                row["name"] for row in self._accepted_conn.execute("PRAGMA table_info(accepted)")
+            }
+            if "workflow_name" not in columns:
+                self._accepted_conn.execute(
+                    "ALTER TABLE accepted ADD COLUMN workflow_name TEXT NOT NULL DEFAULT ''"
+                )
 
     def close(self) -> None:
         with self._lock:
@@ -467,8 +485,9 @@ class HistoryStore:
             " (run_id, scope, principal, principal_kind, client_id, job_id, state,"
             " priority, submitted,"
             " started, finished, source_document, error, executed, cached,"
-            " skipped, attempt, node_receipts, asset_digests, thumbnail, automatic)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " skipped, attempt, node_receipts, asset_digests, thumbnail, automatic,"
+            " workflow_name)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(run_id) DO NOTHING",
             (
                 record.run_id,
@@ -494,6 +513,7 @@ class HistoryStore:
                 else None,
                 json.dumps(record.thumbnail.to_wire()) if record.thumbnail is not None else None,
                 json.dumps(record.automatic, separators=(",", ":")),
+                record.workflow_name,
             ),
         )
         return cursor.rowcount > 0
@@ -516,8 +536,8 @@ class HistoryStore:
                 "INSERT INTO accepted"
                 " (run_id, scope, principal, principal_kind, client_id, job_id,"
                 " state, priority, submitted, started, fingerprint,"
-                " source_document, execution_identity, attempt)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " source_document, execution_identity, attempt, workflow_name)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     job.run_id,
                     job.scope,
@@ -533,6 +553,7 @@ class HistoryStore:
                     job.source_document,
                     execution_identity,
                     job.attempt,
+                    job.workflow_name,
                 ),
             )
 
@@ -605,6 +626,7 @@ class HistoryStore:
                     finished_at=now,
                     attempt=row["attempt"],
                     source_document=row["source_document"],
+                    workflow_name=row["workflow_name"],
                     error=error,
                     # A crash may follow sealed result publication but precede
                     # the history commit. Only that exact complete manifest
@@ -784,6 +806,7 @@ def _from_document(document: dict[str, object]) -> HistoryRecord:
         finished_at=cast(float, document["finishedAt"]),
         attempt=cast(int, document["attemptId"]),
         source_document=cast(str, document.get("sourceDocument", "")),
+        workflow_name=cast(str, document.get("workflowName", "")),
         error=cast("dict[str, Any] | None", document.get("error")),
         executed=cast(int, document["executed"]),
         cached=cast(int, document["cached"]),
@@ -815,6 +838,7 @@ def _from_row(row: sqlite3.Row) -> HistoryRecord:
         finished_at=row["finished"],
         attempt=row["attempt"],
         source_document=row["source_document"],
+        workflow_name=row["workflow_name"],
         error=json.loads(error_raw) if error_raw is not None else None,
         executed=row["executed"],
         cached=row["cached"],
