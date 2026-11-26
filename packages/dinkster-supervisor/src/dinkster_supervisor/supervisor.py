@@ -95,6 +95,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import aiohttp
 from aiohttp import WSMsgType, web
@@ -301,6 +302,7 @@ class EngineLink:
     detail: str = ""
     base_url: str = ""
     pid: int | None = None
+    instance: str | None = None
     exit_code: int | None = None
     progress: dict[str, object] | None = None
     """Mirrored composition progress from the engine's health body
@@ -314,6 +316,8 @@ class EngineLink:
         engine: dict[str, object] = {}
         if self.pid is not None:
             engine["pid"] = self.pid
+        if self.instance is not None:
+            engine["instance"] = self.instance
         if self.exit_code is not None:
             engine["exitCode"] = self.exit_code
         if engine:
@@ -436,6 +440,7 @@ class EngineProcess:
         log.info("starting engine: %s", " ".join(command))
         self._process = await asyncio.create_subprocess_exec(*command)
         self.link.pid = self._process.pid
+        self.link.instance = uuid4().hex
         self._watch_task = asyncio.create_task(self._watch(self._process))
 
     async def _watch(self, process: asyncio.subprocess.Process) -> None:
