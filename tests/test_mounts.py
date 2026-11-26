@@ -2099,6 +2099,19 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
                                 },
                             )
                             assert response.status == 200, await response.text()
+                            response = await client.put(
+                                f"/api/mounts/projects/{project}",
+                                json={
+                                    "mounts": ["renders", f"{project}-input"],
+                                    "outputMount": "renders",
+                                },
+                            )
+                            assert response.status == 200, await response.text()
+                            response = await client.put(
+                                f"/api/mounts/projects/{project}",
+                                json={"mounts": ["renders"], "outputMount": "renders"},
+                            )
+                            assert response.status == 400, await response.text()
                             response = await client.post(
                                 "/api/assets",
                                 params={"scope": "local", "project": project, "name": "source.txt"},
