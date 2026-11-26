@@ -396,7 +396,10 @@ def test_numbers_keep_whole_and_decimal_apart_on_the_wire() -> None:
 
 
 def test_call_arguments_and_answers_keep_formula_integers_above_the_decimal_digit_cap() -> None:
-    from dinkster_protocol.pack_functions import check_answer
+    from decimal import Decimal
+
+    import pytest
+    from dinkster_protocol.pack_functions import PackFunctionRefused, check_answer
 
     expression = "2 ** 4000 * 2 ** 4000 * 2 ** 4000 * 2 ** 3000"
     digits = parse_formula(f"str({expression})", FormulaScope()).evaluate(FormulaValues())
@@ -425,5 +428,25 @@ def test_call_arguments_and_answers_keep_formula_integers_above_the_decimal_digi
                 assert status == 200
                 assert seen[-1] == sign * (1 << 15000)
                 assert lines == [{"answer": {"count": {"$int": text}}, "notes": []}]
+
+            for sign in (1, -1):
+                largest = sign * ((1 << 16384) - 1)
+                text = format(Decimal(largest), "f")
+                wire["args"] = [{"$int": text}]
+                status, lines, _ = await _call(client, wire)
+                assert status == 200
+                assert seen[-1] == largest
+                assert lines == [{"answer": {"count": {"$int": text}}, "notes": []}]
+
+                too_large = sign * (1 << 16384)
+                for invalid in (format(Decimal(too_large), "f"), "9" * 1_000_000):
+                    accepted = len(seen)
+                    wire["args"] = [{"$int": invalid}]
+                    status, _, _ = await _call(client, wire)
+                    assert status == 400
+                    assert len(seen) == accepted
+                with pytest.raises(PackFunctionRefused) as refused:
+                    check_answer({"count": too_large}, ("count",))
+                assert refused.value.code == "wrong-shape"
 
     run_scenario(scenario())

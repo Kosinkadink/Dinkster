@@ -23,9 +23,11 @@ from typing import Final, cast
 
 from dinkster_schema import NodeSchema
 from dinkster_schema.body import Call, declared_calls
+from dinkster_schema.formula import MAX_INTEGER_BITS
 
 from .lookups import JSON_SAFE_INTEGER_MAX
 
+_MAX_INTEGER_DIGITS: Final = math.ceil(MAX_INTEGER_BITS * math.log10(2))
 PACK_FUNCTION_PATH: Final = "/api/node-functions/call"
 PACK_FUNCTION_REQUEST_MAX_BYTES: Final = 1024 * 1024
 PACK_FUNCTION_ANSWER_MAX_BYTES: Final = 1024 * 1024
@@ -62,6 +64,8 @@ def value_to_wire(value: object) -> object:
     if value is None or isinstance(value, (bool, str)):
         return value
     if isinstance(value, int):
+        if value.bit_length() > MAX_INTEGER_BITS:
+            raise ValueError(f"whole number exceeds {MAX_INTEGER_BITS} bits")
         return (
             value
             if -JSON_SAFE_INTEGER_MAX <= value <= JSON_SAFE_INTEGER_MAX
@@ -103,9 +107,16 @@ def value_from_wire(value: object) -> object:
         data = cast("dict[str, object]", value)
         if set(data) == {"$int"}:
             digits = data["$int"]
+            if isinstance(digits, str) and len(digits) > _MAX_INTEGER_DIGITS + int(
+                digits.startswith("-")
+            ):
+                raise ValueError(f"whole number exceeds {MAX_INTEGER_BITS} bits")
             if not isinstance(digits, str) or re.fullmatch(r"-?[0-9]+", digits) is None:
                 raise ValueError("$int holds decimal digits")
-            return int(Decimal(digits))
+            number = int(Decimal(digits))
+            if number.bit_length() > MAX_INTEGER_BITS:
+                raise ValueError(f"whole number exceeds {MAX_INTEGER_BITS} bits")
+            return number
         if set(data) == {"$float"}:
             number = data["$float"]
             try:
