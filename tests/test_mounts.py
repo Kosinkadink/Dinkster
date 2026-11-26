@@ -2188,7 +2188,7 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
     root = tmp_path / "library"
     mounts = tuple(
         MountDef(name, tmp_path / name, "read" if name == "reference" else "readwrite")
-        for name in ("film-input", "portrait-input", "imports", "renders", "reference")
+        for name in ("imports", "renders", "reference")
     )
     for mount in mounts:
         mount.path.mkdir()
@@ -2218,9 +2218,23 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
                 async with TestClient(TestServer(app)) as client:
                     if not restarted:
                         for project in ("film", "portrait"):
+                            response = await client.post(
+                                "/api/projects",
+                                json={"id": project, "filesFolder": str(tmp_path / project)},
+                            )
+                            assert response.status == 200, await response.text()
+                            await wait_for_state(
+                                client, f"{project}-input", "ready", project=project
+                            )
+                            response = await client.post(
+                                "/api/assets",
+                                params={"scope": "local", "project": project, "name": "first.txt"},
+                                data=project.encode(),
+                            )
+                            assert response.status == 201, await response.text()
                             assert (
-                                await client.post("/api/projects", json={"id": project})
-                            ).status == 200
+                                tmp_path / project / "input" / "first.txt"
+                            ).read_bytes() == project.encode()
                             response = await client.put(
                                 f"/api/mounts/projects/{project}",
                                 json={
@@ -2250,7 +2264,7 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
                             )
                             assert response.status == 201, await response.text()
                             assert (
-                                tmp_path / f"{project}-input" / "source.txt"
+                                tmp_path / project / "input" / "source.txt"
                             ).read_bytes() == project.encode()
                         for destination in ("reference", "unknown", "portrait-input"):
                             response = await client.put(
@@ -2264,6 +2278,9 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
                             assert response.status == 400, await response.text()
                     else:
                         for project in ("film", "portrait"):
+                            await wait_for_state(
+                                client, f"{project}-input", "ready", project=project
+                            )
                             locations = await (
                                 await client.get(
                                     "/api/mounts/locations", params={"project": project}
@@ -2286,9 +2303,9 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
                         )
                         assert response.status == 201, await response.text()
                         assert (
-                            tmp_path / "film-input" / "source_00001.txt"
+                            tmp_path / "film" / "input" / "source_00001.txt"
                         ).read_bytes() == b"portrait"
-                        assert (tmp_path / "film-input" / "source.txt").read_bytes() == b"film"
+                        assert (tmp_path / "film" / "input" / "source.txt").read_bytes() == b"film"
                         assert (await client.delete("/api/mounts/film-input")).status == 200
                         response = await client.post(
                             "/api/assets",
