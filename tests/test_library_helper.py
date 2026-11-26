@@ -4786,6 +4786,79 @@ def test_asset_browse_groups_aliases_and_binds_scope_project_and_filters(tmp_pat
     assert not (tmp_path / "empty-assets" / "library.sqlite").exists()
 
 
+def test_project_registration_allocates_known_output_folders_and_retains_them(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import MountConfiguration, MountDef, MountTable
+
+    from dinkster.mounts_api import MountService
+
+    old_output = tmp_path / "old-output"
+    old_output.mkdir()
+    with LibraryClient(tmp_path / "library") as helper:
+        MountConfiguration.load(helper).save(
+            (
+                MountDef("output", old_output, "readwrite"),
+                MountDef("film-output", tmp_path / "unrelated"),
+            ),
+            output_mount="output",
+        )
+        helper.call("folders.grants.patch", revision=1, patch={"future": "keep grants"})
+        legacy = helper.call("projects.register", id="legacy")
+        created: dict[str, dict[str, object]] = {}
+        for identifier in ("film", "portraits"):
+            parent = tmp_path / identifier
+            document = cast(
+                "dict[str, object]",
+                helper.call("projects.register", id=identifier, filesFolder=str(parent))["project"],
+            )
+            created[identifier] = document
+            assert document["filesFolder"] == str(parent)
+            assert document["folder"] == str(parent / "output")
+            assert (parent / "output").is_dir()
+        service = MountService(MountTable(), library=helper)
+        for identifier, mount_id in (("film", "film-output-2"), ("portraits", "portraits-output")):
+            context = service.project_context(identifier)
+            assert context.output_mount == mount_id
+            assert service.table.get(mount_id) == MountDef(
+                mount_id, tmp_path / identifier / "output", "readwrite"
+            )
+            assert mount_id not in service.project_context("legacy").mounts
+        grants = cast("dict[str, object]", helper.call("folders.get")["grants"])
+        assert cast("dict[str, object]", grants["values"])["future"] == "keep grants"
+        baseline, cursor = helper.call("folders.get"), helper.call("changes.head")["cursor"]
+        assert helper.call(
+            "projects.register", id="film", filesFolder=str(tmp_path / "ignored")
+        ) == {"project": created["film"]}
+        assert (
+            helper.call("projects.register", id="legacy", filesFolder=str(tmp_path / "unused"))
+            == legacy
+        )
+        assert not (tmp_path / "ignored").exists()
+        assert not (tmp_path / "unused").exists()
+        assert helper.call("folders.get") == baseline
+        assert helper.call("changes", cursor=cursor)["items"] == []
+        blocked = tmp_path / "blocked"
+        blocked.write_bytes(b"not a directory")
+        for path in ("relative", 42, str(tmp_path / "film"), str(blocked)):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call("projects.register", id="refused", filesFolder=path)
+            assert invalid.value.code == "invalid"
+            assert helper.call("projects.get", id="refused") == {"project": None}
+            assert helper.call("folders.get") == baseline
+            assert helper.call("changes", cursor=cursor)["items"] == []
+        payload = tmp_path / "film" / "output" / "retained.bin"
+        payload.write_bytes(b"keep after deletion")
+        helper.call("projects.delete", id="film", revision=1)
+        helper.call("projects.restore", id="film", revision=2)
+        assert payload.read_bytes() == b"keep after deletion"
+        assert helper.call("folders.get") == baseline
+        assert helper.call("projects.get", id="legacy") == legacy
+    with LibraryClient(tmp_path / "library") as reopened:
+        assert reopened.call("projects.get", id="portraits") == {"project": created["portraits"]}
+        assert reopened.call("folders.get") == baseline
+
+
 def test_project_registration_and_revision_conflicts(tmp_path: Path) -> None:
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
         with ThreadPoolExecutor(2) as pool:

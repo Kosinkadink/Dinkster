@@ -4722,6 +4722,7 @@ def create_app(
     redactor: PathRedactor | None = None,
     execution_journal: ExecutionJournal | None = None,
     full_free: FullFree | None = None,
+    prepare_project_run: Callable[[str], Awaitable[None]] | None = None,
     prepare_remote_run: Callable[[str, Mapping[str, object] | None], Awaitable[None]] | None = None,
     finish_remote_run: Callable[[str], Awaitable[None]] | None = None,
     federated_asset_paths: Mapping[str, str] | None = None,
@@ -4957,6 +4958,8 @@ def create_app(
         from .projects import project_for_run
 
         project = await project_for_run(app, job.project)
+        if prepare_project_run is not None:
+            await prepare_project_run(job.project)
         if prepare_remote_run is not None:
             link = (
                 cast("Mapping[str, object] | None", project["accountProject"]) if project else None
