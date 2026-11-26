@@ -453,22 +453,29 @@ class AssetWidget:
 
 @dataclass(frozen=True)
 class MountWidget:
-    """Select one writable mount id for a MOUNT or STRING input."""
+    """Select one writable mount id for MOUNT, STRING or their union."""
 
 
 @dataclass(frozen=True)
 class SaveTargetWidget:
     """Presentation request for a save-destination picker: choose a
     readwrite mount and a relative prefix (subfolders + filename stem).
-    The value it produces is a ``dinkster.save_target`` wire mapping
+    On an input it produces a ``dinkster.save_target`` wire mapping
     {"mount": ..., "prefix": ...} - structured, never a raw path string.
+    On an Editor its parts write the existing rows named by ``writes``.
 
     ``suffix`` is advisory display data (what extension the node will
-    append, e.g. ".png"); the node owns the actual format."""
+    append, e.g. ".png"); the node owns the actual format.
+    ``writes`` and ``reads`` map an editor's parts to existing row ids."""
 
     suffix: str = ""
+    writes: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
+    reads: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
 
     def __post_init__(self) -> None:
+        writes, reads = editor_row_names(self.writes, self.reads, "save target widget")
+        object.__setattr__(self, "writes", writes)
+        object.__setattr__(self, "reads", reads)
         if not self.suffix:
             return
         if not self.suffix.startswith(".") or "/" in self.suffix or "\\" in self.suffix:
@@ -1321,13 +1328,16 @@ def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: Widget
             )
     if isinstance(widget, StringWidget) and primitive_type != TypeExpr.concrete(CORE_STRING):
         raise ValueError(f"input {input_id}: string widget requires a concrete STRING input")
-    if isinstance(widget, MountWidget) and input_type not in (
-        TypeExpr.concrete(MOUNT_TYPE),
-        TypeExpr.concrete(CORE_STRING),
-    ):
-        raise ValueError(
-            f"input {input_id}: mount widget requires a concrete MOUNT or STRING input"
+    if (
+        isinstance(widget, MountWidget)
+        and input_type
+        not in (
+            TypeExpr.concrete(MOUNT_TYPE),
+            TypeExpr.concrete(CORE_STRING),
         )
+        and not (input_type.kind == "union" and set(input_type.types) == {MOUNT_TYPE, CORE_STRING})
+    ):
+        raise ValueError(f"input {input_id}: mount widget requires MOUNT, STRING or their union")
     if isinstance(widget, ColorWidget) and input_type not in (
         TypeExpr.concrete(CORE_STRING),
         TypeExpr.concrete(COLOR_TYPE),

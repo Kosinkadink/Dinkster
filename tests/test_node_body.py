@@ -226,7 +226,15 @@ def test_input_and_output_labels_and_visible_take_formulas_outside_the_signature
 
 def test_an_editor_names_the_rows_it_writes_and_reads_where_it_stands() -> None:
     from dinkster_schema.body import Choice, Editor, Group, Numbered, Option, Row, State
-    from dinkster_schema.model import CompositorWidget, Input, NodeSchema, Output, TypeExpr
+    from dinkster_schema.model import (
+        CompositorWidget,
+        Input,
+        MountWidget,
+        NodeSchema,
+        Output,
+        SaveTargetWidget,
+        TypeExpr,
+    )
     from dinkster_schema.wire import schema_from_wire, schema_signature, schema_to_wire
     from dinkster_values import CustomWidgetDescriptor
 
@@ -294,6 +302,26 @@ def test_an_editor_names_the_rows_it_writes_and_reads_where_it_stands() -> None:
         "test.other",
         body=(width, Input("height", int_type, widget=own)),
     )
+
+    mount = Input("mount", TypeExpr.union("MOUNT", "STRING"), required=False, widget=MountWidget())
+    name = Input("filename_prefix", TypeExpr.concrete("STRING"), default="renders/portrait")
+    target = Editor(
+        "target", SaveTargetWidget(".png", writes={"mount": "mount", "name": "filename_prefix"})
+    )
+    save = NodeSchema("test.save", body=(mount, name, target))
+    restored = schema_from_wire(schema_to_wire(save))
+    assert restored.body == save.body
+    assert restored.inputs == (mount, name)
+    assert schema_signature(save) == schema_signature(NodeSchema("test.save", body=(mount, name)))
+    with pytest.raises(ValueError, match="names no row here: 'missing'"):
+        NodeSchema(
+            "test.refused",
+            body=(mount, name, Editor("e", SaveTargetWidget(reads={"name": "missing"}))),
+        )
+    with pytest.raises(ValueError, match="in both writes and reads"):
+        SaveTargetWidget(writes={"mount": "mount"}, reads={"name": "mount"})
+    with pytest.raises(ValueError, match="mount widget requires"):
+        Input("mount", TypeExpr.union("MOUNT", "INT"), widget=MountWidget())
 
 
 def test_a_state_outside_the_run_is_kept_but_never_read_by_the_engine() -> None:
