@@ -192,6 +192,7 @@ class SetupJobs:
         self._plans: dict[str, dict[str, object]] = {}
         self._pack_identities: dict[str, str | None] = {}
         self._jobs: dict[str, dict[str, object]] = {}
+        self._running_plan: dict[str, object] | None = None
         self._cancelled_roots: dict[Path, str] = {}
         self._task: asyncio.Task[None] | None = None
         self._progress: Path | None = None
@@ -208,6 +209,15 @@ class SetupJobs:
         return self.get(job_id) if job_id is not None else None
 
     async def plan(self, root: Path, channel: str, variant: str | None) -> dict[str, object]:
+        if (
+            self.busy
+            and self._running_plan is not None
+            and root.is_absolute()
+            and str(root.resolve()) == self._running_plan["root"]
+            and channel == self._running_plan["channel"]
+            and variant in (None, self._running_plan["variant"])
+        ):
+            return self._running_plan
         identity = self._cancelled_roots.get(root.resolve())
         if identity is not None and identity == await asyncio.to_thread(
             _cancelled_setup_identity, root
@@ -303,6 +313,7 @@ class SetupJobs:
             while len(self._jobs) > 16:
                 del self._jobs[next(iter(self._jobs))]
             self._progress = dinkster_home() / "setup-jobs" / f"{job_id}.json"
+            self._running_plan = facts
             self._cancelled_roots.pop(Path(cast("str", facts["root"])), None)
             self._task = asyncio.create_task(
                 self._run(job, facts, self._progress, previous_identity)
@@ -365,6 +376,7 @@ class SetupJobs:
         finally:
             progress.unlink(missing_ok=True)
             progress.with_name(progress.name + ".cancel").unlink(missing_ok=True)
+            self._running_plan = None
 
     def get(self, job_id: str) -> dict[str, object]:
         job = self._jobs[job_id]
