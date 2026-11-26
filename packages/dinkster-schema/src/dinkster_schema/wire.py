@@ -722,7 +722,8 @@ def _widget_descriptor_from_wire(
             histogram=histogram,
             histogram_visible=histogram_visible,
             interpolations=cast(
-                "tuple[Literal['linear', 'monotone_cubic', 'step'], ...]", tuple(interpolations)
+                "tuple[Literal['linear', 'monotone_cubic', 'step'], ...]",
+                tuple(cast("list[object]", interpolations)),
             ),
         )
     if kind == "COMPOSITOR":

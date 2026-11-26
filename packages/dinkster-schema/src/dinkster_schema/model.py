@@ -1102,12 +1102,14 @@ class CurveWidget:
             raise ValueError("curve widget histogram must be a string")
         if type(self.histogram_visible) is not bool:
             raise ValueError("curve widget histogram_visible must be a bool")
-        kinds = self.interpolations
+        kinds = cast("object", self.interpolations)
+        if not isinstance(kinds, tuple):
+            raise ValueError("curve widget interpolations must be distinct supported kinds")
+        choices = cast("tuple[object, ...]", kinds)
         if (
-            not isinstance(kinds, tuple)
-            or not kinds
-            or any(kind not in ("linear", "monotone_cubic", "step") for kind in kinds)
-            or len(set(kinds)) != len(kinds)
+            not choices
+            or any(kind not in ("linear", "monotone_cubic", "step") for kind in choices)
+            or len(set(choices)) != len(choices)
         ):
             raise ValueError("curve widget interpolations must be distinct supported kinds")
         for name in ("input_strip", "output_strip"):
