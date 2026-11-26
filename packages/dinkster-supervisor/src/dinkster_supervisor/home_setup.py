@@ -415,6 +415,10 @@ class SetupJobs:
 SETUP_KEY = web.AppKey("home_setup", SetupJobs)
 
 
+async def handle_active_job(request: web.Request) -> web.Response:
+    return web.json_response({"activeJob": request.app[SETUP_KEY].active_job})
+
+
 async def handle_plan(request: web.Request) -> web.Response:
     try:
         if set(request.query) - {"root", "channel", "variant"}:
