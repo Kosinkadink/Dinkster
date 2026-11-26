@@ -998,8 +998,10 @@ async def _check_execution_binding(request: web.Request) -> web.Response | None:
         expected: object = json.loads(headers[0]) if len(headers) == 1 else None
     except ValueError:
         expected = None
-    project = expected.get("project") if isinstance(expected, dict) else None
-    identifier = project.get("id") if isinstance(project, dict) else None
+    project = (
+        cast("dict[str, object]", expected).get("project") if isinstance(expected, dict) else None
+    )
+    identifier = cast("dict[str, object]", project).get("id") if isinstance(project, dict) else None
     if (
         not isinstance(identifier, str)
         or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", identifier) is None
