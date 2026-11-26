@@ -421,10 +421,19 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 assert (await response.json())["status"] == status
             assert requests == []
             mounts.update_project("work", [m.id for m in shared_model_mounts()], None)
+            destination_folder = tmp_path / "models/diffusion_models"
+            destination_folder.rmdir()
             response = await client.post("/api/models/downloads/plan", json=body)
             assert response.status == 200
             plan = await response.json()
             assert isinstance(plan.pop("planId"), str)
+            space = plan.pop("destinationSpace")
+            assert space["status"] == "available"
+            assert isinstance(space["freeBytes"], int) and space["freeBytes"] >= 0
+            assert isinstance(space["filesystem"], str) and space["filesystem"]
+            assert str(tmp_path) not in space["filesystem"]
+            assert not destination_folder.exists()
+            destination_folder.mkdir()
             assert plan == {
                 "project": "work",
                 "status": "consent-required",
@@ -626,6 +635,7 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                 assert selected["file"] == name
                 assert selected["sha256"] == "e" * 64
                 assert selected["size"] == 137
+                assert selected["destinationSpace"]["filesystem"] == space["filesystem"]
                 assert selected["destination"] == str(
                     tmp_path
                     / "models"
@@ -633,6 +643,30 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                     / name
                 )
             assert not list((tmp_path / "models").rglob("*.safetensors"))
+
+            from types import SimpleNamespace
+
+            for free in (4096, 136, 0, None):
+                with monkeypatch.context() as disk:
+
+                    def disk_usage(_path: Path, available: int | None = free) -> SimpleNamespace:
+                        if available is None:
+                            raise PermissionError("cannot observe this filesystem")
+                        return SimpleNamespace(free=available)
+
+                    disk.setattr("dinkster.model_settings.shutil.disk_usage", disk_usage)
+                    response = await client.post("/api/models/downloads/plan", json=body)
+                    assert response.status == 200
+                    observed = (await response.json())["destinationSpace"]
+                    assert observed == (
+                        {"status": "unavailable"}
+                        if free is None
+                        else {
+                            "status": "available",
+                            "freeBytes": free,
+                            "filesystem": space["filesystem"],
+                        }
+                    )
 
             from dinkster_assets import civitai
 
@@ -667,8 +701,6 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
                     yield cast("HTTPSResponse", stream)
 
             monkeypatch.setattr(civitai, "open_model_response", civitai_response)
-            from types import SimpleNamespace
-
             from dinkster import provider_credentials
 
             monkeypatch.setattr(provider_credentials, "time", SimpleNamespace(time=lambda: 0))

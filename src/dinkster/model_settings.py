@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -30,6 +31,26 @@ MODEL_FOLDERS = {
 }
 
 FOLDER_MODES = frozenset({"always-on", "default-on", "opt-in"})
+
+
+def filesystem_space(path: Path) -> dict[str, object]:
+    """Observe a configured destination's filesystem, without creating missing folders."""
+    try:
+        resolved = path.resolve()
+        for candidate in (resolved, *resolved.parents):
+            try:
+                device = candidate.stat().st_dev
+                free = shutil.disk_usage(candidate).free
+            except FileNotFoundError:
+                continue
+            return {
+                "status": "available",
+                "filesystem": hashlib.sha256(str(device).encode("ascii")).hexdigest(),
+                "freeBytes": free,
+            }
+    except (OSError, RuntimeError):
+        pass
+    return {"status": "unavailable"}
 
 
 class ModelSettingsConflict(MountsError):
