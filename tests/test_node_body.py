@@ -515,6 +515,7 @@ def test_applies_on_a_body_node_names_a_required_choice_and_resolves_by_its_opti
 
 
 def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_handed() -> None:
+    from dinkster_schema import Node
     from dinkster_schema.body import Button, Call, Lookup, Pick
     from dinkster_schema.model import Input, NodeSchema, TypeExpr
     from dinkster_schema.wire import schema_from_wire, schema_to_wire
@@ -539,6 +540,14 @@ def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_hand
     wire = schema_to_wire(loaded)
     assert f"{__name__}.loras_in" in str(wire) and f"{__name__}.bake_note" in str(wire)
     assert schema_to_wire(schema_from_wire(wire)) == wire
+
+    class WireOnlyNode(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return schema_from_wire(wire)
+
+    with pytest.raises(ValueError, match="function object with annotations"):
+        WireOnlyNode.schema()
 
     # A field holding a decimal number does not fit an int parameter.
     with pytest.raises(ValueError, match="field 'scale' does not fit parameter count"):
