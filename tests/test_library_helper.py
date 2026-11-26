@@ -4786,7 +4786,7 @@ def test_asset_browse_groups_aliases_and_binds_scope_project_and_filters(tmp_pat
     assert not (tmp_path / "empty-assets" / "library.sqlite").exists()
 
 
-def test_project_registration_allocates_known_output_folders_and_retains_them(
+def test_project_registration_allocates_known_folders_and_retains_them(
     tmp_path: Path,
 ) -> None:
     from dinkster_assets import MountConfiguration, MountDef, MountTable
@@ -4800,6 +4800,8 @@ def test_project_registration_allocates_known_output_folders_and_retains_them(
             (
                 MountDef("output", old_output, "readwrite"),
                 MountDef("film-output", tmp_path / "unrelated"),
+                MountDef("film-input", tmp_path / "unrelated-input"),
+                MountDef("existing-input", tmp_path / "input-conflict" / "input"),
             ),
             output_mount="output",
         )
@@ -4816,6 +4818,7 @@ def test_project_registration_allocates_known_output_folders_and_retains_them(
             assert document["filesFolder"] == str(parent)
             assert document["folder"] == str(parent / "output")
             assert (parent / "output").is_dir()
+            assert (parent / "input").is_dir()
         service = MountService(MountTable(), library=helper)
         for identifier, mount_id in (("film", "film-output-2"), ("portraits", "portraits-output")):
             context = service.project_context(identifier)
@@ -4824,6 +4827,13 @@ def test_project_registration_allocates_known_output_folders_and_retains_them(
                 mount_id, tmp_path / identifier / "output", "readwrite"
             )
             assert mount_id not in service.project_context("legacy").mounts
+            input_id = "film-input-2" if identifier == "film" else "portraits-input"
+            assert service.projects.input(identifier, None) == input_id
+            assert service.table.get(input_id) == MountDef(
+                input_id, tmp_path / identifier / "input", "readwrite"
+            )
+            assert input_id in context.mounts
+            assert input_id not in service.project_context("legacy").mounts
         grants = cast("dict[str, object]", helper.call("folders.get")["grants"])
         assert cast("dict[str, object]", grants["values"])["future"] == "keep grants"
         baseline, cursor = helper.call("folders.get"), helper.call("changes.head")["cursor"]
@@ -4840,7 +4850,13 @@ def test_project_registration_allocates_known_output_folders_and_retains_them(
         assert helper.call("changes", cursor=cursor)["items"] == []
         blocked = tmp_path / "blocked"
         blocked.write_bytes(b"not a directory")
-        for path in ("relative", 42, str(tmp_path / "film"), str(blocked)):
+        for path in (
+            "relative",
+            42,
+            str(tmp_path / "film"),
+            str(tmp_path / "input-conflict"),
+            str(blocked),
+        ):
             with pytest.raises(LibraryError) as invalid:
                 helper.call("projects.register", id="refused", filesFolder=path)
             assert invalid.value.code == "invalid"
@@ -4849,9 +4865,12 @@ def test_project_registration_allocates_known_output_folders_and_retains_them(
             assert helper.call("changes", cursor=cursor)["items"] == []
         payload = tmp_path / "film" / "output" / "retained.bin"
         payload.write_bytes(b"keep after deletion")
+        input_payload = tmp_path / "film" / "input" / "retained.bin"
+        input_payload.write_bytes(b"keep source after deletion")
         helper.call("projects.delete", id="film", revision=1)
         helper.call("projects.restore", id="film", revision=2)
         assert payload.read_bytes() == b"keep after deletion"
+        assert input_payload.read_bytes() == b"keep source after deletion"
         assert helper.call("folders.get") == baseline
         assert helper.call("projects.get", id="legacy") == legacy
     with LibraryClient(tmp_path / "library") as reopened:

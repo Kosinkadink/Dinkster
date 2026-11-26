@@ -302,9 +302,15 @@ class MountService:
             if table.source(mount_id) == "shared-models"
         }
 
-    def update_project(self, project: str, mounts: object, output: str | None) -> None:
+    def update_project(
+        self, project: str, mounts: object, output: str | None, *, input_mount: str | None = None
+    ) -> None:
         with self._model_lock:
             self.refresh_models()
+            if input_mount is not None:
+                mount = self.settings_table.get(input_mount)
+                if mount is None or mount.mode != "readwrite":
+                    raise MountsError("inputMount must name a writable grant")
             if output is not None:
                 mount = self.settings_table.get(output)
                 if mount is None or mount.mode != "readwrite":
@@ -322,6 +328,7 @@ class MountService:
                 mounts,
                 available=self.mount_ids(settings=True),
                 output=output,
+                input_mount=input_mount,
                 required=tuple(
                     mount_id
                     for mount_id, mode in self.model_modes(settings=True).items()
@@ -348,6 +355,7 @@ class MountService:
             "project": project,
             "mounts": [rows[mount_id] for mount_id in order],
             "outputMount": selected if selected in order else None,
+            "inputMount": self.projects.input(project, None),
             "activeOutputMount": self.project_context(project).output_mount,
             "mountChangesAllowed": self.allow_changes,
             **self.pending_changes(),
@@ -636,7 +644,7 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
     if library is not None:
         body["vault"] = str(library.vault.root.resolve())
         if library.upload_writer is not None and library.project_folders_for is not None:
-            body["importMount"] = library.import_mount
+            body["importMount"] = library.import_mount_for(project)
     if "digest" in request.query:
         scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
         try:
@@ -1129,8 +1137,14 @@ async def handle_project_update(request: web.Request) -> web.Response:
         body = await request.json()
     except json.JSONDecodeError as exc:
         return _json_error(400, f"invalid JSON: {exc}")
-    if not isinstance(body, dict) or set(body) != {"mounts", "outputMount"}:
-        return _json_error(400, "expected mounts and outputMount")
+    if (
+        not isinstance(body, dict)
+        or not {"mounts", "outputMount"} <= set(body)
+        or set(body) - {"mounts", "outputMount", "inputMount"}
+        or "inputMount" in body
+        and not isinstance(body["inputMount"], str)
+    ):
+        return _json_error(400, "expected mounts, outputMount and optional inputMount")
     project = request.match_info["project"]
     await validate_project(request, project)
     output = body["outputMount"]
@@ -1142,7 +1156,7 @@ async def handle_project_update(request: web.Request) -> web.Response:
                 return _json_error(400, "outputMount must name a writable grant or be null")
         if output is None and service.project_response(project)["outputMount"] is not None:
             return _json_error(409, "select a replacement output folder for the project")
-        service.update_project(project, body["mounts"], output)
+        service.update_project(project, body["mounts"], output, input_mount=body.get("inputMount"))
     except ModelSettingsConflict as exc:
         return _json_error(409, str(exc))
     except MountsError as exc:

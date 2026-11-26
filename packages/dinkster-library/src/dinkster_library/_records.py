@@ -403,7 +403,6 @@ class Records:
                 raise LibraryError("invalid", "filesFolder must be an absolute folder path")
             try:
                 parent = Path(files_folder).resolve()
-                output = parent / "output"
                 grants = cast(
                     "dict[str, object]", preference(self, "folders.grants.get", {})["folders"]
                 )
@@ -412,21 +411,28 @@ class Records:
                 )
                 grant_values = cast("dict[str, object]", grants["values"])
                 mounts = cast("dict[str, dict[str, object]]", grant_values.get("mounts", {}))
-                if any(
-                    Path(cast(str, mount["path"])).resolve() == output.resolve()
-                    for mount in mounts.values()
-                ):
-                    raise LibraryError("invalid", "project output folder is already a known folder")
-                mount_id = f"{identifier}-output"
-                suffix = 2
-                while mount_id in mounts:
-                    mount_id = f"{identifier}-output-{suffix}"
-                    suffix += 1
-                output.mkdir(parents=True, exist_ok=True)
+                additions: dict[str, object] = {}
+                selections: dict[str, str] = {}
+                for kind in ("output", "input"):
+                    folder = parent / kind
+                    if any(
+                        Path(cast(str, mount["path"])).resolve() == folder.resolve()
+                        for mount in mounts.values()
+                    ):
+                        raise LibraryError(
+                            "invalid", f"project {kind} folder is already a known folder"
+                        )
+                    mount_id = f"{identifier}-{kind}"
+                    suffix = 2
+                    while mount_id in mounts:
+                        mount_id = f"{identifier}-{kind}-{suffix}"
+                        suffix += 1
+                    additions[mount_id] = {"path": str(folder), "mode": "readwrite"}
+                    selections[f"{kind}s"] = mount_id
+                for kind in ("output", "input"):
+                    (parent / kind).mkdir(parents=True, exist_ok=True)
             except (OSError, ValueError) as exc:
-                raise LibraryError(
-                    "invalid", f"cannot create project output folder: {exc}"
-                ) from exc
+                raise LibraryError("invalid", f"cannot create project folders: {exc}") from exc
             values = cast("dict[str, object]", projects["values"])
             defaults: dict[str, object] = {
                 "version": 1,
@@ -434,6 +440,7 @@ class Records:
                 "projects": {},
                 "excluded": {},
                 "outputs": {},
+                "inputs": {},
             }
             membership = cast("dict[str, list[str]]", values.get("projects", {}))
             preference(
@@ -441,7 +448,7 @@ class Records:
                 "folders.grants.patch",
                 {
                     "revision": grants["revision"],
-                    "patch": {"mounts": {mount_id: {"path": str(output), "mode": "readwrite"}}},
+                    "patch": {"mounts": additions},
                 },
             )
             preference(
@@ -451,8 +458,8 @@ class Records:
                     "revision": projects["revision"],
                     "patch": {
                         **{key: value for key, value in defaults.items() if key not in values},
-                        "projects": {identifier: [*membership.get(identifier, []), mount_id]},
-                        "outputs": {identifier: mount_id},
+                        "projects": {identifier: [*membership.get(identifier, []), *additions]},
+                        **{key: {identifier: mount_id} for key, mount_id in selections.items()},
                     },
                 },
             )
