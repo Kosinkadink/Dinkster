@@ -9,6 +9,47 @@ from typing import cast
 _ITEM_ID = re.compile(r"[a-z][a-z0-9-]{0,63}")
 _DIGEST = re.compile(r"blake3:[0-9a-f]{64}")
 _MEDIA = frozenset({"picture", "video", "sound"})
+_MAX_JSON_DEPTH = 64
+_MAX_JSON_NODES = 4_000_000
+_MAX_JSON_CHARS = 64_000_000
+
+
+def validate_board_json(value: object) -> str | None:
+    """Match the frontend ownership budget for a Board snapshot or patch."""
+    nodes = 0
+    chars = 0
+
+    def visit(value: object, depth: int) -> str | None:
+        nonlocal nodes, chars
+        nodes += 1
+        if nodes > _MAX_JSON_NODES:
+            return "Board exceeds the JSON node budget"
+        if isinstance(value, str):
+            chars += len(value.encode("utf-16-le", "surrogatepass")) // 2
+        elif isinstance(value, (dict, list)):
+            if depth >= _MAX_JSON_DEPTH:
+                return "Board exceeds the JSON depth budget"
+            if nodes + len(cast("dict[object, object] | list[object]", value)) > _MAX_JSON_NODES:
+                return "Board exceeds the JSON node budget"
+            if isinstance(value, dict):
+                for key, child in cast("dict[object, object]", value).items():
+                    if key == "__proto__":
+                        return "Board contains a forbidden '__proto__' key"
+                    if isinstance(key, str):
+                        chars += len(key.encode("utf-16-le", "surrogatepass")) // 2
+                    if chars > _MAX_JSON_CHARS:
+                        return "Board exceeds the JSON string budget"
+                    if problem := visit(child, depth + 1):
+                        return problem
+            else:
+                for child in cast("list[object]", value):
+                    if problem := visit(child, depth + 1):
+                        return problem
+        if chars > _MAX_JSON_CHARS:
+            return "Board exceeds the JSON string budget"
+        return None
+
+    return visit(value, 0)
 
 
 def _number(value: object, minimum: float, maximum: float) -> bool:

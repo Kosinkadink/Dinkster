@@ -43,7 +43,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
-from .board import validate_board
+from .board import validate_board, validate_board_json
 
 if TYPE_CHECKING:
     from .store import SessionStore
@@ -280,6 +280,8 @@ class SessionService:
         self._sessions = {session.session_id: session for session in loaded}
 
     def _validated_snapshot(self, document_kind: str, document_id: str, snapshot: object) -> object:
+        if document_kind == "board" and (problem := validate_board_json(snapshot)):
+            raise InvalidSnapshotError(problem)
         normalized = _normalize_json(snapshot, "snapshot")
         if document_kind == "board":
             problem = validate_board(document_id, normalized)
@@ -404,6 +406,8 @@ class SessionService:
         unchanged (idempotent resubmission, e.g. a retried request)."""
         session = self._get_authoritative(session_id)
         self.require_role(session_id, principal_id, "editor")
+        if session.document_kind == "board" and (problem := validate_board_json(list(patch))):
+            raise InvalidSnapshotError(problem)
         normalized_patch = tuple(
             cast("dict[str, Any]", _normalize_json(dict(entry), "patch entry")) for entry in patch
         )

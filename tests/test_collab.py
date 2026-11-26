@@ -296,6 +296,21 @@ def test_board_session_refuses_invalid_edits_and_reconnects(tmp_path: Path) -> N
                     }
                 ],
                 [{"op": "add", "path": ["items", "video", "asset", "duration"], "value": -1}],
+                [
+                    {
+                        "op": "add",
+                        "path": ["items", "picture", "asset", "origin"],
+                        "value": {"__proto__": "upload"},
+                    }
+                ],
+                [
+                    {
+                        "op": "add",
+                        "path": ["items", "picture", "asset", "origin"],
+                        "value": {"__proto__": "upload"},
+                    },
+                    {"op": "remove", "path": ["items", "picture", "asset", "origin"]},
+                ],
             ):
                 refused = await client.post(
                     f"/api/sessions/{sid}/ops", json=op_body("refused", 1, patch=patch)
@@ -378,6 +393,18 @@ def test_board_session_refuses_invalid_edits_and_reconnects(tmp_path: Path) -> N
         {"lineage": "other"},
         {"order": ["note"]},
         {"items": []},
+        {
+            "items": {
+                **board_snapshot()["items"],
+                "picture": {
+                    **board_snapshot()["items"]["picture"],
+                    "asset": {
+                        **board_snapshot()["items"]["picture"]["asset"],
+                        "origin": {"__proto__": "upload"},
+                    },
+                },
+            },
+        },
     ],
 )
 def test_board_session_admission_refuses_bad_document(mutation: dict[str, Any]) -> None:
@@ -397,6 +424,95 @@ def test_board_session_admission_refuses_bad_document(mutation: dict[str, Any]) 
             assert (await (await client.get("/api/sessions?scope=local")).json())["sessions"] == []
         finally:
             await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("budget", ["characters", "nodes"])
+def test_board_session_refuses_cumulative_json_growth(
+    budget: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Scale only the production limits; requests still pass through the public HTTP boundary.
+    if budget == "characters":
+        monkeypatch.setattr("dinkster_collab.board._MAX_JSON_CHARS", 2000)
+        keys = [str(i) + "x" * 300 + "\U0001f600" * 100 for i in range(3)]
+    else:
+        monkeypatch.setattr("dinkster_collab.board._MAX_JSON_NODES", 69)
+        keys = [str(i) for i in range(3)]
+
+    async def scenario() -> None:
+        store = SessionStore(tmp_path / "budget.sqlite")
+        service = SessionService(store=store)
+        client = await make_client(service)
+        document = board_snapshot()
+        origin: dict[str, str] = {}
+        document["items"]["picture"]["asset"]["origin"] = origin
+        try:
+            oversized = deepcopy(document)
+            oversized["items"]["picture"]["asset"]["origin"] = dict.fromkeys(keys, "")
+            body = {
+                "scope": "local",
+                "documentKind": "board",
+                "documentId": "board-one",
+                "snapshot": oversized,
+            }
+            assert (await client.post("/api/sessions", json=body)).status == 400
+            assert (await (await client.get("/api/sessions?scope=local")).json())["sessions"] == []
+            body["snapshot"] = document
+            created = await client.post("/api/sessions", json=body)
+            assert created.status == 201
+            sid = (await created.json())["sessionId"]
+            for revision, key in enumerate(keys):
+                patch = [
+                    {"op": "add", "path": ["items", "picture", "asset", "origin", key], "value": ""}
+                ]
+                before = service.get(sid)
+                response = await client.post(
+                    f"/api/sessions/{sid}/ops",
+                    json=op_body(
+                        f"grow-{revision}", revision, patch=patch, actorId=f"actor-{revision}"
+                    ),
+                )
+                if revision < 2:
+                    assert response.status == 200
+                    origin[key] = ""
+                else:
+                    assert response.status == 400
+                    assert (await response.json())["error"] == "document-invalid"
+                    assert service.get(sid) == before
+            assert (await (await client.get(f"/api/sessions/{sid}")).json())["revision"] == 2
+            checkpoint = await client.put(
+                f"/api/sessions/{sid}/snapshot", json={"revision": 2, "document": document}
+            )
+            assert checkpoint.status == 200
+            repaired = await client.post(
+                f"/api/sessions/{sid}/ops",
+                json=op_body(
+                    "grow-2",
+                    2,
+                    actorId="actor-2",
+                    patch=[
+                        {"op": "remove", "path": ["items", "picture", "asset", "origin", keys[0]]}
+                    ],
+                ),
+            )
+            assert repaired.status == 200
+            assert (await repaired.json())["revision"] == 3
+        finally:
+            await client.close()
+            store.close()
+        store = SessionStore(tmp_path / "budget.sqlite")
+        client = await make_client(SessionService(store=store))
+        try:
+            assert (await (await client.get(f"/api/sessions/{sid}/snapshot")).json()) == {
+                "revision": 2,
+                "document": document,
+            }
+            ops = await (await client.get(f"/api/sessions/{sid}/ops?after=2")).json()
+            assert [op["opId"] for op in ops["ops"]] == ["grow-2"]
+        finally:
+            await client.close()
+            store.close()
 
     run_scenario(scenario())
 
