@@ -857,6 +857,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
 
     Cursors bind scope and ordering, with the virtual path breaking ties.
     ``path`` and ``recursive`` optionally scope a single mount's traversal.
+    Repeated ``mount`` values restrict the all-mount route to enabled mounts.
     """
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info.get("mountId")
@@ -871,6 +872,18 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     if mount_id is not None and mount_id not in context.mounts:
         return _json_error(403, "folder-not-enabled")
     mount_ids = (mount_id,) if mount_id is not None else context.mounts
+    requested_mounts = request.query.getall("mount", [])
+    if requested_mounts:
+        if mount_id is not None:
+            return _json_error(400, "mount selection requires the all-mount route")
+        for item in requested_mounts:
+            if not item:
+                return _json_error(400, "mount must not be empty")
+            if service.table.get(item) is None:
+                return _json_error(404, f"unknown mount: {item}")
+            if item not in context.mounts:
+                return _json_error(403, "folder-not-enabled")
+        mount_ids = tuple(item for item in context.mounts if item in requested_mounts)
     query = request.query.get("q", "").strip()
     kind = request.query.get("kind", "").strip()
     if kind and not is_asset_kind(kind):
@@ -901,6 +914,7 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     bound = {
         "mount": mount_id or "",
         "mounts": json.dumps(mount_ids),
+        "enabledMounts": json.dumps(context.mounts),
         "project": project,
         "q": query.lower(),
         "kind": kind,

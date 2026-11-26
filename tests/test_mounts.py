@@ -1176,6 +1176,46 @@ def test_mount_entries_order_across_enabled_mounts(
             assert [row["virtualPath"] for row in rows] == [f"mounts/{p}" for p in expected]
             assert [row["modifiedAt"] for row in rows] == [files[p] for p in expected]
 
+            response = await client.get("/api/mounts/entries", params={**params, "mount": "first"})
+            body = await response.json()
+            assert body["total"] == 2
+            selected_rows = body["entries"]
+            selected_cursor = body["cursor"]
+            response = await client.get(
+                "/api/mounts/entries",
+                params={**params, "mount": "first", "cursor": selected_cursor},
+            )
+            body = await response.json()
+            assert body["total"] == 2
+            assert "cursor" not in body
+            selected_rows.extend(body["entries"])
+            assert [row["virtualPath"] for row in selected_rows] == [
+                f"mounts/{p}" for p in expected if p.startswith("first/")
+            ]
+            for scope in ({}, {"mount": "second"}):
+                response = await client.get(
+                    "/api/mounts/entries",
+                    params={**params, **scope, "cursor": selected_cursor},
+                )
+                assert response.status == 400
+                assert await response.json() == {"error": "cursor does not match this query"}
+            response = await client.get(
+                "/api/mounts/entries",
+                params={**params, "mount": ["second", "first", "first"], "limit": "10"},
+            )
+            body = await response.json()
+            assert body["total"] == 3
+            assert [row["virtualPath"] for row in body["entries"]] == [
+                f"mounts/{p}" for p in expected
+            ]
+            for mount, status in (("disabled", 403), ("unknown", 404), ("", 400)):
+                response = await client.get(
+                    "/api/mounts/entries", params={"mount": ["first", mount]}
+                )
+                assert response.status == status
+            response = await client.get("/api/mounts/first/entries", params={"mount": "second"})
+            assert response.status == 400
+
             response = await client.get(
                 "/api/mounts/first/entries",
                 params={"sort": sort, "path": "deep", "q": "APPLE", "recursive": "false"},
@@ -1199,6 +1239,12 @@ def test_mount_entries_order_across_enabled_mounts(
                 "default", ["first"], available=service.mount_ids(), output=None
             )
             response = await client.get("/api/mounts/entries", params={**params, "cursor": cursor})
+            assert response.status == 400
+            assert await response.json() == {"error": "cursor does not match this query"}
+            response = await client.get(
+                "/api/mounts/entries",
+                params={**params, "mount": "first", "cursor": selected_cursor},
+            )
             assert response.status == 400
             assert await response.json() == {"error": "cursor does not match this query"}
 
