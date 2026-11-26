@@ -349,6 +349,7 @@ from .library import (
     ServerLibrary,
     add_library_routes,
     recover_asset_observations,
+    require_asset_read,
     run_media_publication,
     run_owned_thread,
 )
@@ -4626,9 +4627,21 @@ async def handle_cache_blob(request: web.Request) -> web.Response:
 
 
 async def handle_assets_list(request: web.Request) -> web.Response:
+    if len(request.query.getall("scope", [])) > 1:
+        return web.json_response({"error": "at most one scope is allowed"}, status=400)
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
     export = request.app[ASSET_EXPORT_KEY]
-    digests = await asyncio.to_thread(export.digests)
-    return web.json_response({"digests": sorted(digests)})
+    library = request.app.get(LIBRARY_KEY)
+
+    def available() -> list[str]:
+        if library is None:
+            return []
+        return [
+            digest for digest in export.digests() if library.store.has_asset_grant(scope, digest)
+        ]
+
+    digests = await asyncio.to_thread(available)
+    return web.json_response({"digests": sorted(digests)}, headers={"Cache-Control": "no-store"})
 
 
 async def handle_asset_selections(request: web.Request) -> web.Response:
@@ -4665,6 +4678,7 @@ async def handle_asset_bytes(request: web.Request) -> web.StreamResponse:
         return web.json_response(
             {"error": "malformed digest (expected 'blake3:<64 hex>')"}, status=400
         )
+    await require_asset_read(request, digest)
     export = request.app[ASSET_EXPORT_KEY]
     path = await asyncio.to_thread(export.resolve, digest)
     if path is None:

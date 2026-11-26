@@ -1322,6 +1322,7 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
         missing_body = b"same name is not identity"
         digests = [digest_bytes(body) for body in (mounted_body, missing_body, vault_body)]
         try:
+            client.app[LIBRARY_KEY].store.grant_asset("local", digests[0], mounted)
             upload = await client.post("/api/assets", data=vault_body)
             assert upload.status == 201
             vault = client.app[LIBRARY_KEY].vault
@@ -1338,6 +1339,7 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
                     before = sorted(
                         path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
                     )
+                    catalog_before = client.app[LIBRARY_KEY].store.query_assets("local")
                     response = await client.get(
                         "/api/assets/availability",
                         params=[
@@ -1356,6 +1358,7 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
                         ]
                     }
                     assert str(tmp_path) not in json.dumps(result)
+                    assert client.app[LIBRARY_KEY].store.query_assets("local") == catalog_before
                     assert (
                         sorted(
                             path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
@@ -1387,9 +1390,6 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
             ):
                 response = await client.get("/api/assets/availability", params=query)
                 assert response.status == 400
-            assert await (await client.get("/api/assets/catalog?scope=local")).json() == {
-                "assets": []
-            }
             assert not list(vault.root.glob(".ingest-*"))
             assert not (vault.root / ".upload-observations").exists()
         finally:
@@ -1577,6 +1577,7 @@ def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
     async def scenario() -> None:
         client = await make_client(tmp_path, resolver=OneFileResolver())
         try:
+            client.app[LIBRARY_KEY].store.grant_asset("local", digest, mounted)
             resp = await client.get(f"/api/assets/{digest}")
             assert resp.status == 200
             assert await resp.read() == payload

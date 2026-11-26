@@ -38,6 +38,15 @@ def grants(records: Records, operation: str, arguments: dict[str, object]) -> di
 
     if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
+    if operation == "grants.has":
+        if set(arguments) != {"scope", "digest"}:
+            raise LibraryError("invalid", "invalid byte grant fields")
+        scope = text(arguments["scope"], "grant scope")
+        digest = asset_digest(arguments["digest"])
+        row = records.db.execute(
+            "SELECT 1 FROM media_grants WHERE scope=? AND digest=? LIMIT 1", (scope, digest)
+        ).fetchone()
+        return {"granted": row is not None}
     writing = operation == "grants.put"
     allowed = {"scope", "grant"} if writing else {"scope", "digest", "kind"}
     if set(arguments) != allowed:

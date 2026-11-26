@@ -1438,6 +1438,21 @@ class LibraryStore:
             ).fetchone()
         return _media_grant_from_row(row) if row is not None else None
 
+    def has_asset_grant(self, scope: str, digest: str) -> bool:
+        """Byte read authority in exactly one scope, independent of media kind."""
+        scope = _clean_scope(scope)
+        digest = require_digest(digest)
+        if self._helper is not None:
+            return bool(self._call("grants.has", scope=scope, digest=digest)["granted"])
+        with self._lock:
+            return (
+                self._conn.execute(
+                    "SELECT 1 FROM media_grants WHERE scope = ? AND digest = ? LIMIT 1",
+                    (scope, digest),
+                ).fetchone()
+                is not None
+            )
+
     def update(
         self,
         scope: str,

@@ -579,10 +579,10 @@ class Records:
                 with self._references.writing():
                     return history(self, operation, arguments)
             return history(self, operation, arguments)
-        if operation in ("grants.get", "grants.put"):
+        if operation in ("grants.get", "grants.has", "grants.put"):
             from .media import grants
 
-            if operation == "grants.get":
+            if operation != "grants.put":
                 return grants(self, operation, arguments)
             with self._references.writing():
                 return grants(self, operation, arguments)

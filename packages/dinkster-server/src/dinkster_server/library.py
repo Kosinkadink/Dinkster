@@ -139,7 +139,7 @@ if TYPE_CHECKING:
     from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
-__all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes"]
+__all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes", "require_asset_read"]
 
 DIGEST_HEADER = "X-Dinkster-Digest"
 IMAGE_DOCUMENT_MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
@@ -1245,6 +1245,20 @@ def recover_asset_observations(
                         with open_verified(resource, digest) as source:
                             if os.fstat(source.fileno()).st_size != dependency["byteSize"]:
                                 raise AssetError("saved document resource byte size changed")
+                        classification = classify_media_file(resource)
+                        if classification.kind != "media/image":
+                            raise AssetError("saved document resource is not a raster image")
+                        library.store.grant_media_result(
+                            MediaGrant(
+                                payload["scope"],
+                                digest,
+                                classification.kind,
+                                classification.media_type,
+                                classification.extension,
+                                cast(int, dependency["byteSize"]),
+                            ),
+                            resource,
+                        )
                     library.store.put_dependencies(ref.digest, dependencies)
                 try:
                     classification = classify_media_file(path)
@@ -1287,7 +1301,7 @@ def recover_asset_observations(
 
 
 async def handle_asset_availability(request: web.Request) -> web.Response:
-    resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
     if (
         set(request.query) - {"scope", "digest"}
         or len(request.query.getall("scope", [])) > 1
@@ -1303,7 +1317,9 @@ async def handle_asset_availability(request: web.Request) -> web.Response:
         return [
             {
                 "digest": digest,
-                "status": "available" if library.asset_available(digest) else "missing",
+                "status": "available"
+                if library.store.has_asset_grant(scope, digest) and library.asset_available(digest)
+                else "missing",
             }
             for digest in digests
         ]
@@ -1450,6 +1466,23 @@ async def handle_local_asset_get(request: web.Request) -> web.StreamResponse:
     return await stream_verified(request, handle, size, headers={"Cache-Control": "no-store"})
 
 
+async def require_asset_read(request: web.Request, digest: str) -> str:
+    """Require exact-scope byte authority before resolving bytes or cached facts."""
+    if len(request.query.getall("scope", [])) > 1:
+        raise web.HTTPBadRequest(
+            text='{"error": "at most one scope is allowed"}', content_type="application/json"
+        )
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    library = request.app.get(LIBRARY_KEY)
+    if library is None or not await asyncio.to_thread(library.store.has_asset_grant, scope, digest):
+        raise web.HTTPNotFound(
+            text='{"error": "asset not held here"}',
+            content_type="application/json",
+            headers={"Cache-Control": "no-store"},
+        )
+    return scope
+
+
 async def handle_asset_get(request: web.Request) -> web.StreamResponse:
     """Bytes for a digest, with the immutable-cache contract every other
     digest-addressed endpoint honors. Vault or mount, the body streams
@@ -1459,13 +1492,14 @@ async def handle_asset_get(request: web.Request) -> web.StreamResponse:
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _json_error(400, "malformed digest (expected 'blake3:<64 hex>')")
+    await require_asset_read(request, digest)
     library = request.app[LIBRARY_KEY]
     etag = f'"{digest}"'
     path = await asyncio.to_thread(library.locate, digest)
     if path is None:
         return _json_error(404, "asset not held here")
     if any(tag.value in (digest, "*") for tag in (request.if_none_match or ())):
-        return web.Response(status=304, headers={"ETag": etag})
+        return web.Response(status=304, headers={"ETag": etag, "Vary": "Authorization"})
     try:
         handle, size = await open_verified_sized(path, digest)
     except AssetIntegrityError:
@@ -1486,6 +1520,7 @@ async def handle_asset_get(request: web.Request) -> web.StreamResponse:
         headers={
             "ETag": etag,
             "Cache-Control": "private, max-age=31536000, immutable",
+            "Vary": "Authorization",
         },
     )
 
@@ -1499,13 +1534,20 @@ async def handle_asset_preview(request: web.Request) -> web.Response:
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _json_error(400, "malformed digest (expected 'blake3:<64 hex>')")
+    await require_asset_read(request, digest)
+    path = await asyncio.to_thread(request.app[LIBRARY_KEY].locate, digest)
+    if path is None:
+        return _json_error(404, "asset not held here or has no preview")
     etag = f'"{digest}-preview"'
-    headers = {"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"}
+    headers = {
+        "ETag": etag,
+        "Cache-Control": "private, max-age=31536000, immutable",
+        "Vary": "Authorization",
+    }
     if any(tag.value in (f"{digest}-preview", "*") for tag in (request.if_none_match or ())):
         return web.Response(status=304, headers=headers)
-    path = await asyncio.to_thread(request.app[LIBRARY_KEY].locate, digest)
     try:
-        preview = None if path is None else await asyncio.to_thread(file_preview, path, digest)
+        preview = await asyncio.to_thread(file_preview, path, digest)
     except OSError:
         preview = None
     except ContentMismatch:
@@ -1530,12 +1572,13 @@ async def handle_asset_metadata(request: web.Request) -> web.Response:
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _json_error(400, "malformed digest (expected 'blake3:<64 hex>')")
+    await require_asset_read(request, digest)
     library = request.app[LIBRARY_KEY]
+    path = await asyncio.to_thread(library.locate, digest)
+    if path is None:
+        return _json_error(404, "asset not held here")
     metadata = library.probe_cache.get(digest)
     if metadata is None:
-        path = await asyncio.to_thread(library.locate, digest)
-        if path is None:
-            return _json_error(404, "asset not held here")
 
         def probe_verified() -> dict[str, object]:
             # Facts come from the PROVEN bytes: probing a reopened path
@@ -1577,12 +1620,13 @@ async def handle_asset_metadata(request: web.Request) -> web.Response:
         library.probe_cache[digest] = metadata
     etag = f'"{digest}"'
     if any(tag.value in (digest, "*") for tag in (request.if_none_match or ())):
-        return web.Response(status=304, headers={"ETag": etag})
+        return web.Response(status=304, headers={"ETag": etag, "Vary": "Authorization"})
     return web.json_response(
         {"digest": digest, "metadata": metadata},
         headers={
             "ETag": etag,
             "Cache-Control": "private, max-age=31536000, immutable",
+            "Vary": "Authorization",
         },
     )
 
@@ -1599,6 +1643,7 @@ async def handle_model_output_profile(request: web.Request) -> web.Response:
         return respond_error(400, "digest must be a canonical blake3 asset digest")
     if revision != "1":
         return respond_error(400, "revision must be '1'")
+    await require_asset_read(request, digest)
     library = request.app[LIBRARY_KEY]
     callback = library.model_output_profile
     if callback is None:

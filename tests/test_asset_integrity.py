@@ -269,7 +269,9 @@ def test_asset_endpoint_serves_verified_bytes_and_refuses_stale(
         with vault.writer(digest) as writer:
             writer.write(data)
             writer.commit()
-        server = TestServer(create_app(make_engine, SCHEMAS, asset_export=vault))
+        library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"))
+        library.store.grant_asset("local", digest, data)
+        server = TestServer(create_app(make_engine, SCHEMAS, asset_export=vault, library=library))
         await server.start_server()
         try:
             async with aiohttp.ClientSession() as http:

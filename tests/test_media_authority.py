@@ -591,6 +591,8 @@ def test_media_grants_verify_bytes_before_recording_authority(tmp_path: Path, ba
         assert store.grant_media_result(grant, path) == (grant, False)
         assert store.grant_media(grant, _png()) == grant
         assert store.media_grant("other", grant.digest, grant.kind) is None
+        assert store.has_asset_grant("alice", grant.digest)
+        assert not store.has_asset_grant("other", grant.digest)
         opaque = b'{"workflow":"not classified media"}'
         opaque_digest = digest_bytes(opaque)
         with pytest.raises(AssetError, match="digest"):
@@ -604,6 +606,9 @@ def test_media_grants_verify_bytes_before_recording_authority(tmp_path: Path, ba
         assert not store.grant_asset("alice", opaque_digest, opaque)
         assert store.media_grant("other", opaque_digest, "asset/file") is None
         assert store.grant_asset("other", opaque_digest, opaque)
+        assert store.has_asset_grant("alice", opaque_digest)
+        assert store.has_asset_grant("other", opaque_digest)
+        assert not store.has_asset_grant("absent", opaque_digest)
         stored = store.media_grant("alice", opaque_digest, "asset/file")
         assert stored == MediaGrant(
             "alice", opaque_digest, "asset/file", "application/octet-stream", "bin", len(opaque)
@@ -691,6 +696,7 @@ async def _media_client(
         _media_engine,
         _MEDIA_SCHEMAS,
         library=library,
+        asset_export=library.vault,
         authenticator=authenticator,
     )
     client = TestClient(TestServer(app))
@@ -1184,6 +1190,135 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
                     headers=_media_headers("text/plain", "both"),
                 )
                 assert repeated.status == 200
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_digest_reads_require_a_grant_in_the_authorized_scope(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write"})
+        auth = _Tokens(
+            {
+                "a": Principal("alice", {"a": capabilities}),
+                "viewer": Principal("viewer", {"a": frozenset({"assets:read"})}),
+                "b": Principal("bob", {"b": capabilities}),
+                "both": Principal("both", {"a": capabilities, "b": capabilities}),
+            }
+        )
+        client, library = await _media_client(tmp_path, authenticator=auth)
+        image = BytesIO()
+        Image.new("RGB", (2, 3), (47, 91, 133)).save(image, format="PNG")
+        cases = (
+            ("media/image", "image/png", "picture.png", image.getvalue()),
+            ("media/video", "video/mp4", "movie.mp4", _mp4()),
+            ("media/audio", "audio/wav", "sound.wav", _wav()),
+            ("asset/file", "application/octet-stream", "model.bin", b"opaque model bytes"),
+        )
+        try:
+            for kind, media_type, name, data in cases:
+                digest = digest_bytes(data)
+                path = f"/api/assets/{digest}"
+                upload_path = (
+                    "/api/assets?scope=a" if kind == "asset/file" else _media_path("a", kind, name)
+                )
+                uploaded = await client.post(
+                    upload_path, data=data, headers=_media_headers(media_type, "a")
+                )
+                assert uploaded.status == 201, await uploaded.text()
+                headers = {"Authorization": "Bearer viewer"}
+                good = await client.get(path, params={"scope": "a"}, headers=headers)
+                assert good.status == 200
+                assert await good.read() == data
+                metadata = await client.get(path + "/metadata", headers=headers)
+                assert metadata.status == 200
+                await metadata.read()
+                if kind == "media/image":
+                    preview = await client.get(path + "/preview", headers=headers)
+                    assert preview.status == 200
+                    assert (await preview.read())[8:12] == b"WEBP"
+
+                for actor in ("b", "both"):
+                    denied_headers = {"Authorization": f"Bearer {actor}"}
+                    for suffix, extra in (
+                        ("", {}),
+                        ("", {"Range": "bytes=1-7"}),
+                        ("", {"If-None-Match": f'"{digest}"'}),
+                        ("/metadata", {}),
+                        ("/metadata", {"If-None-Match": f'"{digest}"'}),
+                        ("/preview", {}),
+                        ("/preview", {"If-None-Match": f'"{digest}-preview"'}),
+                    ):
+                        denied = await client.get(
+                            path + suffix,
+                            params={"scope": "b"},
+                            headers={**denied_headers, **extra},
+                        )
+                        assert denied.status == 404, (kind, actor, suffix, await denied.read())
+                        assert await denied.json() == {"error": "asset not held here"}
+                        assert "ETag" not in denied.headers
+                    missing = await client.get(
+                        "/api/assets/availability",
+                        params={"scope": "b", "digest": digest},
+                        headers=denied_headers,
+                    )
+                    assert await missing.json() == {
+                        "assets": [{"digest": digest, "status": "missing"}]
+                    }
+                    legacy = await client.get(
+                        f"/assets/{digest}", params={"scope": "b"}, headers=denied_headers
+                    )
+                    assert legacy.status == 404
+                    profile = await client.get(
+                        "/api/output-profiles/model",
+                        params={"scope": "b", "digest": digest, "revision": "1"},
+                        headers=denied_headers,
+                    )
+                    assert profile.status == 404
+                    assert await profile.json() == {"error": "asset not held here"}
+                    listing = await client.get(
+                        "/assets", params={"scope": "b"}, headers=denied_headers
+                    )
+                    assert digest not in (await listing.json())["digests"]
+
+                assert library.store.media_grant("b", digest, kind) is None
+                independent = await client.post(
+                    upload_path.replace("scope=a", "scope=b"),
+                    data=data,
+                    headers=_media_headers(media_type, "b"),
+                )
+                assert independent.status == 201, await independent.text()
+                for actor, scope in (("viewer", "a"), ("b", "b")):
+                    for route in (path, f"/assets/{digest}"):
+                        partial = await client.get(
+                            route,
+                            params={"scope": scope},
+                            headers={"Authorization": f"Bearer {actor}", "Range": "bytes=1-7"},
+                        )
+                        assert partial.status == 206
+                        assert await partial.read() == data[1:8]
+                        assert partial.headers["Content-Range"] == f"bytes 1-7/{len(data)}"
+                ambiguous = await client.get(path, headers={"Authorization": "Bearer both"})
+                assert ambiguous.status == 400
+                assert (await ambiguous.json())["error"] == "scope-required"
+                repeated = await client.get(
+                    path,
+                    params=[("scope", "a"), ("scope", "b")],
+                    headers={"Authorization": "Bearer both"},
+                )
+                assert repeated.status == 400
+                assert library.vault.delete(digest)
+                for suffix, validator in (
+                    ("", digest),
+                    ("/metadata", digest),
+                    ("/preview", f"{digest}-preview"),
+                ):
+                    absent = await client.get(
+                        path + suffix,
+                        headers={**headers, "If-None-Match": f'"{validator}"'},
+                    )
+                    assert absent.status == 404
         finally:
             await client.close()
 
