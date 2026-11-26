@@ -15,6 +15,7 @@ from typing import cast
 from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, LibraryRecord
 from dinkster_library import AsyncLibraryClient, LibraryClient, LibraryError
+from dinkster_library.client import MAX_MESSAGE
 
 from .library import json_body
 
@@ -246,6 +247,8 @@ async def project_request(request: web.Request) -> web.Response:
             assert identifier is not None
             result = await client.call("assets.list", **outputs_call(identifier, request.query))
             return web.json_response(result)
+        if request.method == "POST" and identifier is None:
+            request = request.clone(client_max_size=MAX_MESSAGE)
         body = {} if request.method == "GET" else await json_body(request)
         if route.endswith("/restore"):
             assert identifier is not None

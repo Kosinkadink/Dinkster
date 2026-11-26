@@ -87,6 +87,7 @@ import aiohttp
 from aiohttp import web
 from dinkster_library import AsyncLibraryClient, LibraryError
 from dinkster_library.asset_identity import digest_bytes
+from dinkster_library.client import MAX_MESSAGE
 from dinkster_library.http_routes import (
     ERROR_STATUS,
     LIST_ERROR_STATUS,
@@ -786,6 +787,8 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
         body: object = {}
         if method != "GET":
             try:
+                if method == "POST" and identifier is None:
+                    request = request.clone(client_max_size=MAX_MESSAGE)
                 body = await request.json()
             except ValueError as error:
                 return web.json_response({"error": f"invalid JSON: {error}"}, status=400)
