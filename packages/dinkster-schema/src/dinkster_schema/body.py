@@ -889,7 +889,7 @@ class Button:
             )
 
 
-type EditorWidget = CustomWidgetDescriptor | CompositorWidget
+type EditorWidget = CustomWidgetDescriptor | CompositorWidget | SaveTargetWidget
 
 
 @dataclass(frozen=True)
@@ -904,9 +904,13 @@ class Editor:
 
     def __post_init__(self) -> None:
         check_layout_id(self.id, "editor id")
-        if not isinstance(cast("object", self.widget), (CustomWidgetDescriptor, CompositorWidget)):
+        if not isinstance(
+            cast("object", self.widget),
+            (CustomWidgetDescriptor, CompositorWidget, SaveTargetWidget),
+        ):
             raise ValueError(
-                f"editor {self.id}: widget is a CustomWidgetDescriptor or a CompositorWidget"
+                f"editor {self.id}: widget is a CustomWidgetDescriptor, CompositorWidget "
+                "or SaveTargetWidget"
             )
         if not self.widget.writes and not self.widget.reads:
             raise ValueError(f"editor {self.id}: its widget names no row in writes or reads")
@@ -1947,7 +1951,7 @@ class _FormulaCheck:
             _check_editor_names(row.widget, scope, f"editor {row.id}", own=None)
         elif isinstance(row, Input):
             for widget in _shown_widgets(row.widget):
-                if isinstance(widget, (CustomWidgetDescriptor, CompositorWidget)):
+                if isinstance(widget, (CustomWidgetDescriptor, CompositorWidget, SaveTargetWidget)):
                     _check_editor_names(widget, scope, f"input {row.id} widget", own=row.id)
                 _check_widget_answers(widget)
             _refuse_automatic_outside_run(row, scope)

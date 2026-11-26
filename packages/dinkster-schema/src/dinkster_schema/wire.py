@@ -266,7 +266,7 @@ def _widget_descriptor_to_wire(
         wire: dict[str, object] = {"type": "SAVE_TARGET"}
         if remaining.suffix:
             wire["suffix"] = remaining.suffix
-        return wire
+        return _editor_names_to_wire(remaining, wire)
     raise TypeError(f"unsupported widget descriptor {widget!r}")
 
 
@@ -363,11 +363,15 @@ def _widget_descriptor_from_wire(
         return MountWidget()
     if kind == "SAVE_TARGET":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type", "suffix"}), "SAVE_TARGET widget")
+            _reject_unknown_fields(
+                widget_data, frozenset({"type", "suffix", "writes", "reads"}), "SAVE_TARGET widget"
+            )
         suffix = widget_data.get("suffix", "")
         if not isinstance(suffix, str):
             raise ValueError("SAVE_TARGET widget suffix must be a string")
-        return SaveTargetWidget(suffix=suffix)
+        return SaveTargetWidget(
+            suffix=suffix, **_editor_names_from_wire(widget_data, "SAVE_TARGET widget")
+        )
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
@@ -749,7 +753,7 @@ def _widget_descriptor_from_wire(
 
 
 def _editor_names_to_wire(
-    widget: CustomWidgetDescriptor | CompositorWidget, wire: dict[str, object]
+    widget: CustomWidgetDescriptor | CompositorWidget | SaveTargetWidget, wire: dict[str, object]
 ) -> dict[str, object]:
     """The rows an editor writes and reads, each only when it names one."""
     if widget.writes:
