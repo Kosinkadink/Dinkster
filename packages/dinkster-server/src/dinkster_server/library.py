@@ -1764,6 +1764,7 @@ async def handle_library_create(request: web.Request) -> web.Response:
     digest = body.get("digest")
     if not isinstance(digest, str) or not is_digest(digest):
         return _json_error(400, "digest must be 'blake3:<64 hex>'")
+    await require_asset_read(request, digest, scope=scope)
     if not await asyncio.to_thread(library.vault.has, digest):
         # Membership is scoped but presence is not fabricated: a record
         # must point at bytes this instance actually holds - upload first.
@@ -1872,6 +1873,7 @@ async def handle_library_update(request: web.Request) -> web.Response:
     if digest is not None:
         if not isinstance(digest, str) or not is_digest(digest):
             return _json_error(400, "digest must be 'blake3:<64 hex>'")
+        await require_asset_read(request, digest, scope=scope)
         if not await asyncio.to_thread(library.vault.has, digest):
             return _json_error(409, "digest not held here: upload the bytes first")
     name = body.get("name")

@@ -1441,6 +1441,74 @@ def test_digest_reads_require_a_grant_in_the_authorized_scope(tmp_path: Path) ->
     run_scenario(scenario())
 
 
+def test_library_references_require_independently_granted_bytes(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write"})
+        client, library = await _media_client(
+            tmp_path,
+            authenticator=_Tokens(
+                {scope: Principal(scope, {scope: capabilities}) for scope in ("a", "b")}
+            ),
+        )
+        a = {"Authorization": "Bearer a"}
+        b = {"Authorization": "Bearer b"}
+        try:
+            for media_type in (
+                "application/x-dinkster-board+json",
+                "application/x-dinkster-workflow+json",
+                "application/octet-stream",
+            ):
+                private_bytes = ("private " + media_type).encode()
+                digest = digest_bytes(private_bytes)
+                uploaded = await client.post("/api/assets?scope=a", data=private_bytes, headers=a)
+                assert uploaded.status == 201
+                body = {"scope": "b", "name": "Document", "digest": digest, "mediaType": media_type}
+                before = await (await client.get("/api/library?scope=b", headers=b)).json()
+                refused = await client.post("/api/library", json=body, headers=b)
+                assert refused.status == 404, await refused.text()
+                missing = await client.post(
+                    "/api/library", json=body | {"digest": digest_bytes(b"absent")}, headers=b
+                )
+                assert missing.status == 404
+                assert await missing.json() == await refused.json()
+                assert await (await client.get("/api/library?scope=b", headers=b)).json() == before
+                assert not library.store.has_asset_grant("b", digest)
+
+                own_bytes = ("own " + media_type).encode()
+                own_digest = digest_bytes(own_bytes)
+                uploaded = await client.post("/api/assets?scope=b", data=own_bytes, headers=b)
+                assert uploaded.status == 201
+                created = await client.post(
+                    "/api/library", json=body | {"digest": own_digest}, headers=b
+                )
+                assert created.status == 201, await created.text()
+                record = await created.json()
+                path = "/api/library/" + record["id"]
+                patch = {"scope": "b", "revision": record["revision"], "digest": digest}
+                refused = await client.patch(path, json=patch, headers=b)
+                assert refused.status == 404, await refused.text()
+                assert await (await client.get(path + "?scope=b", headers=b)).json() == record
+                assert not library.store.has_asset_grant("b", digest)
+
+                uploaded = await client.post("/api/assets?scope=b", data=private_bytes, headers=b)
+                assert uploaded.status == 201
+                updated = await client.patch(path, json=patch, headers=b)
+                assert updated.status == 200, await updated.text()
+                updated_record = await updated.json()
+                assert updated_record["digest"] == digest
+                assert updated_record["revision"] == record["revision"] + 1
+                created = await client.post("/api/library", json=body, headers=b)
+                assert created.status == 201
+                for reader in (a, b):
+                    fetched = await client.get("/api/assets/" + digest, headers=reader)
+                    assert fetched.status == 200
+                    assert await fetched.read() == private_bytes
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("document_kind", ("board", "image", "workflow"))
 def test_shared_documents_admit_only_exact_scope_asset_grants(
     tmp_path: Path, document_kind: str

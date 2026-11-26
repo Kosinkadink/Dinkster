@@ -2848,7 +2848,7 @@ def test_library_crud_over_http(tmp_path: Path) -> None:
                     "mediaType": WORKFLOW_MEDIA_TYPE,
                 },
             )
-            assert resp.status == 409
+            assert resp.status == 404
 
             resp = await client.post(
                 "/api/library",
@@ -2885,7 +2885,7 @@ def test_library_crud_over_http(tmp_path: Path) -> None:
             resp = await client.patch(
                 path, json={"scope": "local", "revision": 2, "digest": DIGEST_B}
             )
-            assert resp.status == 409  # bytes not held
+            assert resp.status == 404  # no scoped grant
 
             # DELETE removes the record, never the bytes.
             assert (await client.delete(path + "?scope=other")).status == 404
