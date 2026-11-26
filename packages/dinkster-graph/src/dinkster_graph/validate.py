@@ -1,7 +1,8 @@
 """Structural validation and type diagnostics.
 
-Structural errors, primitive literal payload mismatches, and the scoped COMBO
-boundary reject a graph. Other link type mismatches are advisory warnings.
+Structural errors, primitive literal payload mismatches, the scoped COMBO
+boundary, and one node's type variable fed two different types reject a graph.
+Other link type mismatches are advisory warnings.
 """
 
 from __future__ import annotations
@@ -19,10 +20,12 @@ from dinkster_schema import (
     TypeEquivalenceProvider,
     TypeExpr,
     TypeSolveError,
+    TypeVariableConflict,
     WidgetRepresentations,
     bind_type_variables,
     combo_type_mismatch_is_error,
     elaborate,
+    failed_rules,
     plan_asset_coercion,
     plan_type_equivalence,
     resolved_type_expr,
@@ -42,6 +45,7 @@ from .model import (
     PORTS_NODE_ID,
     REGION_INDEX_PORT_ID,
     REGION_INDEX_PORT_TYPE,
+    AbsentInput,
     Graph,
     GraphNode,
     Link,
@@ -342,9 +346,11 @@ def _resolve_linked_output_types(
     *,
     include_typed_literals: bool = False,
 ) -> dict[str, dict[str, TypeExpr]]:
-    """Resolve generic node outputs from linked concrete input declarations."""
+    """Resolve generic node outputs from linked concrete input declarations,
+    reporting nodes whose known input types bind one variable two ways."""
     resolved: dict[str, dict[str, TypeExpr]] = {}
     invalid_outputs: dict[str, Diagnostic] = {}
+    conflicts: dict[str, Diagnostic] = {}
 
     def contains_variable(expr: TypeExpr) -> bool:
         if expr.kind == "variable":
@@ -380,23 +386,36 @@ def _resolve_linked_output_types(
                 input_spec = schema.input(input_id)
                 if input_spec is None or not contains_variable(input_spec.type):
                     continue
-                if include_typed_literals and isinstance(value, TypedLiteral):
+                if isinstance(value, TypedLiteral):
                     input_types[input_id] = value.type_id
+                    all_generic_inputs_resolved &= include_typed_literals
                     continue
-                if not isinstance(value, Link):
-                    all_generic_inputs_resolved = False
-                    break
-                linked_type = source_type(value)
+                if isinstance(value, AbsentInput):
+                    continue
+                linked_type = source_type(value) if isinstance(value, Link) else None
                 runtime_type = None if linked_type is None else linked_type.runtime_type_id()
                 if runtime_type is None:
                     all_generic_inputs_resolved = False
-                    break
+                    continue
                 input_types[input_id] = runtime_type
-            if not all_generic_inputs_resolved:
-                continue
+            # The worker binds the same way and would fail this node only
+            # after everything upstream ran, so a conflict among the types
+            # already known rejects the graph.
+            conflicts.pop(node_id, None)
             try:
                 bindings = bind_type_variables(schema.inputs, input_types)
+            except TypeVariableConflict as exc:
+                conflicts[node_id] = Diagnostic(
+                    "error",
+                    "type-variable-conflict",
+                    _conflict_message(schema, input_types, exc.variable),
+                    node_id,
+                    exc.input_id,
+                )
+                continue
             except TypeSolveError:
+                continue
+            if not all_generic_inputs_resolved:
                 continue
             try:
                 outputs = {
@@ -416,8 +435,25 @@ def _resolve_linked_output_types(
         if not changed:
             break
     if diagnostics is not None:
+        diagnostics.extend(conflicts.values())
         diagnostics.extend(invalid_outputs.values())
     return resolved
+
+
+def _conflict_message(schema: NodeSchema, input_types: Mapping[str, str], variable: str) -> str:
+    """Each input that binds ``variable``, by its own label, with the type it brings."""
+    brought: list[str] = []
+    for spec in schema.inputs:
+        if spec.id not in input_types:
+            continue
+        try:
+            type_id = bind_type_variables((spec,), {spec.id: input_types[spec.id]}).get(variable)
+        except TypeSolveError:
+            continue
+        if type_id is not None:
+            label = spec.label if isinstance(spec.label, str) and spec.label else spec.id
+            brought.append(f"{label.rsplit('.', 1)[-1]} is {type_id}")
+    return "These inputs must be the same type: " + ", ".join(brought) + "."
 
 
 def graph_output_types(
@@ -486,6 +522,21 @@ def _check_input_value(
     producer resolution, maybe-absent, cardinality (authoritative), advisory
     type compatibility, and literal shape rules."""
     where = level.prefix + node_id
+    if isinstance(value, AbsentInput):
+        # The run applies the input's absent policy; only 'fail' is known
+        # to fail it already.
+        if absent_policy == "fail":
+            diags.append(
+                Diagnostic(
+                    "error",
+                    "absent-input",
+                    f"input '{input_id}' declares on_absent='fail' but its wire gives nothing"
+                    + (f" ({value.reason})" if value.reason else ""),
+                    where,
+                    input_id,
+                )
+            )
+        return
     if isinstance(value, Link):
         out_type: TypeExpr | None
         out_optional = False
@@ -577,8 +628,7 @@ def _check_input_value(
             return  # unresolvable producer type; its own error is reported
         if accepts_list and out_type.kind == "list" and expected.kind != "list":
             expected = TypeExpr.list_of(expected)
-        # Asset coercion (typed assets, joint contract 2026-07-26): when the
-        # producer's runtime type is asset-shaped and the destination's
+        # When the producer's runtime type is asset-shaped and the destination's
         # declared type matches a registered coercion plan (decode / lift /
         # merge), the engine coerces at input resolution - so both the
         # cardinality check and the advisory type check judge the COERCED
@@ -778,10 +828,10 @@ def _check_typed_literal(
     diags: list[Diagnostic],
 ) -> None:
     """A typed literal stamps its own runtime type id, so it is checked like
-    a link from a producer of that type (joint contract with the frontend,
-    2026-07-25): the stamp's validity and cardinality are authoritative
-    (errors), declared-type compatibility stays advisory (warning). A stamp
-    on a runtime-resolvable input is redundant - the emission rule says
+    a link from a producer of that type: the stamp's validity and cardinality
+    are authoritative (errors), declared-type compatibility stays advisory
+    (warning). A stamp on a runtime-resolvable input is redundant - the
+    emission rule says
     frontends send plain literals there - and warns, keeping mixed-version
     behavior loud (a pre-form server treats the marker dict as a plain
     literal, which only passes silently on concrete inputs)."""
@@ -1373,6 +1423,24 @@ def _validate_graph_node(
                     spec.id,
                 )
             )
+
+    # A failed rule with a fix is the editor's to fix; the run goes on.
+    for rule in failed_rules(
+        base_schema,
+        node.inputs,
+        node.output_members,
+        node.slot_variants,
+        linked=is_link,
+        literal=literal_value,
+    ):
+        diags.append(
+            Diagnostic(
+                "warning" if rule.fix else "error",
+                "rule-failed",
+                f"{node.node_type}: {rule.message}",
+                where,
+            )
+        )
 
 
 def has_errors(diags: Sequence[Diagnostic]) -> bool:

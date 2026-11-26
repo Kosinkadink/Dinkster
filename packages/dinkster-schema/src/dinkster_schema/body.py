@@ -19,12 +19,13 @@ import ast
 import dataclasses
 import inspect
 import keyword
+import math
 import re
 import typing
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any, Final, Literal, cast
+from typing import Any, Final, Literal, cast, overload
 
 from dinkster_values import ASSET_TYPE, CustomWidgetDescriptor
 from dinkster_values.builtin_types import (
@@ -33,6 +34,7 @@ from dinkster_values.builtin_types import (
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    HISTOGRAM_TYPE,
 )
 
 from .formula import Formula as CompiledFormula
@@ -42,13 +44,16 @@ from .model import (
     OPTION_KEY_PATTERN,
     VARIANT_KEY_PATTERN,
     ComboOption,
+    ComboWidget,
     CompositorWidget,
     CurveWidget,
     Input,
     MultiComboWidget,
+    NumberWidget,
     Output,
     OutputProbeSpec,
     SaveTargetWidget,
+    StringWidget,
     TypeExpr,
     Widget,
     WidgetRepresentations,
@@ -314,6 +319,12 @@ def _check_declared(function: object, what: str, marked: Callable[[Any], object]
         )
 
 
+@overload
+def lookup[F: Callable[..., object]](function: F) -> F: ...
+@overload
+def lookup[F: Callable[..., object]](
+    *, watches: tuple[str, ...] = (), after_run: bool = False
+) -> Callable[[F], F]: ...
 def lookup[F: Callable[..., object]](
     function: F | None = None,
     *,
@@ -392,6 +403,77 @@ class Lookup:
     @property
     def name(self) -> str:
         return function_name(self.function)
+
+
+type AutomaticKind = Literal["int", "float", "number", "text", "choice", "bool"]
+
+_AUTOMATIC_KINDS: Final[Mapping[TypeExpr, AutomaticKind]] = MappingProxyType(
+    {
+        TypeExpr.concrete(CORE_INT): "int",
+        TypeExpr.concrete(CORE_FLOAT): "float",
+        TypeExpr.union(CORE_INT, CORE_FLOAT): "number",
+        TypeExpr.union(CORE_FLOAT, CORE_INT): "number",
+        TypeExpr.concrete(CORE_STRING): "text",
+        TypeExpr.concrete(CORE_COMBO): "choice",
+        TypeExpr.concrete(CORE_BOOLEAN): "bool",
+    }
+)
+
+_AUTOMATIC_ANSWERS: Final[Mapping[AutomaticKind, tuple[type, ...]]] = MappingProxyType(
+    {
+        "int": (int,),
+        "float": (float, int),
+        "number": (int, float),
+        "text": (str,),
+        "choice": (str,),
+        "bool": (bool,),
+    }
+)
+
+
+def automatic_kind(expr: TypeExpr) -> AutomaticKind | None:
+    """The kind of field an automatic value fills, or None for a type with no such field."""
+    return _AUTOMATIC_KINDS.get(expr)
+
+
+def automatic_value_fits(kind: AutomaticKind, value: object) -> bool:
+    """Whether a worked-out value is a value of a field of this kind.
+
+    A whole number fits a decimal field, as on a wire; a decimal fits a
+    whole-number field only when it is exactly whole."""
+    if kind == "bool":
+        return type(value) is bool
+    if kind in ("text", "choice"):
+        return type(value) is str
+    if kind == "int":
+        return type(value) is int or (type(value) is float and value.is_integer())
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
+def check_automatic(row: Input) -> None:
+    """Refuse an ``automatic`` the field cannot hold, by what the input itself shows."""
+    automatic = cast("object", row.automatic)
+    if automatic is None:
+        return
+    if not isinstance(automatic, (Formula, Lookup)):
+        raise ValueError(f"input {row.id}: automatic is a Formula or a Lookup")
+    if row.default is None:
+        raise ValueError(
+            f"input {row.id}: automatic needs a default, used when the value cannot be worked out"
+        )
+    kind = automatic_kind(row.type)
+    if kind is None:
+        raise ValueError(
+            f"input {row.id}: automatic needs a whole number, decimal number, text, choice or "
+            "yes or no field"
+        )
+    if isinstance(automatic, Lookup):
+        answers = _AUTOMATIC_ANSWERS[kind]
+        _check_answer(
+            automatic.function,
+            lambda answer: any(answer is allowed for allowed in answers),
+            " or ".join(allowed.__name__ for allowed in answers),
+        )
 
 
 type StepValue = object
@@ -1331,7 +1413,7 @@ class FormulaNames:
     inputs: set[str] = field(default_factory=set[str])
     assets: set[str] = field(default_factory=set[str])
     outside_run: set[str] = field(default_factory=set[str])
-    """States with ``part_of_run=False``."""
+    """States with ``part_of_run=False`` and fields with ``sent=False``."""
     fields: set[str] = field(default_factory=set[str])
     """Names that hold an ``Input`` or a ``State``."""
     counted: set[str] = field(default_factory=set[str])
@@ -1435,12 +1517,16 @@ class InputGroupView:
     """A group of the body's own scope as the replacement language's input family.
 
     ``rows`` is ``None`` when a member holds anything but plain inputs.
-    ``records`` says whether a member's row id is part of its flattened id."""
+    ``records`` says whether a member's row id is part of its flattened id.
+    ``limit`` is the most members the group admits: its declared maximum,
+    its number of names, and the engine's cap, whichever is least."""
 
     id: str
     rows: tuple[Input, ...] | None
     records: bool
     position_key: Callable[[int], str] | None
+    min_members: int
+    limit: int
 
 
 def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView | None:
@@ -1456,11 +1542,14 @@ def input_group_view(body: tuple[BodyRow, ...], group_id: str) -> InputGroupView
         )
         keys = row.keys
         assert keys is not None
+        limit = MAX_MEMBERS if row.max_members is None else row.max_members
         return InputGroupView(
             row.id,
             rows,
             row.value is None,
             keys.key if isinstance(keys, Numbered) else keys.names.__getitem__,
+            row.min_members,
+            limit if isinstance(keys, Numbered) else min(limit, len(keys.names)),
         )
     return None
 
@@ -1505,7 +1594,7 @@ def formula_names(rows: tuple[BodyRow | Use, ...]) -> FormulaNames:
                 _row_kind(row),
                 is_input=isinstance(row, Input),
                 is_asset=row.type.kind == "asset" or row.type == TypeExpr.concrete(ASSET_TYPE),
-                outside_run=isinstance(row, State) and not row.part_of_run,
+                outside_run=not (row.part_of_run if isinstance(row, State) else row.sent),
                 is_field=True,
             )
         elif isinstance(row, Choice):
@@ -1583,10 +1672,82 @@ def _refuse_outside_run(formula: Formula, scope: FormulaScope, where: str) -> No
             name = ast.unparse(node) if isinstance(node, (ast.Name, ast.Attribute)) else None
             if name in scope.outside_run:
                 raise ValueError(
-                    f"{where}: reads {name!r}, a State with part_of_run=False; a value that is "
-                    "not part of a run cannot decide structure or be worked out by the engine"
+                    f"{where}: reads {name!r}, which is not part of a run (a State with "
+                    "part_of_run=False or a field with sent=False); a value that is not part "
+                    "of a run cannot decide structure or be worked out by the engine"
                 )
         pending.extend(compiled.derived.values())
+
+
+def _refuse_automatic_outside_run(row: Input, scope: FormulaScope) -> None:
+    """The engine works an automatic value out too, so neither its formula nor
+    a lookup's arguments may read a value that is not part of a run."""
+    where = f"input {row.id} automatic"
+    if isinstance(row.automatic, Formula):
+        _refuse_outside_run(row.automatic, scope, where)
+    elif isinstance(row.automatic, Lookup):
+        for argument in row.automatic.args:
+            if isinstance(argument, Formula):
+                _refuse_outside_run(argument, scope, where)
+            elif argument in scope.outside_run:
+                raise ValueError(
+                    f"{where}: reads {argument!r}, which is not part of a run (a State with "
+                    "part_of_run=False or a field with sent=False); a value that is not part "
+                    "of a run cannot be worked out by the engine"
+                )
+
+
+def _names_read(formula: Formula, scope: FormulaScope) -> set[str]:
+    """The names a formula reads, itself or through a derived formula."""
+    names: set[str] = set()
+    pending = [parse_formula(formula.text, scope)]
+    while pending:
+        compiled = pending.pop()
+        for node in ast.walk(compiled.tree):
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                names.add(ast.unparse(node))
+        pending.extend(compiled.derived.values())
+    return names
+
+
+def _refuse_automatic_circle(rows: tuple[BodyRow | Use, ...], scope: FormulaScope) -> None:
+    """Refuse automatic fields of one scope that read each other, or one that
+    reads itself: none of them could be worked out."""
+    automatic = {
+        row.id: row.automatic
+        for row in scope_rows(rows)
+        if isinstance(row, Input) and row.automatic is not None
+    }
+    reads: dict[str, set[str]] = {}
+    for input_id, declared in automatic.items():
+        if isinstance(declared, Formula):
+            names = _names_read(declared, scope)
+        else:
+            assert isinstance(declared, Lookup)
+            names = set[str]()
+            for argument in declared.args:
+                if isinstance(argument, Formula):
+                    names |= _names_read(argument, scope)
+                else:
+                    names.add(argument)
+        reads[input_id] = names & automatic.keys()
+    done: set[str] = set()
+
+    def visit(input_id: str, path: tuple[str, ...]) -> None:
+        if input_id in path:
+            circle = " -> ".join((*path[path.index(input_id) :], input_id))
+            raise ValueError(
+                f"input {input_id} automatic: automatic fields read each other ({circle}); "
+                "none of them could be worked out"
+            )
+        if input_id in done:
+            return
+        for read in sorted(reads[input_id]):
+            visit(read, (*path, input_id))
+        done.add(input_id)
+
+    for input_id in automatic:
+        visit(input_id, ())
 
 
 def _refuse_counted(formula: CompiledFormula, scope: FormulaScope) -> None:
@@ -1655,11 +1816,13 @@ class _FormulaCheck:
             fields=frozenset(fields | own.fields),
             counted=frozenset(counted | own.counted),
         )
+        _check_curve_histograms(rows)
         for row in scope_rows(rows):
             self.row(row, scope)
         for row in rows:
             if isinstance(row, Use):
                 self.check(_formulas_in(row), scope)
+        _refuse_automatic_circle(rows, scope)
         return scope
 
     def row(self, row: BodyRow, scope: FormulaScope) -> None:
@@ -1686,6 +1849,8 @@ class _FormulaCheck:
             for widget in _shown_widgets(row.widget):
                 if isinstance(widget, (CustomWidgetDescriptor, CompositorWidget)):
                     _check_editor_names(widget, scope, f"input {row.id} widget", own=row.id)
+                _check_widget_answers(widget)
+            _refuse_automatic_outside_run(row, scope)
         if isinstance(row, Choice) and row.leader is not None:
             _refuse_outside_run(row.leader, scope, f"choice {row.id} leader")
         if isinstance(row, Note) and isinstance(row.text, Lookup):
@@ -1815,6 +1980,39 @@ def _shown_widgets(widget: object) -> tuple[object, ...]:
     if isinstance(widget, WidgetRepresentations):
         return tuple(item.widget for item in widget.representations)
     return () if widget is None else (widget,)
+
+
+def _check_curve_histograms(rows: tuple[BodyRow | Use, ...]) -> None:
+    """Each curve's histogram is an input of the curve's own scope that is a
+    HISTOGRAM and may be left empty, and no two curves share one."""
+    inputs = {row.id: row for row in scope_rows(rows) if isinstance(row, Input)}
+    taken: dict[str, str] = {}
+    for curve in inputs.values():
+        names = {
+            widget.histogram
+            for widget in _shown_widgets(curve.widget)
+            if isinstance(widget, CurveWidget) and widget.histogram
+        }
+        if len(names) > 1:
+            raise ValueError(f"curve {curve.id}: its representations name more than one histogram")
+        for name in names:
+            _check_curve_histogram(curve.id, name, inputs, taken)
+
+
+def _check_curve_histogram(
+    curve: str, name: str, inputs: Mapping[str, Input], taken: dict[str, str]
+) -> None:
+    what = f"curve {curve}: histogram {name!r}"
+    target = inputs.get(name)
+    if target is None:
+        raise ValueError(f"{what} names no input beside the curve")
+    if target.type != TypeExpr.concrete(HISTOGRAM_TYPE):
+        raise ValueError(f"{what} is not a HISTOGRAM input")
+    if target.required:
+        raise ValueError(f"{what} must be an input that may be left empty")
+    if name in taken:
+        raise ValueError(f"{what} is already the histogram of curve {taken[name]}")
+    taken[name] = curve
 
 
 def _check_editor_names(
@@ -1951,6 +2149,27 @@ def _fits_options(answer: object) -> bool:
     return typing.get_args(answer) in ((str,), (int,), (float,), (ComboOption,))
 
 
+def _fits_limit(answer: object) -> bool:
+    """A number, or None for no bound."""
+    if answer is int or answer is float:
+        return True
+    members = set(typing.get_args(answer))
+    return bool(members) and members <= {int, float, type(None)} and members != {type(None)}
+
+
+def _check_widget_answers(widget: object) -> None:
+    """The answer of each lookup a field's widget uses must fit where it is used."""
+    if isinstance(widget, ComboWidget) and isinstance(widget.options, Lookup):
+        _check_answer(widget.options.function, _fits_options, "a list of options")
+    elif isinstance(widget, StringWidget) and isinstance(widget.completions, Lookup):
+        _check_answer(widget.completions.function, _fits_options, "a list of completions")
+    elif isinstance(widget, NumberWidget):
+        for name in ("min", "max", "step", "offset"):
+            bound = getattr(widget, name)
+            if isinstance(bound, Lookup):
+                _check_answer(bound.function, _fits_limit, f"a number or None for {name}")
+
+
 def top_level_rows(
     body: tuple[BodyRow, ...],
 ) -> tuple[tuple[Input, ...], tuple[Output, ...]]:
@@ -1958,7 +2177,7 @@ def top_level_rows(
     inputs = tuple(
         row.as_input(row.id) if isinstance(row, State) else row
         for row in scope_rows(body)
-        if isinstance(row, Input) or (isinstance(row, State) and row.part_of_run)
+        if (isinstance(row, Input) and row.sent) or (isinstance(row, State) and row.part_of_run)
     )
     outputs = tuple(row for row in scope_rows(body) if isinstance(row, Output))
     return inputs, outputs

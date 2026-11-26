@@ -89,10 +89,14 @@ class LockedDistribution:
         }:
             raise ProvisionError(f"noncanonical lock package: {self.name}")
         version = Version(self.version)
+        wheels: dict[tuple[str, str, int], LockedWheel] = {}
         for wheel in self.wheels:
             wheel_name, wheel_version, _, _ = parse_wheel_filename(wheel.filename)
             if wheel_name != self.name or wheel_version != version:
                 raise ProvisionError(f"wheel identity disagrees with {self.name}=={self.version}")
+            wheels.setdefault((wheel.filename, wheel.sha256, wheel.size), wheel)
+        # Location aliases must not change the selected wheel's provenance.
+        object.__setattr__(self, "wheels", tuple(wheels.values()))
 
 
 @lru_cache(maxsize=512)
@@ -730,7 +734,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("pack_root", type=Path)
     parser.add_argument("--variant", required=True)
     parser.add_argument("--part")
-    parser.add_argument("--generation-python", type=Path, required=True)
+    parser.add_argument("--generation-python", type=Path, required=True, metavar="SNAPSHOT_PYTHON")
     parser.add_argument("--constraints", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--index", action="append", default=[])

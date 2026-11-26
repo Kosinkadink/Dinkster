@@ -1,4 +1,4 @@
-"""Export a sealed checkout generation's published pack catalog for frontend decoding."""
+"""Export a sealed checkout snapshot's default pack catalog for frontend decoding."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from importlib.metadata import version
@@ -17,17 +18,30 @@ from pathlib import Path
 from verify_release_launch import available_port, stop
 
 
-def export_catalog(output: Path) -> None:
+def export_catalog(output: Path, pack_sources: Path | None = None) -> None:
+    sources: list[Path] = []
+    if pack_sources is not None:
+        from dinkster.registries import default_pack_minimums
+
+        available = {
+            tomllib.loads(manifest.read_text(encoding="utf-8"))["pack"]["name"]: manifest.parent
+            for manifest in pack_sources.resolve().glob("packages/*/dinkster-pack.toml")
+        }
+        for name in sorted(default_pack_minimums()):
+            if name not in available:
+                raise ValueError(f"default pack source missing: {name}")
+            sources.append(available[name])
     with tempfile.TemporaryDirectory(prefix="dinkster-catalog-") as directory:
         root = Path(directory)
         environment = {
             **os.environ,
+            "DINKSTER_HOME": str(root / "home"),
             "XDG_DATA_HOME": str(root / "user-data"),
             "DINKSTER_REMOTE_CATALOG_BASE": "",
             "DINKSTER_REMOTE_GATEWAY_BASE": "",
         }
-        # Catalogs must be prepared by the runtime that reads them. A source engine
-        # still selects published default packs, without reusing Stable's old schemas.
+        # Published packs are the default. Breaking API development selects the
+        # matching pack sources explicitly, using the same snapshot provisioner.
         management = [sys.executable, "-m", "dinkster_supervisor.environment"]
         management_environment = {
             key: value
@@ -48,10 +62,18 @@ def export_catalog(output: Path) -> None:
                 *management,
                 "--root",
                 str(project),
-                "setup",
-                "--from-scratch",
+                *(["develop"] if pack_sources is not None else ["setup", "--from-scratch"]),
                 "--source",
                 str(Path(__file__).resolve().parents[1]),
+                *[argument for source in sources for argument in ("--pack-source", str(source))],
+                *(
+                    [
+                        "--library-source",
+                        str(pack_sources.resolve() / "packages/dinkster-pack-helpers"),
+                    ]
+                    if pack_sources is not None
+                    else []
+                ),
                 "--variant",
                 "linux-cpu",
                 "--python",
@@ -142,4 +164,6 @@ def export_catalog(output: Path) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
-    export_catalog(parser.parse_args().output)
+    parser.add_argument("--pack-sources", type=Path, help="checkout containing every default pack")
+    args = parser.parse_args()
+    export_catalog(args.output, args.pack_sources)

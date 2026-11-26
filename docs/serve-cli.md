@@ -137,23 +137,6 @@ take constant time.
 python scripts/develop.py run -- python tools/benchmark_schema_catalog.py --repeats 3
 ```
 
-Measured on 2026-09-06 with Python 3.12.3, Linux 7.0.0-29, local storage,
-and an AMD Ryzen 7 5800XT (8 cores). Three fresh processes per count;
-OMP/OpenBLAS threads limited to one, empty GPU compute inventory, and no
-concurrent test suite in this checkout.
-
-| Installed packs | Median (s) | Maximum (s) | Pack workers started |
-| --- | --- | --- | --- |
-| 0 | 0.816 | 0.817 | 0 |
-| 10 | 0.857 | 0.863 | 0 |
-| 50 | 1.016 | 1.052 | 0 |
-| 200 | 2.293 | 2.307 | 0 |
-
-The 1-minute load averages before individual samples ranged from 1.080 to
-1.391. Before the 200-pack run, `uptime` reported 1.07 / 1.21 / 1.46 for the
-1/5/15-minute averages and NVIDIA's compute inventory was empty. The JSON
-output retains each sample's three load averages beside its elapsed time.
-
 ### --no-default-packs
 
 Default: off. Serve only the managed install root and explicitly configured packs
@@ -757,6 +740,39 @@ writable, sibling scratch directories are absent from its jail, and `HOME` and
 
 Runtime settings are documented in [settings-api.md](settings-api.md).
 
+### --engine-state-root
+
+Syntax: `--engine-state-root PATH`. Requires a library root and an
+absolute directory outside it. Without an explicit directory, persistent direct
+launches select account-local state bound to their interpreter and library.
+Linked directories and overlapping roots refuse
+before stores open. The engine holds an exclusive lock on this directory until
+exit, including when another library tries to use it. On first use, an empty
+directory is bound to the resolved library path in `owner.json`. After shutdown,
+a different library still cannot use it. Populated directories without a binding
+and invalid ownership files refuse without changing their stored work. Alternate
+paths to the same library directory are accepted. A first launch interrupted
+before publication retries its reserved staging file automatically; arbitrary
+files and linked staging files are never adopted or overwritten.
+
+With this option, accepted jobs use `accepted.sqlite`, run journals use
+`execution.sqlite`, collaboration uses `sessions.sqlite`, worker snapshots and
+per-mount indexes use `worker-state/`, and remote values use `value-store/`.
+Unfinished uploads use a separate engine directory under
+`<library>/.engine-uploads/`, selected by the resolved working-state path,
+so upload staging stays on the vault disk even when engine state is elsewhere.
+Linked staging directories and directories on another disk refuse. Startup
+recovers only its accepted work and removes only its unfinished latent uploads.
+Finished history and other durable records use the shared library helper.
+Managed engines declaring `library-helper/1` receive a launcher-selected directory
+under their environment. The launcher preserves newer working state when restoring
+an older engine release or snapshot. Current engines declare this capability;
+first use publishes the restartable legacy record conversion before stores open.
+Default execution caches and pack scratch use engine state; explicit storage
+selections and pack environments retain their configured paths. Stale latent-upload
+cleanup touches only the selected engine upload staging directory, not a shared
+vault or another engine's staging.
+
 ### --execution-cache-mode, --execution-cache-memory-entries, --execution-cache-dir, --execution-cache-disk-budget
 
 The standard server defaults to `--execution-cache-mode layered` when a
@@ -881,7 +897,9 @@ mtime rows are reused.
 and selected output. On first serve, an environment-managed snapshot
 initializes a writable `output` grant at `<library-root>/output` and reports
 `outputMount: "output"` with mount mode `readwrite`. The default library root
-is `<environment-root>/dinkster-library`; an explicit library root is preserved.
+is the `library` folder in the Dinkster home folder (`$DINKSTER_LIBRARY_ROOT` when set),
+shared by every environment `dinkster setup` creates; a development environment keeps
+`<environment-root>/dinkster-library`, and an explicit library root is preserved.
 Existing selections, read-only grants and deliberately removed defaults are
 not replaced. A deliberately unconfigured library can report `outputMount: null`.
 Initialization does not enable runtime mount editing.

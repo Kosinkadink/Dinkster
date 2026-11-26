@@ -57,7 +57,8 @@ __all__ = [
 _ENGINE_NAME = re.compile(r"[a-z0-9][a-z0-9-]*\Z")
 _GPU_ID = re.compile(r"(?:[0-9]+|GPU-[0-9A-Fa-f-]+)\Z")
 _STATES = frozenset({"starting", "ready", "failed", "stopped"})
-_STARTUP_TIMEOUT = 30.0
+_STARTUP_TIMEOUT = 600.0
+_STOP_TIMEOUT = 30.0
 _POLL_INTERVAL = 0.05
 
 
@@ -156,9 +157,87 @@ def check_library_compatibility(root: Path, generation: int) -> None:
     if not library:
         return
     try:
-        check_library(Path(library), python=interpreter(root / "builds" / str(generation)))
+        target = root / "builds" / str(generation)
+        manifest = target / "engine-manifest.json"
+        capabilities: object = (
+            read_document(manifest).get("capabilities", []) if manifest.is_file() else []
+        )
+        if not isinstance(capabilities, list) or any(
+            not isinstance(value, str) for value in cast("list[object]", capabilities)
+        ):
+            raise EnvironmentError("engine capabilities must be a list of strings")
+        check_library(
+            Path(library),
+            python=interpreter(target),
+            capabilities=tuple(cast("list[str]", capabilities)),
+        )
     except (LibraryCompatibilityError, OSError, ValueError, subprocess.SubprocessError) as exc:
         raise EnvironmentError(str(exc)) from exc
+
+
+def _state_readers(root: Path, generation: int) -> str:
+    from packaging.version import Version
+
+    from .environment_history import history
+    from .environment_state import digest, generation_number
+
+    selected = Generation.read(root / "builds" / str(generation) / "build.json")
+    version = Version(selected.engine_version)
+    engines: list[tuple[int, str, Version]] = []
+    for entry in history(root):
+        snapshot = cast("dict[str, object]", entry["snapshot"])
+        engine = snapshot.get("engine")
+        if not isinstance(engine, dict):
+            raise EnvironmentError("snapshot history must identify its engine")
+        engine = cast("dict[str, object]", engine)
+        recorded_version = engine.get("version")
+        if not isinstance(recorded_version, str):
+            raise EnvironmentError("snapshot history must identify its engine version")
+        engines.append(
+            (
+                generation_number(entry.get("generation")),
+                digest(engine.get("release")),
+                Version(recorded_version),
+            )
+        )
+    # A restore rebuilds old software under a new number. Equal-version releases
+    # keep their original order rather than the rebuilt tree's position.
+    first_seen = min(
+        (number for number, release, _ in engines if release == selected.engine_release),
+        default=generation,
+    )
+    readers = {selected.engine_release}
+    readers.update(
+        release
+        for number, release, recorded_version in engines
+        if recorded_version < version or (recorded_version == version and number <= first_seen)
+    )
+    return json.dumps({"engine": selected.engine_release, "readers": sorted(readers)})
+
+
+def development_frontend(root: Path, generation: int, name: str) -> tuple[str | None, str | None]:
+    """The development frontend folder or dev server an engine start uses when none is given.
+
+    The engine's last start wins, then the snapshot's development selection.
+    """
+    previous = _load_record(root, name, generation)
+    if previous is not None and ("frontendRoot" in previous or "frontendDev" in previous):
+        return (
+            cast("str | None", previous.get("frontendRoot")),
+            cast("str | None", previous.get("frontendDev")),
+        )
+    development = root / "builds" / str(generation) / "development-sources.json"
+    if not development.is_file():
+        return None, None
+    selection = read_document(development)
+    saved_dev = selection.get("frontendDev")
+    if saved_dev is None:
+        return cast("str | None", selection.get("frontendRoot")), None
+    from .environment_development import frontend_development_url
+
+    return cast("str | None", selection.get("frontendRoot")), frontend_development_url(
+        str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
+    )
 
 
 def start_engine(
@@ -235,20 +314,8 @@ def _start_engine(
         raise EnvironmentError(f"snapshot {generation} has no interpreter: {python}")
 
     previous = _load_record(root, name, generation)
-    if frontend_root is None and frontend_dev is None and previous is not None:
-        frontend_root = cast("str | None", previous.get("frontendRoot"))
-        frontend_dev = cast("str | None", previous.get("frontendDev"))
-    development = target / "development-sources.json"
-    if frontend_root is None and frontend_dev is None and development.is_file():
-        selection = read_document(development)
-        frontend_root = cast("str | None", selection.get("frontendRoot"))
-        saved_dev = selection.get("frontendDev")
-        if saved_dev is not None:
-            from .environment_development import frontend_development_url
-
-            frontend_dev = frontend_development_url(
-                str(saved_dev), allow_remote=selection.get("allowFrontendDevRemote") is True
-            )
+    if frontend_root is None and frontend_dev is None:
+        frontend_root, frontend_dev = development_frontend(root, generation, name)
     if frontend_root is not None and frontend_dev is not None:
         raise EnvironmentError("development frontend folder and dev server are exclusive")
 
@@ -280,6 +347,8 @@ def _start_engine(
             raise EnvironmentError("engine assignment changed; stop it first")
         if existing["state"] != "stopped":
             raise EnvironmentError("engine record is live but not safely reachable; stop it first")
+        # A stopped receipt can survive an interrupted stop or an external SIGTERM.
+        stop_engine(root, name, generation=generation)
 
     check_library_compatibility(root, generation)
     manifest = target / "engine-manifest.json"
@@ -361,12 +430,28 @@ def _start_engine(
         str(library_lock.__file__),
         library,
         f"engine {name} in {root} (snapshot {generation})",
+        *(
+            [
+                "--engine-state",
+                str(root.resolve() / "engine-state" / name),
+                str(generation),
+                _state_readers(root, generation),
+                "--",
+            ]
+            if isinstance(capabilities, list) and "library-helper/1" in capabilities
+            else []
+        ),
         "--generation",
         str(target),
         "--library-root",
         library,
         "--prepare-stale-catalogs",
         "--allow-mount-changes",
+        *(
+            ["--node-table-record", str(node_table_record(root, name))]
+            if isinstance(capabilities, list) and "node-table-record/1" in capabilities
+            else []
+        ),
     ]
     if sandbox_packs:
         command.append("--sandbox-packs")
@@ -415,19 +500,34 @@ def _start_engine(
             _write_record(root, name, record)
         if inspected["state"] == "ready" and _health_is_ready(inspected):
             return _public_row(inspected)
-        if inspected["state"] == "failed" and _identity_matches(inspected):
+        if sys.platform == "darwin":
+            from .macos_process_family import supervisor_exit_code
+
+            exit_code = supervisor_exit_code(lifecycle)
+        else:
+            exit_code = process.poll()
+        if inspected["state"] == "stopped" and exit_code is None:
+            # The cleanup receipt precedes the launcher's final traceback and stream flush.
+            time.sleep(_POLL_INTERVAL)
+            continue
+        if inspected["state"] == "stopped" or (
+            inspected["state"] == "failed" and _identity_matches(inspected)
+        ):
             failure = _startup_failure(
                 f"engine {name} failed before becoming ready",
-                inspected.get("_engineExitCode"),
+                inspected.get("_engineExitCode")
+                if inspected.get("_engineExitCode") is not None
+                else exit_code,
                 log_path,
                 log_offset,
             )
             stop_engine(root, name, generation=generation)
             raise failure
-        exit_code = process.poll() if sys.platform != "darwin" else None
         if exit_code is not None:
             record["state"] = "failed"
             _write_record(root, name, record)
+            if sys.platform == "darwin":
+                stop_engine(root, name, generation=generation)
             raise _startup_failure(
                 f"engine {name} exited before becoming ready (supervisor launcher)",
                 exit_code,
@@ -436,7 +536,7 @@ def _start_engine(
             )
         time.sleep(_POLL_INTERVAL)
     stop_engine(root, name, generation=generation)
-    raise EnvironmentError(f"engine {name} did not become ready")
+    raise _startup_failure(f"engine {name} did not become ready", None, log_path, log_offset)
 
 
 def _startup_failure(
@@ -470,7 +570,7 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     if record is None:
         return
     lifecycle = cast("Path", record["_processState"])
-    deadline = time.monotonic() + _STARTUP_TIMEOUT
+    deadline = time.monotonic() + _STOP_TIMEOUT
     while True:
         claimed = lifecycle.is_dir() and cancel_pending_process(
             lifecycle, cast("str", record["instance"])
@@ -501,7 +601,7 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
     except (HTTPError, URLError, ValueError):
         # GracefulExit may close the listener before an HTTP response reaches us.
         pass
-    deadline = time.monotonic() + _STARTUP_TIMEOUT
+    deadline = time.monotonic() + _STOP_TIMEOUT
     while time.monotonic() < deadline:
         if not _process_alive(inspected):
             if (
@@ -512,13 +612,13 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
                 != "stopped"
             ):
                 raise EnvironmentError("supervisor exited without proving child cleanup")
-            inspected["state"] = "stopped"
-            inspected["pid"] = 0
-            _write_record(root, name, inspected)
             if sys.platform == "darwin":
                 from .macos_process_family import remove_supervisor
 
                 remove_supervisor(lifecycle)
+            inspected["state"] = "stopped"
+            inspected["pid"] = 0
+            _write_record(root, name, inspected)
             from .environment_collection import automatic_generation_collection
 
             automatic_generation_collection(root)
@@ -689,6 +789,29 @@ def _validate_name(name: str) -> None:
         raise EnvironmentError("engine name must be a portable engine id")
 
 
+def engine_log_tail(root: Path, name: str) -> dict[str, str | bool]:
+    """Read at most 64 KiB of the current snapshot's engine output, even after stop."""
+    _validate_name(name)
+    generation = read_current(root)
+    empty: dict[str, str | bool] = {"available": False, "text": "", "truncated": False}
+    if generation is None:
+        return empty
+    try:
+        with _runtime_path(root, name, generation).with_suffix(".log").open("rb") as log:
+            log.seek(0, os.SEEK_END)
+            start = max(0, log.tell() - 64 * 1024)
+            log.seek(start)
+            output = log.read(64 * 1024).decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return empty
+    return {"available": True, "text": output, "truncated": start > 0}
+
+
+def node_table_record(root: Path, name: str) -> Path:
+    """Where an engine records its composed node table for the always-on process."""
+    return root / "node-tables" / f"{name}.json"
+
+
 def _runtime_path(root: Path, name: str, generation: int) -> Path:
     return root / "runtime" / str(generation) / f"{name}.json"
 
@@ -847,7 +970,11 @@ def _health_is_ready(record: dict[str, object]) -> bool:
         )
     except (HTTPError, URLError, ValueError):
         return False
-    return isinstance(health, dict) and cast("dict[str, object]", health).get("ok") is True
+    return (
+        isinstance(health, dict)
+        and cast("dict[str, object]", health).get("ok") is True
+        and (not record.get("excludedNodeTypes") or "composition" not in health)
+    )
 
 
 def _process_alive(record: dict[str, object]) -> bool:
@@ -955,6 +1082,6 @@ def _request(
     try:
         with opener.open(request, timeout=2) as response:
             return json.loads(response.read().decode("utf-8"))
-    except TimeoutError as exc:
-        # urllib wraps connection timeouts, but response-body reads can raise directly.
+    except (TimeoutError, ConnectionError) as exc:
+        # Disconnects and response-body timeouts can escape urllib without wrapping.
         raise URLError(exc) from exc

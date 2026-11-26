@@ -21,6 +21,7 @@ from dinkster_values import CustomWidgetDescriptor, JsonValue
 from . import body
 from .formula import FORMULA_LANGUAGE_VERSION
 from .model import (
+    KNOWN_VALUE_LIMITS,
     AbsentPolicy,
     AfterRunMode,
     AssetWidget,
@@ -66,6 +67,7 @@ _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
 _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 _CANONICAL_DECIMAL_INT = re.compile("^-?(?:0|[1-9][0-9]*)$")
+_WIRE_STRIP_COLOR = re.compile("#[0-9a-f]{6}")
 
 
 def _number_constraint_to_wire(value: int | float, wire_version: int) -> int | float | str | None:
@@ -134,7 +136,11 @@ def _widget_descriptor_to_wire(
         combo_wire: dict[str, object] = {"type": "COMBO"}
         if widget.editable_options:
             combo_wire["editableOptions"] = True
-        if widget.options:
+        if widget.options_input:
+            combo_wire["optionsInput"] = widget.options_input
+        if isinstance(widget.options, (body.Formula, body.Lookup)):
+            combo_wire["options"] = _formula_to_wire(widget.options)
+        elif widget.options:
             combo_wire["options"] = [
                 _combo_option_to_wire(option, wire_version) for option in widget.static_options
             ]
@@ -185,9 +191,12 @@ def _widget_descriptor_to_wire(
         return boolean_wire
     if isinstance(widget, NumberWidget):
         number_wire: dict[str, object] = {"type": "NUMBER"}
-        for field in ("min", "max", "step"):
+        for field in ("min", "max", "step", "offset"):
             constraint = getattr(widget, field)
             if constraint is None:
+                continue
+            if isinstance(constraint, (body.Formula, body.Lookup)):
+                number_wire[field] = _formula_to_wire(constraint)
                 continue
             encoded = _number_constraint_to_wire(constraint, wire_version)
             if encoded is not None:
@@ -196,6 +205,13 @@ def _widget_descriptor_to_wire(
             number_wire["round"] = widget.round
         if widget.display is not None:
             number_wire["display"] = widget.display
+        if widget.special:
+            number_wire["special"] = [
+                [_number_constraint_to_wire(value, wire_version), label]
+                for value, label in widget.special.items()
+            ]
+        if widget.reason is not None:
+            number_wire["reason"] = widget.reason
         if len(number_wire) == 1:
             return None
         return number_wire
@@ -207,7 +223,9 @@ def _widget_descriptor_to_wire(
             string_wire["placeholder"] = widget.placeholder
         if widget.dynamic_prompts is not None:
             string_wire["dynamicPrompts"] = widget.dynamic_prompts
-        if widget.completions is not None:
+        if isinstance(widget.completions, (body.Formula, body.Lookup)):
+            string_wire["completions"] = _formula_to_wire(widget.completions)
+        elif widget.completions is not None:
             completions: dict[str, object] = {}
             if widget.completions.items:
                 completions["items"] = [
@@ -225,9 +243,18 @@ def _widget_descriptor_to_wire(
             return None
         return string_wire
     if isinstance(widget, ColorWidget):
-        return {"type": "COLOR"}
+        return {"type": "COLOR", **({"alpha": True} if widget.alpha else {})}
     if isinstance(widget, CurveWidget):
-        return {"type": "CURVE"}
+        curve_wire: dict[str, object] = {"type": "CURVE"}
+        if widget.input_strip is not None:
+            curve_wire["inputStrip"] = list(widget.input_strip)
+        if widget.output_strip is not None:
+            curve_wire["outputStrip"] = list(widget.output_strip)
+        if widget.histogram:
+            curve_wire["histogram"] = widget.histogram
+        if not widget.histogram_visible:
+            curve_wire["histogramVisible"] = False
+        return curve_wire
     if isinstance(widget, CompositorWidget):
         return _editor_names_to_wire(widget, {"type": "COMPOSITOR"})
     if isinstance(widget, MountWidget):
@@ -342,20 +369,26 @@ def _widget_descriptor_from_wire(
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
-            allowed.add("editableOptions")
+            allowed.update({"editableOptions", "optionsInput"})
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
-        if not isinstance(options, list):
-            raise ValueError("COMBO widget options must be a list")
-        option_values = cast("list[object]", options)
-        decoded_options = tuple(
-            (
-                _combo_option_from_wire(
-                    value, wire_version, subject=f"COMBO widget options[{index}]"
-                )
-                for index, value in enumerate(option_values)
+        decoded_options: Any
+        if isinstance(options, dict):
+            decoded_options = _formula_from_wire(
+                cast("dict[str, object]", options), "COMBO widget options"
             )
-        )
+        elif not isinstance(options, list):
+            raise ValueError("COMBO widget options must be a list, a formula or a lookup")
+        else:
+            option_values = cast("list[object]", options)
+            decoded_options = tuple(
+                (
+                    _combo_option_from_wire(
+                        value, wire_version, subject=f"COMBO widget options[{index}]"
+                    )
+                    for index, value in enumerate(option_values)
+                )
+            )
         remote_route = ""
         refresh_button = False
         control_after_refresh: object = None
@@ -404,6 +437,9 @@ def _widget_descriptor_from_wire(
             options=decoded_options,
             editable_options=_expect_bool(
                 widget_data.get("editableOptions", False), "COMBO widget editableOptions"
+            ),
+            options_input=_expect_str(
+                widget_data.get("optionsInput", ""), "COMBO widget optionsInput"
             ),
             remote_route=remote_route,
             refresh_button=refresh_button,
@@ -513,14 +549,17 @@ def _widget_descriptor_from_wire(
     if kind == "NUMBER":
         if strict:
             allowed = {"type", "min", "max", "step"}
-            allowed.add("display")
-            allowed.add("round")
+            allowed.update(("display", "round", "offset", "special", "reason"))
             _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
-        bounds: dict[str, int | float | None] = {}
-        for field in ("min", "max", "step"):
+        bounds: dict[str, Any] = {}
+        for field in ("min", "max", "step", "offset"):
             raw = widget_data.get(field)
             bounds[field] = (
-                None if raw is None else _number_constraint_from_wire(raw, field, wire_version)
+                None
+                if raw is None
+                else _formula_from_wire(cast("dict[str, object]", raw), f"NUMBER widget {field}")
+                if isinstance(raw, dict)
+                else _number_constraint_from_wire(raw, field, wire_version)
             )
         round_value = widget_data.get("round")
         if (
@@ -533,12 +572,29 @@ def _widget_descriptor_from_wire(
         if "display" in widget_data:
             if type(display) is not str:
                 raise ValueError("NUMBER widget display must be a string")
+        special: dict[int | float, str] = {}
+        raw_special = widget_data.get("special", [])
+        if not isinstance(raw_special, list):
+            raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+        for pair in cast("list[object]", raw_special):
+            if not isinstance(pair, list) or len(cast("list[object]", pair)) != 2:
+                raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+            raw_value, label = cast("list[object]", pair)
+            if not isinstance(label, str):
+                raise ValueError("NUMBER widget special label must be a string")
+            special[_number_constraint_from_wire(raw_value, "special", wire_version)] = label
+        reason = widget_data.get("reason")
+        if "reason" in widget_data and not isinstance(reason, str):
+            raise ValueError("NUMBER widget reason must be a string")
         return NumberWidget(
             min=bounds["min"],
             max=bounds["max"],
             step=bounds["step"],
             round=cast("int | float | Literal[False] | None", round_value),
             display=cast("Any", display),
+            offset=bounds["offset"],
+            special=special,
+            reason=cast("str | None", reason),
         )
     if kind == "STRING":
         if strict:
@@ -555,8 +611,15 @@ def _widget_descriptor_from_wire(
         dynamic_prompts = widget_data.get("dynamicPrompts")
         if "dynamicPrompts" in widget_data and type(dynamic_prompts) is not bool:
             raise ValueError("STRING widget dynamicPrompts must be a boolean")
-        completions = None
-        if "completions" in widget_data:
+        completions: Any = None
+        completion_wire = widget_data.get("completions")
+        if isinstance(completion_wire, dict) and (
+            "formula" in completion_wire or "lookup" in completion_wire
+        ):
+            completions = _formula_from_wire(
+                cast("dict[str, object]", completion_wire), "STRING widget completions"
+            )
+        elif "completions" in widget_data:
             completion_data = widget_data["completions"]
             if not isinstance(completion_data, dict):
                 raise ValueError("STRING widget completions must be an object")
@@ -606,12 +669,41 @@ def _widget_descriptor_from_wire(
         )
     if kind == "COLOR":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "COLOR widget")
-        return ColorWidget()
+            _reject_unknown_fields(widget_data, frozenset({"type", "alpha"}), "COLOR widget")
+        alpha = widget_data.get("alpha", False)
+        if not isinstance(alpha, bool):
+            raise ValueError("COLOR widget alpha must be a boolean")
+        return ColorWidget(alpha=alpha)
     if kind == "CURVE":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "CURVE widget")
-        return CurveWidget()
+            _reject_unknown_fields(
+                widget_data,
+                frozenset({"type", "inputStrip", "outputStrip", "histogram", "histogramVisible"}),
+                "CURVE widget",
+            )
+        histogram = _expect_str(widget_data.get("histogram", ""), "CURVE widget histogram")
+        if "histogram" in widget_data and not histogram:
+            raise ValueError("CURVE widget histogram must name an input")
+        histogram_visible = widget_data.get("histogramVisible", True)
+        if type(histogram_visible) is not bool:
+            raise ValueError("CURVE widget histogramVisible must be a boolean")
+        strips: dict[str, tuple[str, str]] = {}
+        for key, name in (("inputStrip", "input_strip"), ("outputStrip", "output_strip")):
+            if key not in widget_data:
+                continue
+            colors = widget_data[key]
+            # The wire is canonical: two lower-case #rrggbb colors.
+            if not (
+                isinstance(colors, list)
+                and len(cast("list[object]", colors)) == 2
+                and all(
+                    isinstance(color, str) and _WIRE_STRIP_COLOR.fullmatch(color)
+                    for color in cast("list[object]", colors)
+                )
+            ):
+                raise ValueError(f"CURVE widget {key} must be two lower-case #rrggbb colors")
+            strips[name] = (cast("str", colors[0]), cast("str", colors[1]))
+        return CurveWidget(**strips, histogram=histogram, histogram_visible=histogram_visible)
     if kind == "COMPOSITOR":
         if strict:
             _reject_unknown_fields(
@@ -777,6 +869,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["pinFirst"] = True
     if not spec.pin:
         entry["pin"] = False
+    if not spec.sent:
+        entry["sent"] = False
     if spec.after_run is not None:
         entry["afterRun"] = spec.after_run
     if spec.visible is not True:
@@ -789,6 +883,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["disabledReason"] = _formula_to_wire(spec.disabled_reason)
     if spec.on_edit:
         entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
+    if spec.automatic is not None:
+        entry["automatic"] = _formula_to_wire(spec.automatic)
     if spec.hidden:
         entry["hidden"] = True
     if spec.lazy:
@@ -834,7 +930,10 @@ def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
             }
         out_entry["represents"] = represents
     if out.known_value is not None:
-        out_entry["knownValue"] = {"input": out.known_value.input}
+        known_value: dict[str, object] = {"input": out.known_value.input}
+        if out.known_value.limits:
+            known_value["limits"] = dict(out.known_value.limits)
+        out_entry["knownValue"] = known_value
     return out_entry
 
 
@@ -948,10 +1047,10 @@ def schema_to_wire(
             }
         wire["mirror"] = mirror
     if schema.selector is not None:
-        wire["selector"] = {
-            "input": schema.selector.input,
-            "branches": dict(schema.selector.branches),
-        }
+        selector_wire = {"input": schema.selector.input, "group": schema.selector.group}
+        if schema.selector.names is not None:
+            selector_wire["names"] = schema.selector.names
+        wire["selector"] = selector_wire
     return wire
 
 
@@ -1033,17 +1132,26 @@ def schema_signature(schema: NodeSchema) -> str:
         asset_identity = _asset_widget_identity(widget)
         if asset_identity is not None:
             entry["asset"] = asset_identity
+        alpha_identity = _color_alpha_identity(widget)
+        if alpha_identity is not None:
+            entry["colorAlpha"] = alpha_identity
         entry.pop("displayName", None)
         entry.pop("label", None)
         entry.pop("forceInput", None)
         entry.pop("pinFirst", None)
         entry.pop("pin", None)
+        entry.pop("sent", None)
         entry.pop("onEdit", None)
         entry.pop("afterRun", None)
         entry.pop("visible", None)
         entry.pop("readOnly", None)
         entry.pop("disabled", None)
         entry.pop("disabledReason", None)
+        # A lookup's name and arguments join no signature; the value it gives
+        # does, as a stored value.
+        automatic = entry.get("automatic")
+        if isinstance(automatic, dict) and "lookup" in automatic:
+            entry.pop("automatic")
         entry.pop("hidden", None)
         entry.pop("preview", None)
         entry.pop("represents", None)
@@ -1096,6 +1204,23 @@ def _asset_widget_identity(widget: object) -> object | None:
     return None
 
 
+def _color_alpha_identity(widget: object) -> object | None:
+    """Whether a color field uses opacity; it decides the value a run hands the node."""
+    if not isinstance(widget, dict):
+        return None
+    descriptor = cast("dict[str, object]", widget)
+    if descriptor.get("type") == "COLOR":
+        return True if descriptor.get("alpha") else None
+    if descriptor.get("type") == "REPRESENTATIONS":
+        found = [
+            [raw.get("id"), _color_alpha_identity(raw.get("widget"))]
+            for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
+        ]
+        found = [item for item in found if item[1] is not None]
+        return found or None
+    return None
+
+
 _FORMULA_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
@@ -1127,7 +1252,7 @@ def _signature_rows(
     """The structure and execution fields of a scope's rows, in one canonical order.
 
     Sections and Rows open no scope and are layout, so their rows join the
-    scope around them; notes, buttons and a state that is not part of a run
+    scope around them; notes, buttons, and a state or field that is not part of a run
     drop out. Rows are
     sorted, so reordering rows or moving one between sections changes
     neither signature."""
@@ -1136,8 +1261,10 @@ def _signature_rows(
         if isinstance(row, (body.Section, body.Row)):
             found.extend(_signature_rows(row.rows, schema, strip))
             continue
-        if isinstance(row, (body.Note, body.Button, body.Editor)) or (
-            isinstance(row, body.State) and not row.part_of_run
+        if (
+            isinstance(row, (body.Note, body.Button, body.Editor))
+            or (isinstance(row, body.State) and not row.part_of_run)
+            or (isinstance(row, Input) and not row.sent)
         ):
             continue
         found.append(_signature_row(row, schema, strip))
@@ -1151,6 +1278,8 @@ def _signature_row(
     if isinstance(row, Input):
         entry = {"kind": "input", **_input_entry_to_wire(row, wire_version)}
         strip(entry)
+        if isinstance(row.automatic, body.Formula):
+            entry["automatic"] = _structure_formula(row.automatic, schema)
         return entry
     if isinstance(row, Output):
         entry = {"kind": "output", **_output_entry_to_wire(row, wire_version)}
@@ -1333,12 +1462,14 @@ _INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "label",
     "pinFirst",
     "pin",
+    "sent",
     "afterRun",
     "visible",
     "readOnly",
     "disabled",
     "disabledReason",
     "onEdit",
+    "automatic",
     "hidden",
     "lazy",
     "acceptsStorage",
@@ -1388,6 +1519,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         label=_text_or_formula_from_wire(entry.get("label", ""), "input.label"),
         pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
         pin=_expect_bool(entry.get("pin", True), "input.pin"),
+        sent=_expect_bool(entry.get("sent", True), "input.sent"),
         on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
         visible=True
         if "visible" not in entry
@@ -1400,6 +1532,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         after_run=None
         if "afterRun" not in entry
         else cast("AfterRunMode", _expect_str(entry["afterRun"], "input.afterRun")),
+        automatic=_automatic_from_wire(entry.get("automatic")),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
         source_filename=source_filename,
@@ -1408,6 +1541,15 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         accepts_list=_expect_bool(entry.get("acceptsList", False), "input.acceptsList"),
         **_media_policy_from_wire(entry, wire_version),
     )
+
+
+def _automatic_from_wire(value: object) -> body.Formula | body.Lookup | None:
+    if value is None:
+        return None
+    decoded = _formula_from_wire(_expect_object(value, "input.automatic"), "input.automatic")
+    if not isinstance(decoded, (body.Formula, body.Lookup)):
+        raise ValueError("input.automatic must be a formula or a lookup")
+    return decoded
 
 
 def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
@@ -1432,9 +1574,22 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
     known_value = None
     if "knownValue" in entry:
         data = _expect_object(entry.get("knownValue"), "output.knownValue")
-        _reject_unknown_fields(data, frozenset({"input"}), "output.knownValue")
+        _reject_unknown_fields(data, frozenset({"input", "limits"}), "output.knownValue")
+        limits: dict[str, str] = {}
+        if "limits" in data:
+            raw_limits = _expect_object(data.get("limits"), "output.knownValue.limits")
+            if not raw_limits:
+                raise ValueError("output.knownValue.limits must name at least one limit")
+            _reject_unknown_fields(
+                raw_limits, frozenset(KNOWN_VALUE_LIMITS), "output.knownValue.limits"
+            )
+            for key, target in raw_limits.items():
+                limits[key] = _expect_str(target, f"output.knownValue.limits.{key}")
+                if not limits[key]:
+                    raise ValueError(f"output.knownValue.limits.{key} must be a non-empty string")
         known_value = OutputKnownValue(
-            input=_expect_str(data.get("input"), "output.knownValue.input")
+            input=_expect_str(data.get("input"), "output.knownValue.input"),
+            limits=limits,
         )
     return Output(
         id=_expect_str(entry.get("id"), "output.id"),
@@ -1487,17 +1642,12 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     selector = None
     if wire.get("selector") is not None:
         data = _expect_object(wire.get("selector"), "selector")
-        if set(data) != {"input", "branches"}:
-            raise ValueError("selector must contain exactly input and branches")
-        branches = _expect_object(data.get("branches"), "selector.branches")
-        if set(branches) != {"false", "true"}:
-            raise ValueError("selector.branches must contain exactly false and true")
+        if not {"input", "group"} <= set(data) <= {"input", "group", "names"}:
+            raise ValueError("selector must contain input and group, and may contain names")
         selector = SelectorSpec(
             _expect_str(data.get("input"), "selector.input"),
-            {
-                "false": _expect_str(branches.get("false"), "selector.branches.false"),
-                "true": _expect_str(branches.get("true"), "selector.branches.true"),
-            },
+            _expect_str(data.get("group"), "selector.group"),
+            _expect_str(data["names"], "selector.names") if "names" in data else None,
         )
     replacements = tuple(
         rule_from_wire(_expect_object(rule, "replacements entry"))

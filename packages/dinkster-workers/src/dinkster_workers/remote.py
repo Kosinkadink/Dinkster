@@ -18,7 +18,7 @@ when the peer is a service on another machine (service.py):
   reimplemented).
 - **No shared memory, ever.** Payloads ride inline in the frame both ways;
   a segment name from another machine would attach to unrelated local
-  memory. Bulk values are the CAS milestone.
+  memory.
 - **Devices are qualified, not trusted.** The remote's ``cuda:0`` is not
   this machine's ``cuda:0``, and its ram is not this machine's ram. Unless
   an explicit DeviceMap is given, every device fact the remote reports is
@@ -63,6 +63,7 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.pack_surfaces import PackRoute
 from dinkster_schema import NodeSchema
+from dinkster_schema.body import LookupMark
 from dinkster_values import (
     ASSET_BASE_TYPE,
     Rendition,
@@ -240,6 +241,13 @@ class RemoteWorker:
         self, route: PackRoute, data: Mapping[str, object]
     ) -> dict[str, object]:
         return await self._session.call_pack_route(route, data)
+
+    async def call_lookup(self, function: str, args: Sequence[object]) -> object:
+        return await self._session.call_lookup(function, args)
+
+    @property
+    def lookup_marks(self) -> Mapping[str, LookupMark]:
+        return self._session.lookup_marks
 
     @property
     def compat_skips(self) -> Mapping[str, CompatGateDiagnostic]:

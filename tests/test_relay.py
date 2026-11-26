@@ -1,4 +1,4 @@
-"""M3: the isolated-worker memory relay. A governor in the engine process
+"""The isolated-worker memory relay. A governor in the engine process
 governs a ResidentPool living in a worker child: footprints and details
 arrive as pushed snapshots, vram pressure crosses as a live shed round
 trip, and ram pressure crosses only through the two-phase release gate -

@@ -74,23 +74,32 @@ def parse_metadata(data: bytes) -> dict[str, object]:
     return cast("dict[str, object]", value)
 
 
-def artifact_rows(value: object, key: str) -> tuple[dict[str, object], ...]:
+def artifact_rows(
+    value: object, key: str, *, allow_identical: bool = False
+) -> tuple[dict[str, object], ...]:
     if not isinstance(value, list):
         raise EnvironmentError("manifest artifacts must be an array")
     rows: list[dict[str, object]] = []
-    names: set[str] = set()
+    names: dict[str, dict[str, object]] = {}
     for item in cast("list[object]", value):
         if not isinstance(item, dict):
             raise EnvironmentError("manifest artifact must be an object")
         row = cast("dict[str, object]", item)
         name = relative_file(row.get(key))
-        if "/" in name or name.casefold() in names or name.endswith((".", " ")):
+        if "/" in name or name.endswith((".", " ")):
             raise EnvironmentError("artifact names must be distinct portable basenames")
-        names.add(name.casefold())
         sha, size = row.get("sha256"), row.get("size")
         if not isinstance(sha, str) or type(size) is not int or size < 0:
             raise EnvironmentError("artifact must carry a sha256 digest and nonnegative size")
         digest("sha256:" + sha)
+        previous = names.get(name.casefold())
+        if previous is not None:
+            if allow_identical and all(
+                previous[field] == row[field] for field in (key, "sha256", "size")
+            ):
+                continue
+            raise EnvironmentError("artifact names must be distinct portable basenames")
+        names[name.casefold()] = row
         rows.append(row)
     return tuple(rows)
 

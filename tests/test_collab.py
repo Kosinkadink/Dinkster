@@ -600,15 +600,12 @@ def test_ws_delivers_ops_and_relays_presence() -> None:
 
 
 def test_ws_synthesizes_session_closed_when_delete_wins_the_handshake() -> None:
-    """The lossy-DELETE race (frontend live report, 2026-07-26): a DELETE
-    landing between the WS handler's session read and its subscriber
-    registration broadcast session_closed to nobody and popped the set;
-    the late subscriber's replay then died on UnknownSessionError -
-    socket closed, terminal frame never delivered. The handler now
-    synthesizes the frame itself when the replay finds the session gone.
-    Simulated deterministically: the service reports the session unknown
-    at exactly the handler's replay read - the state that interleaving
-    produces."""
+    """A DELETE before subscriber registration still delivers session_closed.
+
+    The handler synthesizes the terminal frame when replay finds the session
+    gone. The service reports the session unknown at exactly the handler's
+    replay read to exercise this interleaving deterministically.
+    """
 
     class DeleteWinsService(SessionService):
         rigged = False

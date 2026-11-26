@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, LocalAssetRef, MountsError
 from dinkster_assets.model import model_visibility_ids
+from dinkster_library import LibraryError
 from dinkster_server.auth import principal_for
 from dinkster_server.projects import validate_project
 from dinkster_values.asset_folders import use_asset_folders
@@ -22,6 +23,11 @@ if TYPE_CHECKING:
 
 
 def add_model_settings_routes(app: web.Application, service: MountService) -> None:
+    def error_response(error: Exception) -> web.Response:
+        cause = error.__cause__
+        status = (409 if cause.code == "stale" else 503) if isinstance(cause, LibraryError) else 400
+        return web.json_response({"error": str(error)}, status=status)
+
     def require_operator(request: web.Request, *, write: bool = False) -> None:
         if not principal_for(request).is_operator:
             raise web.HTTPForbidden(
@@ -38,7 +44,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
         for mount_id in service.table.pending():
             if service.table.source(mount_id) == "shared-models":
                 service.scan_soon(app, mount_id)
-        settings = ModelSettings.load()
+        settings = ModelSettings.load(service.library)
         selected = service.projects.ordered(
             project, service.mount_ids(settings=True), modes=service.model_modes(settings=True)
         )
@@ -77,7 +83,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
         try:
             return response(project)
         except MountsError as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return error_response(exc)
 
     async def handle_put(request: web.Request) -> web.Response:
         require_operator(request, write=True)
@@ -92,7 +98,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 or not isinstance(body["revision"], str)
             ):
                 raise MountsError("expected model settings and revision")
-            settings = ModelSettings.from_wire(body["settings"])
+            settings = replace(ModelSettings.from_wire(body["settings"]), library=service.library)
             desired = {mount.id: mount for mount in settings.mounts()}
             for mount_id in desired:
                 if service.settings_table.source(mount_id) not in {None, "shared-models"}:
@@ -112,7 +118,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                     )
             await asyncio.to_thread(settings.save, body["revision"])
             result = response(project)
-            service.publish(app)
+            service.publish(app, mount_ids=service.mount_ids())
             return result
         except ModelSettingsConflict as exc:
             return web.json_response({"error": str(exc)}, status=409)
@@ -121,7 +127,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 {"error": "model settings are being edited; retry"}, status=409
             )
         except (MountsError, ValueError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return error_response(exc)
         except OSError:
             return web.json_response({"error": "model settings could not be saved"}, status=500)
 
@@ -140,7 +146,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 raise MountsError("expected enabled boolean")
             for mount_id in service.refresh_models():
                 service.scan_soon(app, mount_id)
-            settings = ModelSettings.load()
+            settings = ModelSettings.load(service.library)
             location = next(
                 (row for row in settings.locations if row.id == request.match_info["location"]),
                 None,
@@ -160,12 +166,12 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 selected.extend(mount.id for mount in location.mounts(0))
             output = service.projects.output(project, service.settings_table.output_mount)
             service.update_project(project, selected, output)
-            service.publish(app)
+            service.publish(app, mount_ids=service.mount_ids())
             return response(project)
         except ModelSettingsConflict as exc:
             return web.json_response({"error": str(exc)}, status=409)
         except (MountsError, ValueError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return error_response(exc)
 
     async def handle_hidden(request: web.Request) -> web.Response:
         require_operator(request, write=True)
@@ -238,10 +244,10 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                         model_visibility_ids(path, ref.digest if isinstance(ref, AssetRef) else ""),
                     )
             service.projects.set_model_hidden(project, selected, request.method == "PUT")
-            service.publish(app)
+            service.publish(app, kinds=(selected.kind,))
             return response(project)
         except (AssetError, MountsError, ValueError) as exc:
-            return web.json_response({"error": str(exc)}, status=400)
+            return error_response(exc)
         except OSError:
             return web.json_response({"error": "model preference could not be saved"}, status=500)
 

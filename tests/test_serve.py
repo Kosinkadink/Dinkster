@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 import pytest
@@ -34,8 +35,30 @@ pytestmark = pytest.mark.usefixtures("installed_default_catalogs")
 
 
 @pytest.fixture(autouse=True)
-def _use_current_python_for_standard_pack_workers(monkeypatch: pytest.MonkeyPatch) -> None:
+def _use_current_python_for_standard_pack_workers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> None:
     monkeypatch.setenv("DINKSTER_SERVING_PYTHON", sys.executable)
+    account = tmp_path_factory.mktemp("serve-account")
+    (account / "model-settings.json").write_text(
+        '{"version":1,"locations":[],"downloadLocation":null,"disabled":true}'
+    )
+    monkeypatch.setenv("DINKSTER_HOME", str(account))
+
+
+@pytest.fixture
+def published_library(tmp_path: Path) -> Path:
+    from dinkster_library._migration import publish_records
+
+    library = tmp_path / "library"
+    publish_records(
+        library,
+        Path(os.environ["DINKSTER_HOME"]),
+        "12" * 16,
+        tmp_path / "bootstrap-state",
+        environment="test",
+    )
+    return library
 
 
 async def _default_pack_names() -> tuple[str, ...]:
@@ -619,6 +642,7 @@ types = "preview_source:register_types"
 """)
     (source / "preview_source.py").write_text("""
 from pathlib import Path
+from typing import Any
 from dinkster_api.v1 import (
     VIDEO_TYPE,
     Node,
@@ -939,7 +963,8 @@ def test_serve_explicit_generation_uses_only_its_sources(
 ) -> None:
     import venv
 
-    from dinkster_assets import MountDef, dump_mounts, load_mounts
+    from dinkster_assets import MountConfiguration, MountDef, dump_mounts
+    from dinkster_library import LibraryClient
     from dinkster_registry import LockedPack, Lockfile, build_artifact
     from dinkster_workers.doctor import prepare_catalog
 
@@ -1052,7 +1077,9 @@ def test_serve_explicit_generation_uses_only_its_sources(
                     else:
                         assert not output_path.exists()
                     if existing_mount is not None:
-                        assert existing_mount in load_mounts(library_root / "mounts.toml")
+                        with LibraryClient(library_root) as helper:
+                            assert existing_mount in MountConfiguration.load(helper).mounts
+                    assert not (library_root / "mounts.toml").exists()
                     assert mounts["mountChangesAllowed"] is False
                     workflow = {
                         "format": "dinkster-workflow",
@@ -1129,53 +1156,932 @@ def child_pids(parent: subprocess.Popen[bytes]) -> tuple[int, ...]:
     return tuple(int(pid) for pid in children.read_text("ascii").split())
 
 
-@pytest.mark.parametrize("abrupt", [False, True])
-def test_library_owner_refuses_competitors_and_releases_on_engine_exit(
-    tmp_path: Path, abrupt: bool
-) -> None:
+@pytest.mark.parametrize("startup", ["managed", "direct", "explicit-state"])
+def test_start_publishes_legacy_records_before_serving(tmp_path: Path, startup: str) -> None:
+    from dinkster_assets import LibraryStore, digest_bytes
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
     from dinkster_store import library_lock
 
     library = tmp_path / "library"
+    store = LibraryStore(library / "library.sqlite")
+    try:
+        record = store.create(
+            "local", "Preserved workflow", digest_bytes(b"workflow"), "application/json"
+        )
+    finally:
+        store.close()
+    (library / "settings.json").write_text('{"jobs":{"maxRunningJobs":3}}')
+    port = free_port()
+    manifest = write_iso_manifest(tmp_path / "pack")
+    pack_args = ("--no-default-packs", "--pack", str(manifest))
+    engine = "sha256:" + "ab" * 32
+    command = [
+        sys.executable,
+        str(library_lock.__file__),
+        str(library),
+        "test engine",
+        "--engine-state",
+        str(tmp_path / "engine"),
+        "1",
+        json.dumps({"engine": engine, "readers": [engine]}),
+        "--",
+        *serve_with_library_command(port, library, *pack_args)[3:],
+    ]
+    if startup != "managed":
+        command = serve_with_library_command(port, library, *pack_args)
+        if startup == "explicit-state":
+            command.extend(["--engine-state-root", str(tmp_path / "engine")])
+    environment = dict(os.environ, PYTHONPATH=str(TESTS_DIR))
+    process, log = start_logged_serve(command, tmp_path, env=environment)
+    error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+
+        async def scenario() -> None:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(
+                    f"http://127.0.0.1:{port}/api/library/{record.id}?scope=local"
+                ) as response:
+                    assert response.status == 200
+                    document = await response.json()
+                    assert document["id"] == record.id
+                    assert document["name"] == "Preserved workflow"
+                async with client.get(f"http://127.0.0.1:{port}/api/settings") as response:
+                    assert response.status == 200
+                    settings = await response.json()
+                    assert settings["settings"]["jobs"]["value"]["maxRunningJobs"] == 3
+                base = f"http://127.0.0.1:{port}"
+                async with client.patch(
+                    base + f"/api/library/{record.id}",
+                    json={"scope": "local", "revision": 1, "name": "Saved after migration"},
+                ) as response:
+                    assert response.status == 200, await response.text()
+                    assert (await response.json())["name"] == "Saved after migration"
+                async with client.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "migration",
+                        "jobId": "after-migration",
+                        "graph": graph_to_wire(
+                            Graph(nodes={"talk": GraphNode("iso.talky", {"value": "migrated"})})
+                        ),
+                        "targets": ["talk"],
+                    },
+                ) as response:
+                    assert response.status == 202, await response.text()
+                async with asyncio.timeout(30):
+                    while True:
+                        async with client.get(
+                            base + "/api/jobs/migration/after-migration"
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            job = await response.json()
+                        if job["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0.05)
+                assert job["state"] == "completed", job
+
+        run_scenario(scenario())
+        assert json.loads((library / "record-migration.json").read_text())["complete"] is True
+        assert not (library / "history.sqlite").exists()
+        assert not (library / "principals.sqlite").exists()
+        assert not (library / "settings.json").exists()
+        assert len(list((library / "backups").glob("before-migration-*/manifest.json"))) == 1
+    except BaseException as exc:
+        error = exc
+        raise
+    finally:
+        stop_logged_serve(process, log, error)
+
+
+def test_explicit_engine_state_keeps_recovery_sessions_and_uploads_separate(tmp_path: Path) -> None:
+    from dinkster_assets import digest_bytes
+    from dinkster_graph import Graph
+    from dinkster_library._migration import publish_records
+    from dinkster_server import HistoryStore
+    from dinkster_server.queue import Job, JobKey
+
+    publish_records(
+        tmp_path / "other-library",
+        Path(os.environ["DINKSTER_HOME"]),
+        "34" * 16,
+        tmp_path / "other-bootstrap",
+        environment="test",
+    )
+    library = tmp_path / "library"
+    first, second = [tmp_path / "environment" / name for name in ("first", "second")]
+    upload_roots: dict[Path, Path] = {}
+    for state in (first, second):
+        port = free_port()
+        process, log = start_logged_serve(
+            serve_with_library_command(
+                port, library, "--no-default-packs", "--engine-state-root", str(state)
+            ),
+            tmp_path,
+        )
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+            candidates = set((library / ".engine-uploads").iterdir())
+            assert len(candidates) == len(upload_roots) + 1
+            selected = candidates - set(upload_roots.values())
+            assert len(selected) == 1
+            upload_roots[state] = selected.pop()
+            assert upload_roots[state].stat().st_dev == (library / "vault").stat().st_dev
+            assert not (state / "uploads").exists()
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+    from dinkster_library import LibraryClient
+
+    legacy_path = tmp_path / "unrelated-library/history.sqlite"
+    for state, run_id in ((None, "legacy"), (first, "first"), (second, "second")):
+        helper = LibraryClient(library)
+        store = HistoryStore(
+            helper if state else legacy_path,
+            accepted_path=state / "accepted.sqlite" if state else None,
+        )
+        try:
+            store.job_accepted(
+                Job(
+                    key=JobKey("client", run_id),
+                    graph=Graph(nodes={}),
+                    targets=(),
+                    priority=0,
+                    run_id=run_id,
+                    fingerprint=run_id,
+                )
+            )
+        finally:
+            store.close()
+            helper.close()
+    for directory in (library / "vault", upload_roots[first], upload_roots[second]):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / ".latent-upload-pending").write_bytes(b"unfinished")
+    session_id: str | None = None
+    for state, expected_runs in (
+        (first, {"first"}),
+        (second, {"first", "second"}),
+        (first, {"first", "second"}),
+    ):
+        port = free_port()
+        process, log = start_logged_serve(
+            serve_with_library_command(
+                port, library, "--no-default-packs", "--engine-state-root", str(state)
+            ),
+            tmp_path,
+        )
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+
+            async def scenario(port: int, state: Path, expected_runs: set[str]) -> None:
+                nonlocal session_id
+                base = f"http://127.0.0.1:{port}"
+                payload = f"engine-local {state.name} {len(expected_runs)} upload".encode()
+
+                async def upload_body():
+                    yield payload[:5]
+                    async with asyncio.timeout(10):
+                        while not list(upload_roots[state].glob(".media-upload-*")):
+                            await asyncio.sleep(0.01)
+                    assert not (state / "uploads").exists()
+                    other = second if state == first else first
+                    assert not list(upload_roots[other].glob(".media-upload-*"))
+                    yield payload[5:]
+
+                async with aiohttp.ClientSession() as client:
+                    async with client.post(
+                        base + "/api/assets/transfers?scope=local&name=staged.bin",
+                        data=upload_body(),
+                        headers={
+                            "Content-Type": "application/octet-stream",
+                            "X-Dinkster-Source-Machine": "peer-engine",
+                            "X-Dinkster-Digest": digest_bytes(payload),
+                        },
+                    ) as response:
+                        assert response.status == 201, await response.text()
+                        asset = (await response.json())["asset"]
+                    assert not list(upload_roots[state].glob(".media-upload-*"))
+                    async with client.get(base + "/api/assets/" + asset["digest"]) as response:
+                        assert response.status == 200
+                        assert await response.read() == payload
+                    async with client.get(base + "/api/history?scope=local") as response:
+                        assert response.status == 200
+                        records = (await response.json())["records"]
+                        assert {row["runId"] for row in records} == expected_runs
+                        assert all(row["state"] == "interrupted" for row in records)
+                    async with client.get(base + "/api/sessions?scope=local") as response:
+                        assert response.status == 200
+                        sessions = (await response.json())["sessions"]
+                        assert [row["sessionId"] for row in sessions] == (
+                            [session_id] if state == first and session_id else []
+                        )
+                    if session_id is None:
+                        async with client.post(
+                            base + "/api/sessions",
+                            json={"scope": "local", "documentId": "one", "snapshot": {"v": 7}},
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            session_id = (await response.json())["sessionId"]
+
+            run_scenario(scenario(port, state, expected_runs))
+            assert (state / "worker-state" / "mounts-snapshot.json").is_file()
+            assert (state / "execution.sqlite").is_file()
+            assert (state / "sessions.sqlite").is_file()
+            assert (state / "value-store").is_dir()
+            assert not (upload_roots[state] / ".latent-upload-pending").exists()
+            assert (library / "vault" / ".latent-upload-pending").read_bytes() == b"unfinished"
+            if state == first and expected_runs == {"first"}:
+                assert (
+                    upload_roots[second] / ".latent-upload-pending"
+                ).read_bytes() == b"unfinished"
+                competitor = subprocess.run(
+                    serve_with_library_command(
+                        free_port(),
+                        tmp_path / "other-library",
+                        "--no-default-packs",
+                        "--engine-state-root",
+                        str(first),
+                    ),
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                assert competitor.returncode != 0
+                assert "Engine state is already in use" in competitor.stderr
+                assert not (tmp_path / "other-library" / "history.sqlite").exists()
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+    helper = LibraryClient(library)
+    original = HistoryStore(helper, accepted_path=first / "accepted.sqlite")
+    try:
+        original.job_accepted(
+            Job(
+                key=JobKey("client", "not-for-another-library"),
+                graph=Graph(nodes={}),
+                targets=(),
+                priority=0,
+                run_id="not-for-another-library",
+                fingerprint="not-for-another-library",
+                scope="private",
+                source_document="blake3:" + "cd" * 32,
+            )
+        )
+    finally:
+        original.close()
+        helper.close()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            free_port(),
+            tmp_path / "other-library",
+            "--no-default-packs",
+            "--engine-state-root",
+            str(first),
+        ),
+        tmp_path,
+    )
+    pending_error = None
+    try:
+        assert process.wait(timeout=10) != 0
+        assert "Engine state belongs to another library" in log.read_text("utf-8")
+        assert not (tmp_path / "other-library" / "history.sqlite").exists()
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+    helper = LibraryClient(library)
+    original = HistoryStore(helper, accepted_path=first / "accepted.sqlite")
+    try:
+        recovered = original.recover_interrupted()
+        assert [(record.run_id, record.scope, record.source_document) for record in recovered] == [
+            ("not-for-another-library", "private", "blake3:" + "cd" * 32)
+        ]
+    finally:
+        original.close()
+        helper.close()
+    legacy = HistoryStore(legacy_path)
+    try:
+        assert [record.run_id for record in legacy.recover_interrupted()] == ["legacy"]
+    finally:
+        legacy.close()
+    for name in ("worker-state", "execution.sqlite", "sessions.sqlite", "value-store"):
+        assert not (library / name).exists()
+
+
+def test_launcher_state_carries_forward_without_recovering_newer_work(tmp_path: Path) -> None:
+    from dinkster_graph import Graph
+    from dinkster_library import LibraryClient
+    from dinkster_server import HistoryStore
+    from dinkster_server.queue import Job, JobKey
+    from dinkster_store import library_lock
+
+    library, state = tmp_path / "library", tmp_path / "environment/engine-state/main"
+    environment = dict(os.environ)
+    directories: list[Path] = []
+    newer_upload: Path | None = None
+    for snapshot, expected in (
+        (5, set()),
+        (8, {"older"}),
+        (7, {"older"}),
+        (8, {"older"}),
+        (9, {"older"}),
+    ):
+        port = free_port()
+        writer = "sha256:" + ("b" if snapshot == 8 else "a") * 64
+        readers = ["sha256:" + "a" * 64, *([writer] if snapshot == 8 else [])]
+        command = [
+            sys.executable,
+            str(library_lock.__file__),
+            str(library),
+            "test engine",
+            "--engine-state",
+            str(state),
+            str(snapshot),
+            json.dumps({"engine": writer, "readers": readers}),
+            "--",
+            *serve_with_library_command(port, library, "--no-default-packs")[3:],
+        ]
+        if snapshot in (5, 7):
+            interrupted = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    """
+import os
+import runpy
+import sys
+from pathlib import Path
+from typing import Any
+original = os.replace
+before_publish = sys.argv[1] == "5"
+
+def replace(source, destination):
+    if Path(destination).name == "state.json":
+        if not before_publish:
+            original(source, destination)
+        os._exit(73)
+    return original(source, destination)
+
+os.replace = replace
+sys.argv = sys.argv[2:]
+runpy.run_path(sys.argv[0], run_name="__main__")
+""",
+                    str(snapshot),
+                    *command[1:],
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            assert interrupted.returncode == 73, interrupted.stderr
+            if snapshot == 5:
+                assert not (state / "state.json").exists()
+                assert not (library / "history.sqlite").exists()
+            else:
+                selected = json.loads((state / "state.json").read_text("utf-8"))
+                assert selected["lastSnapshot"] == 7
+                assert not (state / selected["directory"]).exists()
+        process, log = start_logged_serve(command, tmp_path, env=environment)
+        pending_error: BaseException | None = None
+        try:
+            wait_for_composition(process, port)
+
+            async def scenario(port: int = port, expected: set[str] = expected) -> None:
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(
+                        f"http://127.0.0.1:{port}/api/history?scope=local"
+                    ) as response:
+                        assert response.status == 200
+                        records = (await response.json())["records"]
+                        assert {row["runId"] for row in records} == expected
+
+            run_scenario(scenario())
+            if snapshot == 5:
+                before = (state / "state.json").read_bytes()
+                other_library = tmp_path / "other-library"
+                other_library.mkdir()
+                competitor = subprocess.run(
+                    [*command[:2], str(other_library), *command[3:]],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                assert competitor.returncode != 0
+                assert "engine state belongs to another library" in competitor.stderr
+                assert (state / "state.json").read_bytes() == before
+        except BaseException as error:
+            pending_error = error
+            raise
+        finally:
+            stop_logged_serve(process, log, pending_error)
+        selected = json.loads((state / "state.json").read_text("utf-8"))
+        assert selected["lastSnapshot"] == snapshot
+        working = state / selected["directory"]
+        directories.append(working)
+        if len(directories) in (1, 2, 4):
+            run_id = {1: "older", 2: "newer", 4: "rebuilt-newer"}[len(directories)]
+            helper = LibraryClient(library)
+            store = HistoryStore(helper, accepted_path=working / "accepted.sqlite")
+            try:
+                store.job_accepted(
+                    Job(
+                        key=JobKey("client", run_id),
+                        graph=Graph(nodes={}),
+                        targets=(),
+                        priority=0,
+                        run_id=run_id,
+                        fingerprint=run_id,
+                    )
+                )
+            finally:
+                store.close()
+                helper.close()
+            if len(directories) == 2:
+                upload_root = next((library / ".engine-uploads").iterdir())
+                newer_upload = upload_root / ".latent-upload-pending"
+                newer_upload.write_bytes(b"newer snapshot's unfinished upload")
+    assert directories[0] == directories[1]
+    assert directories[2] == directories[3]
+    assert directories[0] != directories[2]
+    assert directories[4] not in directories[:4]
+    assert newer_upload is not None
+    assert newer_upload.read_bytes() == b"newer snapshot's unfinished upload"
+    with LibraryClient(library) as helper:
+        for directory, expected_run in (
+            (directories[0], "newer"),
+            (directories[3], "rebuilt-newer"),
+        ):
+            retained = HistoryStore(helper, accepted_path=directory / "accepted.sqlite")
+            try:
+                assert [record.run_id for record in retained.recover_interrupted()] == [
+                    expected_run
+                ]
+            finally:
+                retained.close()
+
+
+@pytest.mark.parametrize("linked_parent", [False, True])
+def test_engine_upload_staging_refuses_linked_directories(
+    tmp_path: Path, linked_parent: bool
+) -> None:
+    library = tmp_path / "library"
+    state = tmp_path / "state"
+    port = free_port()
+    command = serve_with_library_command(
+        port, library, "--no-default-packs", "--engine-state-root", str(state)
+    )
+    process, log = start_logged_serve(command, tmp_path)
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+    parent = library / ".engine-uploads"
+    selected = parent if linked_parent else next(parent.iterdir())
+    retained = tmp_path / "retained"
+    selected.rename(retained)
+    pending = retained / ".latent-upload-pending"
+    pending.write_bytes(b"do not sweep this directory")
+    selected.symlink_to(retained, target_is_directory=True)
+    refused = subprocess.run(command, capture_output=True, text=True, timeout=15)
+    assert refused.returncode != 0
+    assert "engine upload staging must not contain linked directories" in refused.stderr
+    assert pending.read_bytes() == b"do not sweep this directory"
+    assert not list(retained.glob(".media-upload-*"))
+
+
+@pytest.mark.parametrize(
+    "point", ["before-write", "partial-write", "before-publish", "after-publish"]
+)
+def test_engine_state_binding_recovers_after_abrupt_exit(
+    tmp_path: Path, point: str, published_library: Path
+) -> None:
+    library = published_library
+    state = tmp_path / "state"
+    port = free_port()
+    command = serve_with_library_command(
+        port, library, "--no-default-packs", "--engine-state-root", str(state)
+    )
+    interrupted = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+from dinkster.serve import main
+
+point = sys.argv[1]
+original_dump, original_replace = json.dump, os.replace
+
+def dump(value, stream, *args, **kwargs):
+    if isinstance(value, dict) and value.get("format") == "dinkster.engine-state/1":
+        if point == "before-write":
+            os._exit(73)
+        if point == "partial-write":
+            stream.write('{"format":')
+            stream.flush()
+            os.fsync(stream.fileno())
+            os._exit(73)
+    return original_dump(value, stream, *args, **kwargs)
+
+def replace(source, destination):
+    if Path(destination).name == "owner.json":
+        if point == "after-publish":
+            original_replace(source, destination)
+        os._exit(73)
+    return original_replace(source, destination)
+
+json.dump, os.replace = dump, replace
+main(sys.argv[2:])
+""",
+            point,
+            *command[3:],
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert interrupted.returncode == 73, interrupted.stderr
+    assert not (library / "history.sqlite").exists()
+    assert not (state / "accepted.sqlite").exists()
+    process, log = start_logged_serve(command, tmp_path)
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+        assert (state / "accepted.sqlite").is_file()
+        assert (state / "sessions.sqlite").is_file()
+        assert (library / "records.sqlite").is_file()
+        assert not (library / "history.sqlite").exists()
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+@pytest.mark.parametrize("hardlink", [False, True])
+def test_engine_state_refuses_linked_pending_ownership(
+    tmp_path: Path, hardlink: bool, published_library: Path
+) -> None:
+    library = published_library
+    state = tmp_path / "state"
+    state.mkdir()
+    retained = tmp_path / "retained"
+    retained.write_bytes(b"must not overwrite this file")
+    staged = state / ".owner.pending"
+    if hardlink:
+        staged.hardlink_to(retained)
+    else:
+        staged.symlink_to(retained)
+    result = subprocess.run(
+        serve_with_library_command(
+            free_port(), library, "--no-default-packs", "--engine-state-root", str(state)
+        ),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "Cannot verify engine state ownership" in result.stderr
+    assert retained.read_bytes() == b"must not overwrite this file"
+    assert not (state / "owner.json").exists()
+    assert not (library / "history.sqlite").exists()
+
+
+@pytest.mark.parametrize("owner", [None, "not json", "[]"])
+def test_engine_state_refuses_unbound_or_invalid_existing_state(
+    tmp_path: Path, owner: str | None, published_library: Path
+) -> None:
+    library = published_library
+    state = tmp_path / "state"
+    state.mkdir()
+    retained = state / "retained"
+    retained.write_bytes(b"keep this engine's state")
+    if owner is not None:
+        (state / "owner.json").write_text(owner, encoding="utf-8")
+    else:
+        (state / ".owner.pending").write_text('{"format":', encoding="utf-8")
+    result = subprocess.run(
+        serve_with_library_command(
+            free_port(), library, "--no-default-packs", "--engine-state-root", str(state)
+        ),
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode != 0
+    assert "Cannot verify engine state ownership" in result.stderr
+    assert retained.read_bytes() == b"keep this engine's state"
+    assert not (library / "history.sqlite").exists()
+    assert not (state / "sessions.sqlite").exists()
+    if owner is not None:
+        assert (state / "owner.json").read_text("utf-8") == owner
+    else:
+        assert not (state / "owner.json").exists()
+
+
+@pytest.mark.parametrize("choice", ["relative", "inside", "ancestor", "linked", "disabled"])
+def test_engine_state_refuses_invalid_location_before_opening_stores(
+    tmp_path: Path,
+    choice: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from dinkster import serve
+
+    library = tmp_path / "library"
+    state = tmp_path / "engine"
+    if choice == "relative":
+        state = Path("relative-state")
+    elif choice == "inside":
+        state = library / "state"
+    elif choice == "ancestor":
+        state = tmp_path
+    elif choice == "linked":
+        target = tmp_path / "target"
+        target.mkdir()
+        state.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        serve_with_library_command(free_port(), library, "--engine-state-root", str(state))[2:],
+    )
+    if choice == "disabled":
+        monkeypatch.setattr(
+            sys, "argv", serve_command(free_port(), "--engine-state-root", str(state))[2:]
+        )
+    with pytest.raises(SystemExit, match="2"):
+        serve.main()
+    assert "--engine-state-root" in capsys.readouterr().err
+    assert not library.exists()
+
+
+@pytest.mark.parametrize("abrupt", [False, True])
+@pytest.mark.parametrize("managed_peer", [False, True])
+def test_helper_engines_share_library_and_survive_peer_exit(
+    tmp_path: Path, abrupt: bool, managed_peer: bool
+) -> None:
+    from dinkster_assets import digest_bytes
+    from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_store import library_lock
+
+    library = tmp_path / "library"
+    manifest = write_iso_manifest(tmp_path / "pack")
+    pack_args = ("--no-default-packs", "--pack", str(manifest))
+    environment = dict(os.environ, PYTHONPATH=str(TESTS_DIR))
     first_port = free_port()
-    arguments = serve_with_library_command(first_port, library, "--no-default-packs")[3:]
+    arguments = serve_with_library_command(first_port, library, *pack_args)[3:]
+    engine = "sha256:" + "ab" * 32
     owner = subprocess.Popen(
-        [sys.executable, str(library_lock.__file__), str(library), "engine alpha", *arguments],
+        [
+            sys.executable,
+            str(library_lock.__file__),
+            str(library),
+            "engine alpha",
+            "--engine-state",
+            str(tmp_path / "engine"),
+            "1",
+            json.dumps({"engine": engine, "readers": [engine]}),
+            "--",
+            *arguments,
+        ],
+        env=environment,
         cwd=tmp_path,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     try:
         wait_for_composition(owner, first_port)
-        settings = library / "settings.json"
-        settings.write_text('{"features":{}}\n')
-        competitor = subprocess.run(
-            serve_with_library_command(free_port(), library, "--no-default-packs"),
-            cwd=tmp_path,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        assert competitor.returncode != 0
-        assert "already in use by engine alpha" in competitor.stderr
-        assert settings.read_text() == '{"features":{}}\n'
-        assert owner.poll() is None
-        if abrupt:
-            owner.kill()
+        marker = library / "library-format.json"
+        published_format = marker.read_bytes()
+
+        async def open_session() -> str:
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
+                    f"http://127.0.0.1:{first_port}/api/sessions",
+                    json={"scope": "local", "documentId": "open-before-peer", "snapshot": {"v": 7}},
+                ) as response,
+            ):
+                assert response.status == 201, await response.text()
+                return (await response.json())["sessionId"]
+
+        session_id = run_scenario(open_session())
+
+        async def submit_job(base: str, value: str) -> None:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "shared-client",
+                        "jobId": "same-key",
+                        "graph": graph_to_wire(
+                            Graph(
+                                nodes={
+                                    "wait": GraphNode(
+                                        "iso.sleepy", {"value": value, "seconds": 300.0}
+                                    )
+                                }
+                            )
+                        ),
+                        "targets": ["wait"],
+                    },
+                ) as response:
+                    assert response.status == 202, await response.text()
+                async with asyncio.timeout(30):
+                    while True:
+                        async with session.get(
+                            base + "/api/jobs/shared-client/same-key"
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            state = (await response.json())["state"]
+                        if state == "running":
+                            return
+                        assert state == "queued", state
+                        await asyncio.sleep(0.05)
+
+        run_scenario(submit_job(f"http://127.0.0.1:{first_port}", "owner unfinished work"))
+        second_port = free_port()
+        peer_command = serve_with_library_command(second_port, library, *pack_args)
+        if managed_peer:
+            peer_command = [
+                sys.executable,
+                str(library_lock.__file__),
+                str(library),
+                "engine beta",
+                "--engine-state",
+                str(tmp_path / "peer-state"),
+                "2",
+                json.dumps({"engine": engine, "readers": [engine]}),
+                "--",
+                *peer_command[3:],
+            ]
         else:
-            owner.terminate()
-        owner.wait(timeout=30)
-        next_port = free_port()
-        replacement = subprocess.Popen(
-            serve_with_library_command(next_port, library, "--no-default-packs"),
-            cwd=tmp_path,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+            peer_command.extend(["--engine-state-root", str(tmp_path / "peer-state")])
+        peer, peer_log = start_logged_serve(peer_command, tmp_path, env=environment)
+        pending_error = None
         try:
-            wait_for_composition(replacement, next_port)
+            wait_for_composition(peer, second_port)
+
+            async def share() -> None:
+                bases = [f"http://127.0.0.1:{port}" for port in (first_port, second_port)]
+                await submit_job(bases[1], "peer unfinished work")
+                async with aiohttp.ClientSession() as session:
+                    for base in bases:
+                        async with session.get(
+                            base + "/api/jobs/shared-client/same-key"
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            assert (await response.json())["state"] == "running"
+                    for base, expected_sessions in ((bases[0], [session_id]), (bases[1], [])):
+                        async with session.get(base + "/api/sessions?scope=local") as response:
+                            assert response.status == 200, await response.text()
+                            records = (await response.json())["sessions"]
+                            assert [record["sessionId"] for record in records] == expected_sessions
+
+                    async def save(base: str, name: str) -> dict[str, object]:
+                        body = json.dumps({"graphs": {"main": {}}, "name": name}).encode()
+                        async with session.post(base + "/api/assets", data=body) as response:
+                            assert response.status == 201, await response.text()
+                            digest = (await response.json())["digest"]
+                        async with session.post(
+                            base + "/api/library",
+                            json={
+                                "scope": "local",
+                                "name": name,
+                                "digest": digest,
+                                "mediaType": "application/x-dinkster-workflow+json",
+                            },
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            return await response.json()
+
+                    async def changed(socket: aiohttp.ClientWebSocketResponse) -> None:
+                        async with asyncio.timeout(5):
+                            while True:
+                                event = await socket.receive_json()
+                                if event["type"] == "library_changed":
+                                    assert event == {"type": "library_changed"}
+                                    return
+
+                    async with (
+                        session.ws_connect(bases[0] + "/api/events") as first_socket,
+                        session.ws_connect(bases[1] + "/api/events") as second_socket,
+                    ):
+                        await save(bases[0], "Peer notification")
+                        await asyncio.gather(changed(first_socket), changed(second_socket))
+                    alpha, beta = await asyncio.gather(
+                        save(bases[0], "Alpha workflow"), save(bases[1], "Beta workflow")
+                    )
+                    for base, record in ((bases[1], alpha), (bases[0], beta)):
+                        async with session.get(
+                            base + "/api/library/" + str(record["id"]),
+                            params={"scope": "local"},
+                        ) as response:
+                            assert response.status == 200, await response.text()
+                            assert await response.json() == record
+                    for base, expected in ((bases[1], 200), (bases[0], 409)):
+                        async with session.patch(
+                            base + "/api/library/" + str(alpha["id"]),
+                            json={
+                                "scope": "local",
+                                "revision": alpha["revision"],
+                                "name": "Renamed by peer",
+                            },
+                        ) as response:
+                            assert response.status == expected, await response.text()
+                    releases = [asyncio.Event(), asyncio.Event()]
+                    payloads = [b"alpha staged upload", b"beta independent pending upload"]
+
+                    async def upload(index: int) -> str:
+                        payload = payloads[index]
+
+                        async def body():
+                            yield payload[:5]
+                            await releases[index].wait()
+                            yield payload[5:]
+
+                        async with session.post(
+                            bases[index]
+                            + f"/api/assets/transfers?scope=local&name=staged-{index}.bin",
+                            data=body(),
+                            headers={
+                                "Content-Type": "application/octet-stream",
+                                "X-Dinkster-Source-Machine": "peer-engine",
+                                "X-Dinkster-Digest": digest_bytes(payload),
+                            },
+                        ) as response:
+                            assert response.status == 201, await response.text()
+                            return (await response.json())["asset"]["digest"]
+
+                    async with asyncio.TaskGroup() as transfers:
+                        first_upload = transfers.create_task(upload(0))
+                        second_upload = transfers.create_task(upload(1))
+                        async with asyncio.timeout(10):
+                            while (
+                                len(list((library / ".engine-uploads").glob("*/.media-upload-*")))
+                                != 2
+                            ):
+                                await asyncio.sleep(0.01)
+                        for base in bases:
+                            async with session.post(
+                                base + "/api/library/storage/clear", json={}
+                            ) as response:
+                                assert response.status == 200, await response.text()
+                        releases[0].set()
+                        first_digest = await first_upload
+                        if abrupt:
+                            owner.kill()
+                        else:
+                            owner.terminate()
+                        await asyncio.to_thread(owner.wait, timeout=30)
+                        releases[1].set()
+                        second_digest = await second_upload
+                    async with session.get(
+                        bases[1] + "/api/jobs/shared-client/same-key"
+                    ) as response:
+                        assert response.status == 200, await response.text()
+                        assert (await response.json())["state"] == "running"
+                    async with session.delete(
+                        bases[1] + "/api/jobs/shared-client/same-key"
+                    ) as response:
+                        assert response.status == 200, await response.text()
+                    for digest, payload in zip(
+                        (first_digest, second_digest), payloads, strict=True
+                    ):
+                        assert digest == digest_bytes(payload)
+                        async with session.get(bases[1] + "/api/assets/" + digest) as response:
+                            assert response.status == 200, await response.text()
+                            assert await response.read() == payload
+                    async with session.get(
+                        bases[1] + "/api/library/" + str(alpha["id"]), params={"scope": "local"}
+                    ) as response:
+                        assert response.status == 200, await response.text()
+                        assert (await response.json())["name"] == "Renamed by peer"
+                    await save(bases[1], "Saved after peer stopped")
+
+            run_scenario(share())
+            assert marker.read_bytes() == published_format
+            assert peer.poll() is None
+        except BaseException as error:
+            pending_error = error
+            raise
         finally:
-            replacement.terminate()
-            replacement.wait(timeout=30)
+            stop_logged_serve(peer, peer_log, pending_error)
     finally:
         if owner.poll() is None:
             owner.kill()
@@ -1317,6 +2223,53 @@ def test_serve_plain_dev_pack_is_announced(tmp_path: Path, pack_path: str) -> No
                     assert await response.json() == {"packs": [], "assets": [], "errors": []}
 
         run_scenario(plan())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+def test_serve_records_its_node_table_once_composed(tmp_path: Path) -> None:
+    port = free_port()
+    record = tmp_path / "node-tables" / "main.json"
+    pack = Path(__file__).resolve().parent.parent / "packages/dinkster-nodes-dev"
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port,
+            tmp_path / "library",
+            "--no-default-packs",
+            "--pack",
+            str(pack),
+            "--engine-variant",
+            "linux-cpu",
+            "--node-table-record",
+            str(record),
+        ),
+        tmp_path,
+    )
+    pending_error: BaseException | None = None
+    try:
+        wait_for_composition(process, port)
+
+        async def served() -> dict[str, Any]:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(f"http://127.0.0.1:{port}/api/nodes") as response:
+                    return await response.json()
+
+        table = run_scenario(served())
+        deadline = time.monotonic() + 30
+        while not record.is_file():
+            assert time.monotonic() < deadline, "the node table was never recorded"
+            time.sleep(0.05)
+        recorded = json.loads(record.read_text(encoding="utf-8"))
+        assert recorded["nodes"] == table["nodes"]
+        assert any(entry["pack"] == "dinkster-nodes-dev" for entry in recorded["nodes"].values())
+        assert recorded["packs"] == table["packs"]
+        assert recorded["dinkster"]["version"] == table["dinkster"]["version"]
+        # What only means something within this engine run is left out.
+        assert {"epoch", "extensionSnapshotDigest", "composing"}.isdisjoint(recorded)
+        assert abs(recorded["recordedAt"] - time.time() * 1000) < 120_000
     except BaseException as error:
         pending_error = error
         raise
@@ -1575,12 +2528,52 @@ def test_library_startup_composes_without_pack_workers(
         assert not alive, f"server descendants survived teardown: {alive}"
 
 
-@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending"])
-def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: str) -> None:
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory aliases such as macOS /var")
+def test_library_startup_resolves_posix_directory_alias(tmp_path: Path) -> None:
+    parent = tmp_path / "physical"
+    parent.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(parent, target_is_directory=True)
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(port, alias / "library", "--no-default-packs"), tmp_path
+    )
+    pending_error: BaseException | None = None
+    try:
+        report = wait_for_composition(process, port)
+        assert report["packs"] == {}
+
+        async def scenario() -> None:
+            async with aiohttp.ClientSession() as client:
+                async with client.get(f"http://127.0.0.1:{port}/api/health") as response:
+                    assert response.status == 200
+                    assert (await response.json())["ok"] is True
+
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+@pytest.mark.parametrize("inventory", ["new", "missing", "corrupt", "pending", "linked-parent"])
+def test_serve_cleanup_does_not_depend_on_durable_vault_inventory(
+    tmp_path: Path, inventory: str
+) -> None:
     from dinkster_assets.produced import ProducedAssetInventory
 
     library = tmp_path / "library"
-    if inventory != "new":
+    if inventory == "linked-parent":
+        physical = tmp_path / "physical"
+        physical.mkdir()
+        alias = tmp_path / "alias"
+        try:
+            alias.symlink_to(physical, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"directory symlinks unavailable: {exc}")
+        library = alias / "library"
+    if inventory not in {"new", "linked-parent"}:
         vault = library / "vault"
         vault.mkdir(parents=True)
         if inventory == "corrupt":
@@ -1607,33 +2600,22 @@ def test_serve_storage_initializes_only_new_vaults(tmp_path: Path, inventory: st
                         except aiohttp.ClientError:
                             pass
                         await asyncio.sleep(0.05)
-                async with client.post(
-                    base + "/api/library/retention-clients", json={"revision": 0}
-                ) as response:
-                    enrolled = await response.json()
-                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
-                async with client.put(
-                    base + "/api/library/retention-clients",
-                    headers=headers,
-                    json={"revision": enrolled["revision"], "holders": enrolled["holders"]},
-                ) as response:
-                    assert response.status == 200
-                async with client.get(base + "/api/library/storage", headers=headers) as response:
+                async with client.get(base + "/api/library/storage") as response:
                     assert response.status == 200
                     status = await response.json()
-                if inventory == "new":
-                    assert status["adoptedBytes"] == 0
-                    assert status["vaultOwnershipAvailable"] is True
-                    assert status["collectionEnabled"]
-                    assert status["blocked"] == []
-                else:
-                    assert not status["collectionEnabled"]
-                    if inventory == "pending":
-                        assert "adoption_pending" in status["blocked"]
-                        assert "owner_completeness_unknown" in status["blocked"]
-                    else:
-                        assert status["adoptedBytes"] is None
-                        assert "adoption_state_unavailable" in status["blocked"]
+                assert status["adoptedBytes"] == 0
+                assert status["vaultOwnershipAvailable"] is True
+                assert status["collectionEnabled"]
+                assert status["blocked"] == []
+                if inventory == "corrupt":
+                    assert (
+                        library / "vault" / ".produced-assets.sqlite"
+                    ).read_bytes() == b"not a database"
+                elif inventory == "pending":
+                    entries = ProducedAssetInventory(library / "vault").entries()
+                    assert len(entries) == 1 and entries[0].adopted_at_ns is None
+                elif inventory == "missing":
+                    assert not (library / "vault" / ".produced-assets.sqlite").exists()
 
         run_scenario(scenario())
     except BaseException as exc:
@@ -1753,6 +2735,7 @@ def fixture_default_serve_command(port: int, directory: Path, *args: str) -> lis
     environment = {"PYTHONPATH": str(manifest.parent / "src")}
     bootstrap = f"""
 from pathlib import Path
+from typing import Any
 import sys
 from dinkster import serve
 from dinkster.compose import PackSpec
@@ -2230,7 +3213,10 @@ def test_serve_runtime_mounts_end_to_end(
     """Real dinkster-serve with a library root and --allow-mount-changes:
     grant a directory over the API, watch it scan to ready, browse its
     catalog, stream a mounted file by digest, and revoke it - the desktop
-    folder-picker flow end to end, with mounts.toml as the durable record."""
+    folder-picker flow end to end, with helper-owned durable grants."""
+    from dinkster_assets import MountConfiguration
+    from dinkster_library import LibraryClient
+
     from dinkster.project_folders import ProjectFolders
 
     library_root = tmp_path / "library"
@@ -2364,7 +3350,8 @@ def test_serve_runtime_mounts_end_to_end(
                 created = await resp.json()
             assert (created["id"], created["source"]) == ("shots", "config")
             # Durable immediately, ready shortly after the background scan.
-            assert "shots" in (library_root / "mounts.toml").read_text("utf-8")
+            with LibraryClient(library_root) as helper:
+                assert "shots" in {mount.id for mount in MountConfiguration.load(helper).mounts}
             async with asyncio.timeout(60):
                 while True:
                     async with session.get(base + "/api/mounts") as resp:
@@ -2375,7 +3362,13 @@ def test_serve_runtime_mounts_end_to_end(
                         break
                     await asyncio.sleep(0.05)
             assert row["entryCount"] == 1
-            snapshot = library_root / "worker-state" / "mounts-snapshot.json"
+            snapshots = list(
+                Path(os.environ["DINKSTER_HOME"]).glob(
+                    "engine-state/*/worker-state/mounts-snapshot.json"
+                )
+            )
+            assert len(snapshots) == 1
+            snapshot = snapshots[0]
             published = json.loads(snapshot.read_text("utf-8"))["mounts"]
             shots = next(item for item in published if item["id"] == "shots")
             assert Path(shots["index"]).is_relative_to(snapshot.parent)
@@ -2428,7 +3421,9 @@ def test_serve_runtime_mounts_end_to_end(
                 assert await resp.json() == {
                     "assets": [{"digest": entry["digest"], "status": "missing"}]
                 }
-            assert "shots" not in (library_root / "mounts.toml").read_text("utf-8")
+            with LibraryClient(library_root) as helper:
+                assert "shots" not in {mount.id for mount in MountConfiguration.load(helper).mounts}
+            assert not (library_root / "mounts.toml").exists()
 
     try:
         run_scenario(scenario())
@@ -2462,14 +3457,218 @@ async def _peek_value(
     return data["descriptor"]["value"]
 
 
+def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> None:
+    """An agent or API client writing a workflow through a collaborative
+    session cannot store a number outside its field's limits or, for a whole
+    number, off its step, unless the field declares it special; a refused op
+    stores none of its parts."""
+    pack = tmp_path / "limits"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "limits"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "limits_nodes:NODES"\n'
+    )
+    (pack / "limits_nodes.py").write_text(
+        "from dinkster_api.v1 import CORE_FLOAT, CORE_INT, Input, Node, NodeSchema\n"
+        "from dinkster_api.v1 import Formula, NumberWidget, TypeExpr\n"
+        "INT, FLOAT = TypeExpr.concrete(CORE_INT), TypeExpr.concrete(CORE_FLOAT)\n"
+        "class Sampler(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('limits.sampler', display_name='Sampler', body=(\n"
+        "            Input('steps', INT, default=20, widget=NumberWidget(\n"
+        "                min=1, max=10000, special={-1: 'auto'}, reason='Slower above.')),\n"
+        "            Input('frames', INT, default=6, widget=NumberWidget(min=2, step=4)),\n"
+        "            Input('width', INT, default=64,\n"
+        "                  widget=NumberWidget(min=1, step=8, offset=0)),\n"
+        "            Input('cfg', FLOAT, default=7.5, widget=NumberWidget(max=30.0, step=0.1)),\n"
+        "            Input('depth', INT, default=8, widget=NumberWidget(\n"
+        "                min=0, max=Formula('steps'), step=4, offset=Formula('frames'))),\n"
+        "        ), output_node=True)\n"
+        "    @classmethod\n"
+        "    def execute(cls, **values):\n"
+        "        return {}\n"
+        "NODES = [Sampler]\n"
+    )
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port, tmp_path / "library", "--no-default-packs", "--pack", str(manifest)
+        ),
+        tmp_path,
+        env={**os.environ, "PYTHONPATH": str(pack)},
+    )
+    values = ["graphs", "root", "nodes", "s", "values"]
+
+    def write(**changes: object) -> list[dict[str, object]]:
+        return [
+            {"op": "replace", "path": [*values, field], "value": value}
+            for field, value in changes.items()
+        ]
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        agent = {"X-Dinkster-Actor-Kind": "agent"}
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+            async with asyncio.timeout(60):
+                while True:
+                    assert process.poll() is None, "serve process died"
+                    try:
+                        async with session.get(base + "/api/nodes?wire=45") as resp:
+                            if (
+                                resp.status == 200
+                                and "limits.sampler" in (await resp.json())["nodes"]
+                            ):
+                                break
+                    except aiohttp.ClientError:
+                        pass
+                    await asyncio.sleep(0.05)
+            # The workflow already holds a number beyond its limit, as one
+            # opened from a file may until the editor corrects it.
+            document = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {
+                    "root": {
+                        "nodes": {
+                            "s": {
+                                "type": "limits.sampler",
+                                "values": {
+                                    "steps": 12000,
+                                    "frames": 6,
+                                    "cfg": 7.5,
+                                    "width": 64,
+                                    "depth": 8,
+                                },
+                            }
+                        }
+                    }
+                },
+            }
+            async with session.post(
+                base + "/api/sessions",
+                json={"scope": "local", "documentId": "w", "snapshot": document},
+            ) as resp:
+                assert resp.status == 201, await resp.text()
+                ops = f"{base}/api/sessions/{(await resp.json())['sessionId']}/ops"
+            revision = 0
+
+            async def post(patch: list[dict[str, object]]) -> tuple[int, dict[str, object]]:
+                nonlocal revision
+                body = {
+                    "protocolVersion": 1,
+                    "opId": f"op-{time.monotonic_ns()}",
+                    "actorId": "agent1",
+                    "baseRevision": revision,
+                    "patch": patch,
+                }
+                async with session.post(ops, json=body, headers=agent) as resp:
+                    answer = await resp.json()
+                if resp.status == 200:
+                    revision = answer["revision"]
+                return resp.status, answer
+
+            # A field the write does not change is not judged.
+            assert (await post(write(cfg=8.0)))[0] == 200
+            status, refusal = await post(write(steps=10001))
+            assert status == 422
+            assert refusal["error"] == "value-outside-limits"
+            assert refusal["message"] == (
+                "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
+            )
+            assert refusal["problems"] == [
+                {
+                    "graph": "root",
+                    "node": "s",
+                    "field": "steps",
+                    "value": 10001,
+                    "min": 1,
+                    "max": 10000,
+                    "step": None,
+                    "message": "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above.",
+                }
+            ]
+            assert (await post(write(steps=0)))[0] == 422
+            assert (await post(write(cfg=30.5)))[0] == 422
+            # Steps count from min: 2, 6, 10, 14 ... and a decimal is not judged on its step.
+            status, refusal = await post(write(frames=12))
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: frames = 12 refused. Not on the step of 4 from 2. Nothing stored."
+            )
+            assert (await post(write(frames=14)))[0] == 200
+            assert (await post(write(cfg=7.53)))[0] == 200
+            # A declared offset moves where the steps count from: 0, 8, 16 ... not 1, 9, 17.
+            assert (await post(write(width=9)))[0] == 422
+            assert (await post(write(width=16)))[0] == 200
+            # A limit or offset worked out in the editor is not known here: only
+            # the literal min holds, and with no known offset there is no step grid.
+            assert (await post(write(depth=99999)))[0] == 200
+            assert (await post(write(depth=5)))[0] == 200
+            status, refusal = await post(write(depth=-1))
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: depth = -1 refused. Allowed: at least 0. Nothing stored."
+            )
+            # A special value is allowed outside the limits.
+            assert (await post(write(steps=-1)))[0] == 200
+            # One bad part refuses the whole write.
+            assert (await post(write(steps=10000, frames=7)))[0] == 422
+            assert (await post(write(steps=10000)))[0] == 200
+            # Putting back a value the field held earlier, as undo does, is
+            # accepted even outside the limits; a new one is not.
+            assert (await post(write(steps=12000)))[0] == 200
+            assert (await post(write(steps=12001)))[0] == 422
+            # A pasted node is judged like any other write; it held nothing before.
+            pasted = {
+                "op": "add",
+                "path": ["graphs", "root", "nodes", "p"],
+                "value": {"type": "limits.sampler", "values": {"steps": 12000, "frames": 6}},
+            }
+            status, refusal = await post([pasted])
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: steps = 12000 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
+            )
+            async with session.get(ops + "?after=0") as resp:
+                stored = [op["patch"] for op in (await resp.json())["ops"]]
+            assert stored == [
+                write(cfg=8.0),
+                write(frames=14),
+                write(cfg=7.53),
+                write(width=16),
+                write(depth=99999),
+                write(depth=5),
+                write(steps=-1),
+                write(steps=10000),
+                write(steps=12000),
+            ]
+
+    pending_error: BaseException | None = None
+    try:
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 @pytest.mark.parametrize("external", [True, False])
 @pytest.mark.parametrize("source", ["defaults", "generation"])
 def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credentials(
     tmp_path: Path,
     external: bool,
     source: str,
+    published_library: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
     from dinkster_graph import Graph, GraphNode, graph_to_wire
+    from dinkster_library import LibraryClient
     from dinkster_workers import detect_bubblewrap
     from dinkster_workers.doctor import prepare_catalog
 
@@ -2482,13 +3681,56 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
     credentials = tmp_path / "credentials"
     credentials.mkdir()
     install = tmp_path / "install"
-    endpoint = "http://127.0.0.1:8123"
+    project = "89790f18-fdad-4f48-bf67-823fdddb89da"
+
+    class Identity(BaseHTTPRequestHandler):
+        def log_message(self, format, *args):
+            pass
+
+        def do_POST(self):
+            assert self.path == f"/v1/oauth/projects/{project}/gateway-token"
+            assert self.headers.get("Authorization") == "Bearer host-only-oauth"
+            assert self.rfile.read(int(self.headers["Content-Length"])) == b"{}"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "access_token": token.read_text(),
+                        "token_type": "Bearer",
+                        "expires_in": 1,
+                    }
+                ).encode()
+            )
+
+    identity = ThreadingHTTPServer(("127.0.0.1", 0), Identity)
+    thread = threading.Thread(target=identity.serve_forever, daemon=True)
+    thread.start()
+
+    def close_identity():
+        identity.shutdown()
+        identity.server_close()
+        thread.join(timeout=5)
+
+    request.addfinalizer(close_identity)
+    endpoint = f"http://127.0.0.1:{identity.server_port}"
+    with LibraryClient(published_library) as helper:
+        helper.call(
+            "projects.patch",
+            id="default",
+            revision=1,
+            patch={
+                "accountProject": {"issuer": endpoint, "id": project},
+            },
+        )
+        helper.call("projects.register", id="unlinked")
     account = AccountSession(
         resolve_services(identity_base=endpoint, catalog_base=endpoint),
         home=credentials,
         install_root=install,
     )
-    token = credentials / "bearer" if external else account.token_path
+    token = credentials / "bearer"
     neighbor = credentials / "private-oauth.json" if external else account.state_path
     token.parent.mkdir(parents=True, exist_ok=True)
     neighbor.parent.mkdir(parents=True, exist_ok=True)
@@ -2497,15 +3739,18 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         json.dumps(
             {
                 "format": "dinkster.account/1",
-                "project_id": "89790f18-fdad-4f48-bf67-823fdddb89da",
+                "project_id": "c660f30c-c170-4312-a08a-542d6ce39e93",
+                "client_id": "host-client",
+                "access_token": "host-only-oauth",
+                "expires_at": time.time() + 3600,
                 "gateway_expires_at": time.time() + 3600,
                 "refresh_token": "must-stay-private",
             }
         )
     )
+    account.token_path.parent.mkdir(parents=True, exist_ok=True)
+    account.token_path.write_text("account-bearer-must-not-win")
     if external:
-        account.token_path.parent.mkdir(parents=True)
-        account.token_path.write_text("account-bearer-must-not-win")
         account.state_path.parent.mkdir(parents=True)
         account.state_path.write_text(neighbor.read_text())
     pack = tmp_path / "pack"
@@ -2516,8 +3761,9 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
     )
     (pack / "credential_probe.py").write_text(
-        "import json, os\nfrom pathlib import Path\n"
+        "import asyncio, hashlib, json, os\nfrom pathlib import Path\n"
         "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr\n"
+        "from dinkster_api.v1 import current_execution_context\n"
         "class Probe(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
@@ -2525,10 +3771,20 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         "body=(Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
-        "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
+        "        if directory := os.environ.get('DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY'):\n"
+        "            run = current_execution_context().job_ref\n"
+        "            token = Path(directory) / hashlib.sha256(run.encode()).hexdigest()\n"
+        "            assert 'DINKSTER_REMOTE_AUTH_TOKEN_FILE' not in os.environ\n"
+        "        else:\n"
+        "            token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
         "        bearer = token.read_text() if token.exists() else '<missing>'\n"
+        "        if bearer == 'refresh-pending':\n"
+        "            async with asyncio.timeout(45):\n"
+        "                while bearer == 'refresh-pending':\n"
+        "                    await asyncio.sleep(0.05)\n"
+        "                    bearer = token.read_text() if token.exists() else '<missing>'\n"
         f"        private = any(Path(p).exists() for p in "
-        f"{[str(neighbor), str(account.state_path)]!r})\n"
+        f"{[str(neighbor), str(account.state_path), str(account.token_path), str(token)]!r})\n"
         "        return cls.outputs(report=json.dumps([bearer, private, os.getpid(), "
         "os.environ.get('DINKSTER_REMOTE_PARTNER_MODE'), "
         "os.environ.get('DINKSTER_REMOTE_FAKE_OUTCOME')]))\n"
@@ -2599,6 +3855,8 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             "-c",
             bootstrap,
             *serve_command(port)[3:],
+            "--library-root",
+            str(published_library),
             *extra,
             "--sandbox-packs",
             *(["--remote-auth-token-file", str(token)] if external else []),
@@ -2615,6 +3873,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
             "DINKSTER_HOME": str(credentials),
             "DINKSTER_REMOTE_PARTNER_MODE": "fake",
             "DINKSTER_REMOTE_FAKE_OUTCOME": "slow",
+            "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY": str(neighbor.parent),
         },
     )
 
@@ -2623,7 +3882,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         async with aiohttp.ClientSession() as session:
             serial = 0
 
-            async def read() -> list[object]:
+            async def read(project: str = "default") -> list[object]:
                 nonlocal serial
                 serial += 1
                 job = f"bearer-{serial}"
@@ -2633,6 +3892,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
                     json={
                         "clientId": "e2e",
                         "jobId": job,
+                        "project": project,
                         "graph": graph_to_wire(graph),
                         "targets": ["save"],
                     },
@@ -2644,9 +3904,29 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
                 assert isinstance(value, str)
                 return json.loads(value)
 
+            if not external:
+                assert (await read("unlinked"))[:2] == ["<missing>", False]
+                assert not list(account.run_token_directory.iterdir())
             first = await read()
             assert first[:2] == ["first-external-bearer", False]
             assert first[3:] == ["fake", "slow"]
+            if not external:
+                token.write_text("refresh-pending")
+                running = asyncio.create_task(read())
+                try:
+                    async with asyncio.timeout(10):
+                        while not any(
+                            path.read_text() == "refresh-pending"
+                            for path in account.run_token_directory.iterdir()
+                        ):
+                            await asyncio.sleep(0.05)
+                    token.write_text("refreshed-in-flight")
+                    assert await running == ["refreshed-in-flight", False, first[2], "fake", "slow"]
+                finally:
+                    if not running.done():
+                        running.cancel()
+                        await asyncio.gather(running, return_exceptions=True)
+                assert not list(account.run_token_directory.iterdir())
             replacement = token.with_suffix(".new")
             replacement.write_text("second-external-bearer")
             replacement.replace(token)
@@ -2684,10 +3964,11 @@ def test_serve_mounted_save_end_to_end(
     over the API while dinkster-serve runs, execute the PGM saver in
     that same process, verify the file landed inside the mount with the
     digest the job reported, stream it back via /api/assets, then revoke
-    the mount and prove the very next save job fails - no restart
-    anywhere."""
-    from dinkster_assets import digest_bytes
+    the mount and prove the very next save goes to the default output
+    mount instead - no restart anywhere."""
+    from dinkster_assets import MountConfiguration, digest_bytes
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+    from dinkster_library import LibraryClient
 
     library_root = tmp_path / "library"
     outdir = tmp_path / "outdir"
@@ -2780,13 +4061,15 @@ def test_serve_mounted_save_end_to_end(
                         break
                     await asyncio.sleep(0.05)
 
-            # Before any grant: the save refuses with the mount's name in
-            # the error - never a silent fallback directory.
+            # Before any grant the mount is not on this machine: the save
+            # lands in the default output mount.
             async with session.post(base + "/api/jobs", json=save_job("j0")) as resp:
                 assert resp.status == 202
             status = await _job_finish(session, base, "j0")
-            assert status["state"] == "failed"
-            assert "renders" in str(status["error"])
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "j0", "path") == (
+                "mounts/output/shots/frame_00001.pgm"
+            )
 
             # Grant the directory readwrite while the process runs.
             async with session.post(
@@ -2805,8 +4088,11 @@ def test_serve_mounted_save_end_to_end(
                     await asyncio.sleep(0.05)
             assert row["mode"] == "readwrite"
             # The grant is durable, mode included.
-            config_text = (library_root / "mounts.toml").read_text("utf-8")
-            assert "renders" in config_text and "readwrite" in config_text
+            with LibraryClient(library_root) as helper:
+                grants = {mount.id: mount for mount in MountConfiguration.load(helper).mounts}
+                assert grants["renders"].path == outdir
+                assert grants["renders"].mode == "readwrite"
+            assert not (library_root / "mounts.toml").exists()
 
             # Execute the save for real, in the running server.
             async with session.post(base + "/api/jobs", json=save_job("j1")) as resp:
@@ -2841,20 +4127,177 @@ def test_serve_mounted_save_end_to_end(
             )
             assert (outdir / "shots" / "frame_00002.pgm").read_bytes() == payload
 
-            # Revoke and save again in the same process: refusal, and the
-            # already-written files stay untouched on disk.
+            # Revoke and save again in the same process: the save goes to
+            # the default output mount, and the files already written to the
+            # revoked mount stay untouched on disk.
             async with session.delete(base + "/api/mounts/renders") as resp:
                 assert resp.status == 200
             async with session.post(base + "/api/jobs", json=save_job("j3")) as resp:
                 assert resp.status == 202
             status = await _job_finish(session, base, "j3")
-            assert status["state"] == "failed"
-            assert "renders" in str(status["error"])
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "j3", "path") == (
+                "mounts/output/shots/frame_00002.pgm"
+            )
             assert sorted(p.name for p in (outdir / "shots").iterdir()) == [
                 ".dinkster-asset-writer.lock",
                 "frame_00001.pgm",
                 "frame_00002.pgm",
             ]
+
+    pending_error: BaseException | None = None
+    try:
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
+    """A job submitted through the API meets the node's rules before any
+    node runs: a failed rule with no fix fails the run naming the node, a
+    failed rule with a fix leaves one warning on the node and the run goes
+    on, and a rule that reads a wired value has no answer yet and passes."""
+    from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+
+    pack = tmp_path / "rules"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "rules"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "rules_nodes:NODES"\n'
+    )
+    ran = tmp_path / "ran.txt"
+    (pack / "rules_nodes.py").write_text(
+        "import os\n"
+        "from dinkster_api.v1 import CORE_INT, Input, Node, NodeSchema, Output, TypeExpr\n"
+        "from dinkster_schema import Formula, Rule\n"
+        "from dinkster_schema.body import Set\n"
+        "INT = TypeExpr.concrete(CORE_INT)\n"
+        "def mark(name):\n"
+        "    with open(os.environ['RULES_RAN'], 'a') as f:\n"
+        "        f.write(name + '\\n')\n"
+        "class Source(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('rules.source', body=(\n"
+        "            Input('value', INT, default=1), Output('value', INT)))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, value):\n"
+        "        mark('source')\n"
+        "        return cls.outputs(value=value)\n"
+        "class Sampler(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('rules.sampler', display_name='Sampler', output_node=True,\n"
+        "            body=(Input('steps', INT, default=20), Input('frames', INT, default=16)),\n"
+        "            validate=(\n"
+        "                Rule(Formula('steps <= 50'), 'steps must be 50 or fewer'),\n"
+        "                Rule(Formula('frames <= 32'), 'frames above 32 run slowly',\n"
+        "                     fix=(Set('frames', 32),)),\n"
+        "            ))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, steps, frames):\n"
+        "        mark(f'sampler {steps} {frames}')\n"
+        "        return {}\n"
+        "NODES = [Source, Sampler]\n"
+    )
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port, tmp_path / "library", "--no-default-packs", "--pack", str(manifest)
+        ),
+        tmp_path,
+        env={**os.environ, "PYTHONPATH": str(pack), "RULES_RAN": str(ran)},
+    )
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with asyncio.timeout(60):
+                while True:
+                    assert process.poll() is None, "serve process died"
+                    try:
+                        async with session.get(base + "/api/nodes?wire=45") as resp:
+                            if (
+                                resp.status == 200
+                                and "rules.sampler" in (await resp.json())["nodes"]
+                            ):
+                                break
+                    except aiohttp.ClientError:
+                        pass
+                    await asyncio.sleep(0.05)
+
+            async def run(job: str, nodes: dict[str, GraphNode]) -> dict[str, object]:
+                async with session.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "e2e",
+                        "jobId": job,
+                        "graph": graph_to_wire(Graph(nodes=nodes)),
+                        "targets": ["s"],
+                    },
+                ) as resp:
+                    assert resp.status == 202, await resp.text()
+                return await _job_finish(session, base, job)
+
+            async def warnings(status: dict[str, object]) -> list[object]:
+                journal = f"{base}/api/runs/{status['jobRef']}/journal?scope=local"
+                # The journal writes in batches; wait for the run's final state.
+                async with asyncio.timeout(10):
+                    while True:
+                        async with session.get(journal) as resp:
+                            records = (await resp.json())["records"] if resp.status == 200 else []
+                        if any(
+                            record["name"] == "job_state"
+                            and record["payload"].get("state") == status["state"]
+                            for record in records
+                        ):
+                            break
+                        await asyncio.sleep(0.05)
+                return [
+                    (record["payload"].get("nodeId"), record["payload"]["data"]["message"])
+                    for record in records
+                    if record["name"] == "log"
+                    and record["payload"]["data"].get("level") == "warning"
+                ]
+
+            refused = await run(
+                "too-many-steps", {"s": GraphNode("rules.sampler", {"steps": 12000})}
+            )
+            assert refused["state"] == "failed", refused
+            assert refused["error"] == {
+                "kind": "validation",
+                "diagnostics": [
+                    {
+                        "severity": "error",
+                        "code": "rule-failed",
+                        "nodeId": "s",
+                        "inputId": None,
+                        "message": "rules.sampler: steps must be 50 or fewer",
+                    }
+                ],
+            }
+            assert not ran.exists()
+
+            slow = await run("slow-frames", {"s": GraphNode("rules.sampler", {"frames": 48})})
+            assert slow["state"] == "completed", slow
+            assert await warnings(slow) == [("s", "rules.sampler: frames above 32 run slowly")]
+            # The engine does not run the fix: the node receives the value as stored.
+            assert ran.read_text().splitlines() == ["sampler 20 48"]
+
+            wired = await run(
+                "wired-steps",
+                {
+                    "src": GraphNode("rules.source", {"value": 12000}),
+                    "s": GraphNode("rules.sampler", {"steps": Link("src", "value")}),
+                },
+            )
+            assert wired["state"] == "completed", wired
+            assert await warnings(wired) == []
+            assert ran.read_text().splitlines()[1:] == ["source", "sampler 12000 16"]
 
     pending_error: BaseException | None = None
     try:

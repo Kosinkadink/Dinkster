@@ -148,6 +148,7 @@ from dinkster_protocol import (
     extension_behavior_hash,
 )
 from dinkster_protocol.frontend_modules import FrontendModule
+from dinkster_protocol.lookups import LOOKUP_TIME_LIMIT, LookupCallError
 from dinkster_protocol.pack_surfaces import PACK_EVENTS_SURFACE, PACK_ROUTES_SURFACE, PackRoute
 from dinkster_registry import (
     ComposedPack,
@@ -180,7 +181,7 @@ from dinkster_schema import (
     schema_signature,
     validate_remote_choice_authority,
 )
-from dinkster_schema.body import replace_rows
+from dinkster_schema.body import LookupMark, replace_rows
 from dinkster_security.documents import Release as SecurityRelease
 from dinkster_security.documents import SecurityError
 from dinkster_security.host import SecurityHost
@@ -253,6 +254,11 @@ from dinkster_workers.catalog import (
     source_digest,
     worker_declarations_match_catalog,
 )
+from dinkster_workers.host import (
+    TYPE_PROVIDERS_ENV,
+    type_providers_from_env,
+    type_providers_to_env,
+)
 from dinkster_workers.host import load_pack as load_host_pack
 from dinkster_workers.manifest import add_pack_root_to_import_path, validate_registration_claims
 from dinkster_workers.preview_artifacts import PreviewArtifactPublisher
@@ -299,9 +305,11 @@ ExecutionCacheMode = Literal["memory", "layered"]
 _SANDBOX_RO_PATH_ENV = (
     "DINKSTER_ASSET_ROOT",
     "DINKSTER_ASSET_VAULT",
+    "DINKSTER_TEMPORARY_VAULT",
     "DINKSTER_COMFYUI_ROOT",
     "DINKSTER_MOUNTS_SNAPSHOT",
     "DINKSTER_REMOTE_AUTH_TOKEN_FILE",
+    "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY",
 )
 _SANDBOX_RO_PATH_LIST_ENV = ("DINKSTER_LEGACY_PACKS",)
 _SANDBOX_RW_FILE_ENV = ("DINKSTER_TRAINING_JOURNAL",)
@@ -405,6 +413,13 @@ class _ReplicaWorkerPool:
         self, route: PackRoute, data: Mapping[str, object]
     ) -> dict[str, object]:
         return await self._first.call_pack_route(route, data)
+
+    async def call_lookup(self, function: str, args: Sequence[object]) -> object:
+        return await self._first.call_lookup(function, args)
+
+    @property
+    def lookup_marks(self) -> Mapping[str, LookupMark]:
+        return self._first.lookup_marks
 
     @property
     def compat_skips(self) -> Mapping[str, CompatGateDiagnostic]:
@@ -2286,7 +2301,7 @@ class ServingComposer:
         vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
         self._saved_file_previews_enabled = saved_file_previews_enabled and bool(vault_root)
         self._preview_artifacts = PreviewArtifactPublisher(
-            AssetVault(vault_root) if vault_root else None
+            saved_preview_vault or (AssetVault(vault_root) if vault_root else None)
         )
         self._saved_preview_vault = saved_preview_vault
         self._saved_file_preview_artifacts = (
@@ -2324,6 +2339,7 @@ class ServingComposer:
         self._cache_disk_budget = cache_disk_budget
         self._private_staging = _private_staging
         self._reusable_in_process = dict(_reusable_in_process or {})
+        self._planned_manifests: dict[str, PackManifest] = {}
         if composition_mode not in ("production", "development"):
             raise ValueError(f"invalid composition mode {composition_mode!r}")
         self._composition_mode: PackCompositionMode = composition_mode
@@ -2527,6 +2543,44 @@ class ServingComposer:
                 ) from exc
         return scratch
 
+    def _type_providers(self, manifests: Sequence[PackManifest]) -> dict[str, PackManifest]:
+        """Choose the pack that stores each type these packs use.
+
+        The owner stores its type whenever it is in the composition;
+        otherwise the using pack whose name sorts first does. Candidates
+        include packs planned for this composition but not added yet, so
+        the choice does not depend on the order packs are added in."""
+        pool = {
+            canonical_name(manifest.execution_id): manifest
+            for manifest in (
+                *self._planned_manifests.values(),
+                *(record.manifest for record in self._records.values()),
+                *manifests,
+            )
+        }
+        local = {canonical_name(manifest.execution_id) for manifest in manifests}
+        providers: dict[str, PackManifest] = {}
+        used = {type_id for manifest in manifests for type_id in manifest.uses_types}
+        for type_id in sorted(used):
+            owner = next(
+                (
+                    name
+                    for name, manifest in sorted(pool.items())
+                    if any(
+                        type_id == claim or claim_covers(claim, type_id)
+                        for claim in manifest.type_namespaces
+                    )
+                ),
+                None,
+            )
+            provider = owner or min(
+                (name for name, manifest in pool.items() if type_id in manifest.uses_types),
+                key=lambda name: (canonical_name(pool[name].name), name),
+            )
+            if provider not in local:
+                providers[type_id] = pool[provider]
+        return providers
+
     def _worker_environment(
         self,
         spec: PackSpec,
@@ -2534,6 +2588,10 @@ class ServingComposer:
     ) -> dict[str, str]:
         environment = {**self._worker_env, **spec.env}
         environment.pop(_ATTENTION_POLICY_ENV, None)
+        if providers := self._type_providers(manifests):
+            environment[TYPE_PROVIDERS_ENV] = type_providers_to_env(providers)
+        else:
+            environment.pop(TYPE_PROVIDERS_ENV, None)
         if scratch := self._scratch_directory(spec, manifests):
             environment[_PACK_SCRATCH_ENV] = str(scratch)
         else:
@@ -2629,7 +2687,8 @@ class ServingComposer:
             rw_binds.append(str(scratch))
             protected_rw_exceptions.append(str(scratch))
         pack_import_roots: list[str] = []
-        for manifest in manifests:
+        type_providers = type_providers_from_env(effective_env.get(TYPE_PROVIDERS_ENV))
+        for manifest in (*manifests, *type_providers.values()):
             pack_import_roots.append(str(manifest.root))
             add_pack_root_to_import_path(manifest, pack_import_roots)
         ro_binds.extend(pack_import_roots)
@@ -2641,6 +2700,15 @@ class ServingComposer:
                     for bound in ro_binds
                 ):
                     continue
+                if name == "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY":
+                    if (
+                        spec.remote_token_directory is None
+                        or Path(value).resolve() != spec.remote_token_directory.resolve()
+                    ):
+                        raise CompositionError(
+                            "remote run credentials must use their dedicated directory"
+                        )
+                    protected_ro_exceptions.append(value)
                 if name == "DINKSTER_REMOTE_AUTH_TOKEN_FILE" and spec.remote_token_directory:
                     if Path(value).parent != spec.remote_token_directory:
                         raise CompositionError(
@@ -3152,6 +3220,26 @@ class ServingComposer:
         order, receipts = _resolve_pack_contracts(entries)
         return order, _composition_generation(entries, receipts, self._composition_mode)
 
+    def plan_pack_entries(self, entries: Sequence[PackSpec | Path | str]) -> None:
+        """Name every pack about to be added, before any is.
+
+        Choosing which pack stores a type that several packs use counts
+        planned packs, so a worker started early already uses the storing
+        of a pack added after it. A planned pack leaves the plan when its
+        add starts, whether or not it succeeds."""
+        planned: dict[str, PackManifest] = {}
+        composed = {canonical_name(name) for name in self._records}
+        for entry in entries:
+            spec = entry if isinstance(entry, PackSpec) else PackSpec(manifest=entry)
+            try:
+                manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
+            except Exception:  # noqa: BLE001 - its add reports the failure
+                continue
+            name = canonical_name(manifest.execution_id)
+            if name not in composed:
+                planned[name] = manifest
+        self._planned_manifests = planned
+
     def order_pack_entries(self, entries: Sequence[PackSpec | Path | str]) -> tuple[PackSpec, ...]:
         """Resolve a complete candidate set and order providers before consumers."""
         specs = tuple(
@@ -3170,6 +3258,7 @@ class ServingComposer:
                 )
             candidates[name] = (manifest, spec)
             new[name] = spec
+        self.plan_pack_entries(specs)
         order, _generation = self._resolve_contract_inputs(candidates)
         return tuple(new[name] for name in order if name in new)
 
@@ -4512,6 +4601,40 @@ class ServingComposer:
             self._check_worker_execution(record.worker)
             return await record.worker.call_pack_route(route, data)
 
+    def _lookup_worker(self, node_type: str) -> Any:
+        owner = self._owners.get(node_type)
+        if owner is None:
+            return None
+        record = self._records.get(owner) or self._remotes.get(owner)
+        return None if record is None else record.worker
+
+    def lookup_marks(self, node_type: str) -> Mapping[str, LookupMark]:
+        """The marks of the lookups the pack that owns ``node_type`` declares."""
+        worker = self._lookup_worker(node_type)
+        return cast("Mapping[str, LookupMark]", getattr(worker, "lookup_marks", {}))
+
+    async def call_lookup(self, node_type: str, function: str, args: Sequence[object]) -> object:
+        """Call one declared lookup in the worker of the pack that owns ``node_type``.
+
+        The composition lock is held only to find the worker, so independent
+        calls never wait on each other or on a slow call. A sleeping worker is
+        started first; the time limit counts from when it can answer."""
+        async with self._mutate:
+            worker = self._lookup_worker(node_type)
+            if function not in getattr(worker, "lookup_marks", {}):
+                raise LookupCallError("lookup-unknown", f"{node_type} declares no {function}")
+            self._check_worker_execution(worker)
+        ensure_started = getattr(worker, "ensure_started", None)
+        if ensure_started is not None:
+            await ensure_started()
+        try:
+            async with asyncio.timeout(LOOKUP_TIME_LIMIT):
+                return await worker.call_lookup(function, args)
+        except TimeoutError:
+            raise LookupCallError("lookup-timeout") from None
+        except WorkerDied:
+            raise LookupCallError("lookup-failed", "the pack's worker stopped") from None
+
     async def read_frontend_module(self, pack: str, module: FrontendModule) -> bytes:
         async with self._mutate:
             record = self._records.get(pack)
@@ -5186,6 +5309,8 @@ class ServingComposer:
         self.validate_specs((spec,))
         spec = self._policy_group_spec(spec)
         manifest = load_manifest(resolve_manifest_path(spec.manifest), part=spec.part)
+        # From here the pack is either composed or not installed at all.
+        self._planned_manifests.pop(canonical_name(manifest.execution_id), None)
         offline_partner = self._runtime_offline and manifest.node_source == "remote-gateway-catalog"
         if offline_partner:
             spec = replace(spec, require_catalog=True)
@@ -5369,6 +5494,7 @@ class ServingComposer:
                     import_from_pack_root=True,
                     registry=current_registry,
                     saved_preview_vault=self._saved_preview_vault,
+                    type_providers=self._type_providers((manifest,)),
                 )
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
@@ -5399,6 +5525,7 @@ class ServingComposer:
                         import_from_pack_root=True,
                         registry=staged_registry,
                         saved_preview_vault=self._saved_preview_vault,
+                        type_providers=self._type_providers((manifest,)),
                     )
             except BaseException:
                 if tenant_proxy is not None:

@@ -1,4 +1,4 @@
-"""Compat suite for the extension door (DESIGN 3.6, M7).
+"""Compat suite for the extension door (DESIGN 3.6).
 
 dinkster_api.v1 is the one import path packs may rely on. These tests are the
 enforcement half of the promise:
@@ -277,7 +277,6 @@ GOLDEN_V1_SURFACE = (
     "CONTEXT_WINDOWS_TYPE",
     "CONTROL_NET_TYPE",
     "DICT_TYPE",
-    "FLOATS_TYPE",
     "GLIGEN_TYPE",
     "HISTOGRAM_TYPE",
     "PHOTOMAKER_TYPE",

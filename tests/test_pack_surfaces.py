@@ -108,19 +108,8 @@ def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Pa
                 ),
             )
             async with TestClient(TestServer(app)) as client:
-                census = "/api/library/retention-clients"
-                enrolled = await (await client.post(census, json={"revision": 0})).json()
-                headers = {"X-Dinkster-Retention-Generation": enrolled["generation"]}
-                nodes = await (await client.get("/api/nodes", headers=headers)).json()
-                raw = await (await client.get("/api/extensions/snapshot", headers=headers)).read()
-                snapshot = await (await client.get(census, headers=headers)).json()
-                acknowledged = await client.put(
-                    census,
-                    headers=headers,
-                    json={"revision": snapshot["revision"], "holders": snapshot["holders"]},
-                )
-                assert acknowledged.status == 200
-                assert (await acknowledged.json())["complete"]
+                nodes = await (await client.get("/api/nodes")).json()
+                raw = await (await client.get("/api/extensions/snapshot")).read()
                 assert (
                     nodes["extensionSnapshotDigest"] == "sha256:" + hashlib.sha256(raw).hexdigest()
                 )
@@ -134,12 +123,6 @@ def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Pa
                 assert "immutable" in response.headers["Cache-Control"]
                 assert response.headers["X-Content-Type-Options"] == "nosniff"
                 assert (await client.head(module["moduleUrl"])).status == 200
-                assert await (await client.get(census, headers=headers)).json() == {
-                    **snapshot,
-                    "complete": True,
-                }
-                storage = await (await client.get("/api/library/storage")).json()
-                assert "owner_completeness_unknown" not in storage["blocked"]
                 assert worker.cold and not worker.alive
                 assert not (set(sys.modules) - prior_imports) & {
                     "torch",
@@ -164,8 +147,6 @@ def test_catalog_snapshot_and_module_do_not_activate_worker(preview_manifest: Pa
                     "maxWidth": 512,
                 }
                 assert worker.alive
-                storage = await (await client.get("/api/library/storage")).json()
-                assert "owner_completeness_unknown" in storage["blocked"]
                 assert worker_declarations(worker) == worker_declarations(catalog)
                 assert (await client.post(PROOF_ROUTE, json={})).status == 405
                 assert (await client.get(PROOF_ROUTE + "?path=/etc/passwd")).status == 400

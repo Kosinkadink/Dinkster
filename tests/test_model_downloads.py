@@ -28,6 +28,8 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
     authenticated: bool,
     hidden_first: bool,
 ) -> None:
+    import asyncio
+
     from aiohttp.test_utils import TestClient, TestServer
     from dinkster_assets import AssetRef, AssetVault, LibraryStore, LocalAssetRef, MountTable
     from dinkster_assets.model import ModelHidden
@@ -198,7 +200,8 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
             with use_asset_folders(service.project_context("second")):
                 assert ref.read_bytes() == payload
             if not indexed:
-                table.scan("studio-checkpoint")
+                # Hiding queued the initial scan; wait for its publication, not a competing scan.
+                await asyncio.gather(*tuple(service._tasks))
             with use_asset_folders(service.project_context("first")):
                 assert table.bind_name(path.name, "model/checkpoint") is None
                 enriched = table.ref("mounts/studio-checkpoint/selected.safetensors")
@@ -257,6 +260,17 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
             )
             assert planned.status == 200
             assert (await planned.json())["status"] == "model-hidden"
+            for project, status in (("first", "model-hidden"), ("second", "local")):
+                present = await client.post(
+                    "/api/models/presence",
+                    json={
+                        "models": [{"name": path.name, "kind": "model/checkpoint"}],
+                        "project": project,
+                        "scope": "local",
+                    },
+                )
+                assert present.status == 200
+                assert (await present.json())["models"][0]["status"] == status
             assert service.projects.hidden_models("second") == ()
             restarted = start()
             try:
@@ -445,6 +459,83 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
             }
             assert len(requests) == 1
             assert local.read_bytes() == b"unhashed local model"
+            # Presence answers the same local questions in order, for many names at once,
+            # without planning or a source lookup.
+            presence = {
+                "project": "work",
+                "scope": "local",
+                "models": [
+                    {"name": body["name"], "kind": body["kind"]},
+                    {"name": "unknown.bin", "kind": "model/vae"},
+                    {"name": "family/clip.safetensors", "kind": "model/text-encoder"},
+                ],
+            }
+            response = await client.post(
+                "/api/models/presence", json=presence, headers={"Authorization": "Bearer viewer"}
+            )
+            assert response.status == 403
+            response = await client.post("/api/models/presence", json=presence)
+            assert response.status == 200
+            assert (await response.json())["models"] == [
+                {"status": "local", "name": body["name"], "kind": body["kind"]},
+                {
+                    "name": "unknown.bin",
+                    "kind": "model/vae",
+                    "status": "missing",
+                    "plannable": True,
+                },
+                {
+                    "name": "family/clip.safetensors",
+                    "kind": "model/text-encoder",
+                    "status": "missing",
+                    "plannable": False,
+                },
+            ]
+            response = await client.post(
+                "/api/models/presence", json={**presence, "project": "other"}
+            )
+            assert (await response.json())["models"][0] == {
+                "status": "folder-disabled",
+                "disabledLocations": ["studio"],
+                "detail": "Folder not enabled for this project",
+                "name": body["name"],
+                "kind": body["kind"],
+            }
+            # A second file of the same name means the name binds neither, which presence
+            # tells apart from a missing model so the editor never offers a third copy.
+            second = tmp_path / "models/diffusion_models/copy/flux1-dev.safetensors"
+            second.parent.mkdir()
+            second.write_bytes(b"second copy")
+            response = await client.post("/api/models/presence", json=presence)
+            assert (await response.json())["models"][:2] == [
+                {"name": body["name"], "kind": body["kind"], "status": "duplicate"},
+                {
+                    "name": "unknown.bin",
+                    "kind": "model/vae",
+                    "status": "missing",
+                    "plannable": True,
+                },
+            ]
+            second.unlink()
+            response = await client.post("/api/models/presence", json=presence)
+            assert (await response.json())["models"][0]["status"] == "local"
+            for invalid in (
+                {**presence, "models": []},
+                {**presence, "models": [{"name": "a.bin", "kind": "model/vae"}] * 257},
+                {**presence, "models": [{"name": "a.png", "kind": "media/image"}]},
+                {**presence, "models": [{"name": "", "kind": "model/vae"}]},
+                {**presence, "scope": "other"},
+                {key: value for key, value in presence.items() if key != "project"},
+            ):
+                response = await client.post("/api/models/presence", json=invalid)
+                assert response.status in {400, 403}
+            for project in ("../bad", "", "UPPER", "a" * 65):
+                response = await client.post(
+                    "/api/models/presence", json={**presence, "project": project}
+                )
+                assert response.status == 400
+                assert "project" in (await response.json())["error"]
+            assert len(requests) == 1
             from dinkster_assets import AssetVault, LibraryStore
             from dinkster_graph import Graph, GraphNode
             from dinkster_schema import AssetWidget, Input, NodeSchema, TypeExpr
@@ -1951,11 +2042,13 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
     assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
 
 
+@pytest.mark.parametrize("helper_storage", [False, True])
 @pytest.mark.parametrize("sandboxed", [False, True])
 def test_model_management_shares_locations_without_deleting_files(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool, helper_storage: bool
 ) -> None:
     from dinkster_assets import MountTable
+    from dinkster_library import LibraryClient
 
     from dinkster.model_settings import ModelSettings
     from dinkster.mounts_api import MountService
@@ -1965,21 +2058,25 @@ def test_model_management_shares_locations_without_deleting_files(
     home = tmp_path / "settings"
     monkeypatch.setenv("DINKSTER_HOME", str(home))
     home.mkdir()
-    (home / "model-settings.json").write_text(
-        json.dumps(
-            {
-                "version": 1,
-                "downloadLocation": None,
-                "locations": [],
-            }
+    a_helper = LibraryClient(tmp_path / "first") if helper_storage else None
+    b_helper = LibraryClient(tmp_path / "second") if helper_storage else None
+    if a_helper is not None:
+        a_helper.call(
+            "folders.models.patch",
+            revision=0,
+            patch={"locations": {}, "order": [], "downloadLocation": None},
         )
-    )
+    else:
+        (home / "model-settings.json").write_text(
+            json.dumps({"version": 1, "downloadLocation": None, "locations": []})
+        )
     first = MountService(
         MountTable(),
         tmp_path / "first" / "mounts.toml",
         allow_changes=True,
         restart_for_changes=sandboxed,
         shared_models=True,
+        library=a_helper,
     )
     second = MountService(
         MountTable(),
@@ -1987,6 +2084,7 @@ def test_model_management_shares_locations_without_deleting_files(
         allow_changes=True,
         restart_for_changes=sandboxed,
         shared_models=True,
+        library=b_helper,
     )
     models = tmp_path / "existing-comfy" / "checkpoints"
     models.mkdir(parents=True)
@@ -2084,7 +2182,7 @@ def test_model_management_shares_locations_without_deleting_files(
             )
             assert response.status == 409
             assert not (tmp_path / "must-not-exist").exists()
-            assert ModelSettings.load().to_wire() == settings
+            assert ModelSettings.load(a_helper).to_wire() == settings
             response = await a.put(
                 "/api/models/settings",
                 json={
@@ -2095,16 +2193,40 @@ def test_model_management_shares_locations_without_deleting_files(
             assert response.status == 200
             assert (await response.json())["settings"]["locations"] == []
             assert original.read_bytes() == b"existing model stays in place"
-            assert ModelSettings.load().locations == ()
+            assert ModelSettings.load(a_helper).locations == ()
             for client in (a, b):
                 response = await client.get("/api/models/settings?project=work")
                 assert response.status == 200
                 assert (await response.json())["locations"] == []
+            if a_helper is not None:
+                before = ModelSettings.load(a_helper)
+                legacy = home / "model-settings.json"
+                original_legacy = b"legacy settings must not become a fallback"
+                legacy.write_bytes(original_legacy)
+                for method in ("get", "put"):
+                    response = await getattr(a, method)(
+                        "/api/models/settings",
+                        **(
+                            {"json": {"settings": settings, "revision": before.revision}}
+                            if method == "put"
+                            else {}
+                        ),
+                    )
+                    assert response.status == 503
+                assert legacy.read_bytes() == original_legacy
+                live = first.model_settings()
+                assert live is not None and live.locations == ()
+                a_helper.close()
+                response = await a.get("/api/models/settings")
+                assert response.status == 503
         finally:
             for service in (first, second):
                 await service.close()
             for client in (a, b):
                 await client.close()
+            for helper in (a_helper, b_helper):
+                if helper is not None:
+                    helper.close()
 
     run_scenario(scenario())
 

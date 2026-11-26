@@ -1,16 +1,21 @@
-"""Engine-process ownership of a library, including unchanged older engines."""
+"""Direct-engine library ownership and managed working-state selection."""
 
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
 import os
+import re
 import runpy
+import subprocess
 import sys
 import time
 from collections.abc import Generator
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from typing import cast
+from uuid import uuid4
 
 _held: set[tuple[int, Path]] = set()
 
@@ -20,20 +25,20 @@ class LibraryInUse(RuntimeError):
 
 
 @contextmanager
-def engine_lock(root: Path, name: str) -> Generator[None]:
+def engine_lock(
+    root: Path, name: str, *, timeout: float = 0.0, filename: str = ".engine.lock"
+) -> Generator[None]:
     """Refuse competing engines; nested entry in the owning process is harmless."""
     root = root.resolve()
-    owner = (os.getpid(), root)
+    owner = (os.getpid(), root / filename)
     if owner in _held:
         yield
         return
     root.mkdir(parents=True, exist_ok=True)
-    with (root / ".engine.lock").open("a+b", buffering=0) as handle:
+    with (root / filename).open("a+b", buffering=0) as handle:
         if os.name == "nt":
             import msvcrt
 
-            if handle.tell() == 0:
-                handle.write(b"\0")
         started = time.monotonic()
         while True:
             try:
@@ -48,6 +53,9 @@ def engine_lock(root: Path, name: str) -> Generator[None]:
             except OSError as exc:
                 if exc.errno not in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
                     raise
+                if time.monotonic() - started < timeout:
+                    time.sleep(0.01)
+                    continue
                 handle.seek(1)
                 holder = "another engine"
                 try:
@@ -78,17 +86,222 @@ def engine_lock(root: Path, name: str) -> Generator[None]:
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def engine_state(
+    root: Path,
+    library: Path,
+    snapshot: int,
+    *,
+    engine: str,
+    readers: tuple[str, ...],
+) -> Generator[Path]:
+    """Select working state using the tools' code before importing any engine."""
+    library = library.resolve()
+    if not root.is_absolute() or ".." in root.parts or type(snapshot) is not int or snapshot < 1:
+        raise ValueError("engine state needs an absolute directory and a positive snapshot")
+    if any(path.is_symlink() or path.is_junction() for path in (root, *root.parents)):
+        raise ValueError("engine state must not contain linked directories")
+    if root.is_relative_to(library) or library.is_relative_to(root):
+        raise ValueError("engine state must not overlap the library")
+    with ExitStack() as lifetime, ExitStack() as selection:
+        selection.enter_context(engine_lock(root, "managed state selection", timeout=3))
+        marker = root / "state.json"
+        pending = root / ".state.pending"
+        if marker.is_symlink() or marker.is_junction():
+            raise ValueError("engine state selection must not be linked")
+        selected = "working-" + uuid4().hex
+        record: dict[str, object] = {
+            "format": "dinkster.engine-state-selection/1",
+            "library": str(library),
+        }
+        if marker.exists():
+            previous: object = json.loads(marker.read_text("utf-8"))
+            if not isinstance(previous, dict):
+                raise ValueError("invalid engine state selection")
+            record = cast("dict[str, object]", previous)
+            stored_library = record.get("library")
+            last_snapshot = record.get("lastSnapshot")
+            directory = record.get("directory")
+            stored_engine = record.get("engine")
+            if (
+                record.get("format") != "dinkster.engine-state-selection/1"
+                or not isinstance(stored_library, str)
+                or not Path(stored_library).is_absolute()
+                or type(last_snapshot) is not int
+                or last_snapshot < 1
+                or not isinstance(directory, str)
+                or re.fullmatch(r"working-[a-f0-9]{32}", directory) is None
+                or not isinstance(stored_engine, str)
+                or re.fullmatch(r"sha256:[a-f0-9]{64}", stored_engine) is None
+            ):
+                raise ValueError("invalid engine state selection")
+            stored_path = Path(stored_library)
+            if stored_path.resolve() != library:
+                try:
+                    same_library = stored_path.samefile(library)
+                except FileNotFoundError:
+                    same_library = False
+                if not same_library:
+                    raise ValueError("engine state belongs to another library")
+            if snapshot >= last_snapshot and stored_engine in readers:
+                selected = directory
+        elif any(
+            path.name not in {".engine.lock", pending.name}
+            and re.fullmatch(r"\.working-[a-f0-9]{32}\.lock", path.name) is None
+            for path in root.iterdir()
+        ):
+            raise ValueError("existing engine state has no snapshot selection")
+        working = root / selected
+        if working.is_symlink() or working.is_junction():
+            raise ValueError("engine working state must not be linked")
+        if (
+            pending.is_symlink()
+            or pending.is_junction()
+            or (pending.exists() and (not pending.is_file() or pending.stat().st_nlink != 1))
+        ):
+            raise ValueError("pending engine state selection must be a regular file")
+        try:
+            lifetime.enter_context(
+                engine_lock(root, "managed working state", filename=f".{selected}.lock")
+            )
+        except LibraryInUse:
+            # An overlapping engine keeps its files and lock until it exits.
+            selected = "working-" + uuid4().hex
+            working = root / selected
+            lifetime.enter_context(
+                engine_lock(root, "managed working state", filename=f".{selected}.lock")
+            )
+        record.update(lastSnapshot=snapshot, directory=selected, engine=engine)
+        # Publish before stores open: a killed first use or downgrade can retry
+        # its selected empty directory without touching the prior working files.
+        with pending.open("w", encoding="utf-8") as stream:
+            json.dump(record, stream, ensure_ascii=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending, marker)
+        if os.name != "nt":
+            descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        working.mkdir(mode=0o700, exist_ok=True)
+        selection.close()
+        yield working
+
+
+def prepare_records(library: Path, state: Path) -> tuple[str, str]:
+    """Publish with tools before attaching the engine's library helper."""
+    supplied: object = json.loads(os.environ.get("DINKSTER_ENGINE_IDENTITY", "null"))
+    if supplied is None:
+        environment = hashlib.sha256(str(Path(sys.prefix).resolve()).encode()).hexdigest()[:32]
+    elif isinstance(supplied, dict):
+        environment = cast("dict[str, object]", supplied).get("environment")
+        if not isinstance(environment, str) or re.fullmatch(r"[a-f0-9]{32}", environment) is None:
+            raise ValueError("invalid managed environment identity")
+    else:
+        raise ValueError("invalid managed environment identity")
+    engine = hashlib.sha256((environment + "\n" + str(state.resolve())).encode()).hexdigest()[:32]
+    account = Path(os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")).expanduser()
+    journal = library / "record-migration.json"
+    publication: object = json.loads(journal.read_text("utf-8")) if journal.is_file() else None
+    complete = (
+        isinstance(publication, dict)
+        and cast("dict[str, object]", publication).get("complete") is True
+    )
+    if (
+        not complete
+        or not (library / "library-format.json").is_file()
+        or (account / "model-settings-migration.json").exists()
+    ):
+        configured = os.environ.get("DINKSTER_LIBRARY_COMMAND")
+        command: object = (
+            json.loads(configured)
+            if configured is not None
+            else [sys.executable, "-m", "dinkster_library"]
+        )
+        if (
+            not isinstance(command, list)
+            or not command
+            or any(
+                not isinstance(value, str) or not value for value in cast("list[object]", command)
+            )
+        ):
+            raise ValueError("DINKSTER_LIBRARY_COMMAND must be a JSON command array")
+        subprocess.run(
+            [
+                *cast("list[str]", command),
+                "--migrate-records",
+                "--library",
+                str(library),
+                "--engine",
+                engine,
+                "--engine-state",
+                str(state),
+                "--environment",
+                environment,
+            ],
+            check=True,
+        )
+    return environment, engine
+
+
 if __name__ == "__main__":
     # The selected interpreter runs this stdlib-only entry before importing any
-    # engine version. A modern engine reuses this exact in-process lock owner.
+    # engine version, including direct engines that do not carry this lock.
     sys.modules["dinkster_store.library_lock"] = sys.modules[__name__]
     library, label, *arguments = sys.argv[1:]
-    sys.argv = ["dinkster-serve", *arguments]
     compatibility = runpy.run_path(str(Path(__file__).with_name("library_compatibility.py")))
     try:
-        with engine_lock(Path(library), label) if library else nullcontext():
+        with ExitStack() as stack:
+            managed_state = arguments[:1] == ["--engine-state"]
+            capabilities = ("library-helper/1",) if managed_state else ()
             if library:
-                compatibility["check_library"](Path(library))
+                compatibility["check_library"](Path(library), capabilities=capabilities)
+            if managed_state:
+                try:
+                    if len(arguments) < 5 or arguments[4] != "--" or not library:
+                        raise ValueError(
+                            "managed state requires a library, directory, snapshot and readers"
+                        )
+                    identity: object = json.loads(arguments[3])
+                    if not isinstance(identity, dict):
+                        raise ValueError("invalid engine state readers")
+                    identity = cast("dict[str, object]", identity)
+                    engine, raw_readers = identity.get("engine"), identity.get("readers")
+                    if (
+                        not isinstance(engine, str)
+                        or not isinstance(raw_readers, list)
+                        or any(
+                            not isinstance(value, str)
+                            or re.fullmatch(r"sha256:[a-f0-9]{64}", value) is None
+                            for value in cast("list[object]", raw_readers)
+                        )
+                        or engine not in raw_readers
+                    ):
+                        raise ValueError("invalid engine state readers")
+                    readers = tuple(cast("list[str]", raw_readers))
+                    forwarded = arguments[5:]
+                    if any(value.split("=", 1)[0] == "--engine-state-root" for value in forwarded):
+                        raise ValueError("managed engine state cannot be overridden")
+                    working = stack.enter_context(
+                        engine_state(
+                            Path(arguments[1]),
+                            Path(library),
+                            int(arguments[2]),
+                            engine=engine,
+                            readers=readers,
+                        )
+                    )
+                    prepare_records(Path(library), working)
+                    arguments = [*forwarded, "--engine-state-root", str(working)]
+                except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                    raise SystemExit(f"Cannot prepare engine state: {exc}") from exc
+            if library:
+                if not managed_state:
+                    stack.enter_context(engine_lock(Path(library), label))
+                compatibility["check_library"](Path(library), capabilities=capabilities)
+            sys.argv = ["dinkster-serve", *arguments]
             runpy.run_module("dinkster.serve", run_name="__main__", alter_sys=True)
     except (LibraryInUse, compatibility["LibraryCompatibilityError"]) as exc:
         raise SystemExit(str(exc)) from exc

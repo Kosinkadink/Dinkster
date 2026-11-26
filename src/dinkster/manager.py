@@ -1819,6 +1819,42 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
         raise InstallError("runtime catalog preparation failed; repair findings and retry")
 
 
+def _cmd_catalog_nodes(args: argparse.Namespace) -> None:
+    """Print the node entries a sealed snapshot's catalogs can supply, without composing."""
+    from dinkster_registry import Lockfile
+    from dinkster_schema import NodeSchema, schema_signature, schema_to_wire
+    from dinkster_workers.catalog import read_catalog
+
+    from .generation_packs import generation_pack_specs
+
+    lock = Lockfile.from_record_json(
+        (args.generation / "dinkster.lock").read_text(encoding="utf-8")
+    )
+    schemas: dict[str, NodeSchema] = {}
+    owners: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for spec in generation_pack_specs(args.generation):
+        if not spec.require_catalog:
+            continue
+        manifest = load_manifest(spec.manifest, part=spec.part)
+        catalog = read_catalog(manifest)
+        if catalog is None:
+            continue
+        for node_type, schema in catalog.schemas.items():
+            schemas[node_type] = schema
+            pack = spec.attribute(node_type) if spec.attribute is not None else manifest.name
+            owners[node_type] = (pack, tuple((catalog.body_arms or {}).get(node_type, ())))
+    nodes = {
+        node_type: {
+            **schema_to_wire(schema, replacement_schemas=schemas),
+            "pack": owners[node_type][0],
+            "executionArms": list(owners[node_type][1]),
+            "signature": schema_signature(schema),
+        }
+        for node_type, schema in schemas.items()
+    }
+    json.dump({"packs": sorted(entry.pack for entry in lock.packs), "nodes": nodes}, sys.stdout)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="dinkster-pack",
@@ -1886,7 +1922,7 @@ def main() -> None:
     security_status = commands.add_parser(
         "security-status", help="inspect cached security evidence for a sealed snapshot"
     )
-    security_status.add_argument("--generation", type=Path, required=True)
+    security_status.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     security_status.add_argument("--pack", help="show details for one installed pack")
     security_status.set_defaults(handler=_cmd_security_status)
 
@@ -1894,7 +1930,7 @@ def main() -> None:
         "plan-security-repair",
         help="compute an approval-required repair without acquiring payloads",
     )
-    repair.add_argument("--generation", type=Path, required=True)
+    repair.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     repair_target = repair.add_mutually_exclusive_group(required=True)
     repair_target.add_argument("--pack")
     repair_target.add_argument(
@@ -1995,11 +2031,11 @@ def main() -> None:
     inference = commands.add_parser(
         "prepare-inference", help="record inference membership in an unsealed snapshot"
     )
-    inference.add_argument("--generation", type=Path, required=True)
+    inference.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     inference.add_argument("--in-process-pack", action="append", default=[])
     inference.add_argument("--isolated-inference-pack", action="append", default=[])
     inference.add_argument("--local-build", action="store_true")
-    inference.add_argument("--source-generation", type=Path)
+    inference.add_argument("--source-generation", type=Path, metavar="SOURCE_SNAPSHOT")
     inference.add_argument("--wheel-store", type=Path)
     inference.add_argument("--uv-cache", type=Path)
     inference.add_argument("--uv", default="uv")
@@ -2032,10 +2068,19 @@ def main() -> None:
         )
         if name == "prepare-catalogs":
             check.add_argument(
-                "--generation", type=Path, help="prepare only this unsealed engine snapshot"
+                "--generation",
+                type=Path,
+                metavar="SNAPSHOT",
+                help="prepare only this unsealed engine snapshot",
             )
             check.add_argument("--in-process-pack", action="append", default=[])
         check.set_defaults(handler=handler)
+
+    catalog_nodes = commands.add_parser(
+        "catalog-nodes", help="print the node entries a sealed snapshot's catalogs supply"
+    )
+    catalog_nodes.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
+    catalog_nodes.set_defaults(handler=_cmd_catalog_nodes)
 
     def add_plan_apply_arguments(command: argparse.ArgumentParser) -> None:
         """Every mutating command carries the plan/apply controls."""

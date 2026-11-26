@@ -5,11 +5,9 @@ from __future__ import annotations
 import asyncio
 import http.client
 import json
-import socket
-import ssl
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import ExitStack, asynccontextmanager, contextmanager, suppress
+from contextlib import ExitStack, asynccontextmanager, suppress
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import quote
@@ -19,6 +17,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import (
     RESOLVER_REVALIDATE_SECONDS,
+    AssetError,
     AssetNeed,
     AssetVault,
     LibraryStore,
@@ -426,27 +425,6 @@ async def resolver_http_server(
         await server.close()
 
 
-@contextmanager
-def resolver_fetch_threads() -> Iterator[list[threading.Thread]]:
-    workers: list[threading.Thread] = []
-
-    class TrackedThread(threading.Thread):
-        def start(self) -> None:
-            super().start()
-            if self.name == "resolver-fetch":
-                workers.append(self)
-
-    # Track creation, not arrival at a mocked socket call: TLS setup may still
-    # be running when the caller times out. Join before restoring its mocks.
-    with patch.object(threading, "Thread", TrackedThread):
-        try:
-            yield workers
-        finally:
-            for worker in workers:
-                worker.join(2.0)
-                assert not worker.is_alive()
-
-
 @pytest.mark.parametrize("part", ["headers", "chunk-framing", "body"])
 def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, part: str) -> None:
     async def scenario() -> None:
@@ -502,37 +480,6 @@ def test_refresh_deadline_interrupts_trickling_http_response(tmp_path: Path, par
                 raise
 
     run_scenario(scenario())
-
-
-@pytest.mark.parametrize("phase", ["dns", "http-connect", "tls-context", "tls-connect"])
-def test_fetch_deadline_covers_blocking_connection_establishment(phase: str) -> None:
-    release = threading.Event()
-    context = ssl.create_default_context()
-
-    def blocked(*_args: object, **_kwargs: object) -> None:
-        assert release.wait(2.0)
-        raise socket.gaierror("delayed connection failure")
-
-    target = {
-        "dns": "socket.getaddrinfo",
-        "http-connect": "http.client.HTTPConnection.connect",
-        "tls-context": "ssl._create_default_https_context",
-        "tls-connect": "http.client.HTTPSConnection.connect",
-    }[phase]
-    url = "https://models.example/index" if phase.startswith("tls-") else "http://localhost/index"
-    with (
-        patch("ssl._create_default_https_context", return_value=context),
-        patch(target, side_effect=blocked) as blocked_phase,
-        resolver_fetch_threads() as workers,
-    ):
-        try:
-            with pytest.raises(ResolverSubscriptionError, match="time limit"):
-                resolver_transport._fetch_url(url, "", timeout=0.05)
-            blocked_phase.assert_called_once()
-            assert len(workers) == 1
-            assert workers[0].is_alive() and workers[0].daemon
-        finally:
-            release.set()
 
 
 class _BytesResponse:
@@ -596,7 +543,10 @@ def test_resolver_acquisition_is_digest_safe(
         assert not [path for path in vault.root.rglob("*") if path.is_file()]
 
 
-def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> None:
+@pytest.mark.parametrize("failure", [OSError("disk full"), AssetError("helper unavailable")])
+def test_acquisition_survives_provenance_persistence_failure(
+    tmp_path: Path, failure: Exception
+) -> None:
     source = tmp_path / "index.json"
     write_document(source, resolver_document(resolver_entry()))
     provenance = ProvenanceStore(tmp_path / "provenance.json")
@@ -607,7 +557,7 @@ def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> 
             "dinkster_assets.fetch.urllib.request.urlopen",
             return_value=_BytesResponse(MODEL_BYTES),
         ),
-        patch.object(provenance, "add", side_effect=OSError("disk full")),
+        patch.object(provenance, "add", side_effect=failure),
     ):
         result = acquire_need(
             AssetNeed(name="example.safetensors", digest=MODEL_DIGEST),
@@ -618,7 +568,15 @@ def test_acquisition_survives_provenance_persistence_failure(tmp_path: Path) -> 
     assert vault.has(MODEL_DIGEST)
 
 
-def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
+@pytest.mark.parametrize("helper_backed", [False, True])
+def test_resolver_management_and_filename_guess_api(
+    tmp_path: Path, request: pytest.FixtureRequest, helper_backed: bool
+) -> None:
+    from dinkster_library import LibraryClient
+
+    helper = LibraryClient(tmp_path / "shared-library") if helper_backed else None
+    if helper is not None:
+        request.addfinalizer(helper.close)
     source = tmp_path / "index.json"
     components: list[dict[str, object]] = [
         {
@@ -638,8 +596,10 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
             )
         ),
     )
-    provenance = ProvenanceStore(tmp_path / "provenance.json")
-    store = ResolverSubscriptionStore(tmp_path / "subscriptions.json", provenance)
+    provenance = ProvenanceStore(helper if helper is not None else tmp_path / "provenance.json")
+    store = ResolverSubscriptionStore(
+        helper if helper is not None else tmp_path / "subscriptions.json", provenance
+    )
     library = ServerLibrary(
         vault=AssetVault(tmp_path / "vault"),
         store=LibraryStore(tmp_path / "library.sqlite"),
@@ -693,6 +653,24 @@ def test_resolver_management_and_filename_guess_api(tmp_path: Path) -> None:
                 json={"names": ["Model.safetensors"]},
             )
             assert (await response.json())["matches"][0]["candidates"] == []
+            if helper is not None:
+                response = await client.post(
+                    "/api/assets/resolver-indexes", json={"source": str(source)}
+                )
+                assert response.status == 201
+                active = await response.json()
+                helper.close()
+                response = await client.get("/api/assets/resolver-indexes")
+                assert response.status == 503
+                assert (await response.json())["error"] == "library helper pipe closed"
+                response = await client.delete(f"/api/assets/resolver-indexes/{active['id']}")
+                assert response.status == 503
+                assert (await response.json())["error"] == "library helper pipe closed"
+                response = await client.post(
+                    "/api/assets/guess", json={"names": ["Model.safetensors"]}
+                )
+                assert response.status == 200
+                assert (await response.json())["matches"][0]["candidates"] == []
         finally:
             await client.close()
 

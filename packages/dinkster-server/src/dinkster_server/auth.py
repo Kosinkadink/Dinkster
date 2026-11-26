@@ -27,11 +27,13 @@ from typing import Protocol, cast
 
 from aiohttp import web
 from aiohttp.web_urldispatcher import ResourceRoute, SystemRoute
+from dinkster_library import LibraryClient, LibraryError
 from dinkster_token_verifier import TokenVerifier  # pyright: ignore[reportMissingTypeStubs]
 
 from .federated_assets_v1 import ErrorResponseV1, ErrorV1, encode_error_response
 
 _BEARER_TOKEN = re.compile(r"[A-Za-z0-9\-._~+/]+=*")
+_DELEGATION_TOKEN_PREFIX = "dinkster_delegate_"
 _AUTHENTICATED = object()
 WS_TICKET_TTL_SECONDS = 30
 
@@ -243,15 +245,40 @@ class CompositeAuthenticator:
         )
 
 
-class PrincipalPermissionStore:
-    """Explicit agent permission overrides, optionally persisted in SQLite."""
+def _authority_request(
+    library: LibraryClient, operation: str, **arguments: object
+) -> dict[str, object]:
+    try:
+        return library.call(operation, **arguments)
+    except LibraryError as exc:
+        if exc.code == "stale":
+            raise web.HTTPConflict(
+                text='{"error":"permissions-changed"}', content_type="application/json"
+            ) from exc
+        if exc.code == "limit":
+            raise web.HTTPTooManyRequests(
+                text='{"error":"delegation-limit"}', content_type="application/json"
+            ) from exc
+        raise web.HTTPServiceUnavailable(
+            text='{"error":"authorization-store-unavailable"}', content_type="application/json"
+        ) from exc
 
-    def __init__(self, path: str | Path | None = None) -> None:
+
+class PrincipalPermissionStore:
+    """Explicit agent permission overrides in memory, SQLite or a library helper."""
+
+    def __init__(self, path: str | Path | LibraryClient | None = None) -> None:
         self.path = path
+        self._helper = path if isinstance(path, LibraryClient) else None
+        if self._helper is not None and "permissions" not in cast(
+            "list[str]", self._helper.hello["capabilities"]
+        ):
+            raise ValueError("library helper does not support permissions")
         self._lock = threading.Lock()
         self._values: dict[str, dict[str, bool]] = {}
+        self._revisions: dict[str, int] = {}
         self._conn: sqlite3.Connection | None = None
-        if path is not None:
+        if path is not None and not isinstance(path, LibraryClient):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             self._conn = sqlite3.connect(str(path), check_same_thread=False)
             with self._lock, self._conn:
@@ -273,10 +300,23 @@ class PrincipalPermissionStore:
                 self._conn.close()
                 self._conn = None
 
+    def _read_shared(self, principal_id: str) -> dict[str, bool]:
+        assert self._helper is not None
+        record = cast(
+            "dict[str, object]",
+            _authority_request(self._helper, "permissions.get", principalId=principal_id)[
+                "permissions"
+            ],
+        )
+        self._revisions[principal_id] = cast(int, record["revision"])
+        return cast("dict[str, bool]", record["values"])
+
     def categories(self, principal_id: str) -> dict[str, bool]:
         resolved = dict(AGENT_PERMISSION_DEFAULTS)
         with self._lock:
-            if self._conn is None:
+            if self._helper is not None:
+                resolved.update(self._read_shared(principal_id))
+            elif self._conn is None:
                 resolved.update(self._values.get(principal_id, {}))
             else:
                 rows = self._conn.execute(
@@ -288,6 +328,21 @@ class PrincipalPermissionStore:
 
     def update(self, principal_id: str, changes: Mapping[str, bool]) -> None:
         with self._lock:
+            if self._helper is not None:
+                if principal_id not in self._revisions:
+                    self._read_shared(principal_id)
+                record = cast(
+                    "dict[str, object]",
+                    _authority_request(
+                        self._helper,
+                        "permissions.patch",
+                        principalId=principal_id,
+                        revision=self._revisions[principal_id],
+                        patch=dict(changes),
+                    )["permissions"],
+                )
+                self._revisions[principal_id] = cast(int, record["revision"])
+                return
             if self._conn is None:
                 self._values.setdefault(principal_id, {}).update(changes)
                 return
@@ -340,24 +395,30 @@ def principal_for(request: web.Request) -> Principal:
     principal = request[_RAW_PRINCIPAL_KEY]
     if principal.expires_at is not None and principal.expires_at <= time.time():
         return replace(principal, grants={})
-    if principal.delegation_id is not None:
-        authorization_error = request.app[DELEGATIONS_KEY].authorization_error(
-            principal.delegation_id
-        )
-        if authorization_error is not None:
-            return replace(principal, grants={}, authorization_error=authorization_error)
-    if principal.delegation_id is not None and not principal.local:
-        user = request.app[USER_SESSIONS_KEY].current(principal.principal_id)
-        if user is None:
-            return replace(principal, grants={}, authorization_error="user-session-required")
-        principal = replace(
-            principal,
-            grants={
-                scope: user.grants.get(scope, frozenset()) - {"principals:manage"}
-                for scope in principal.grants
-            },
-        )
-    return request.app[PRINCIPAL_PERMISSIONS_KEY].apply(principal)
+    try:
+        if principal.delegation_id is not None:
+            authorization_error = request.app[DELEGATIONS_KEY].authorization_error(
+                principal.delegation_id
+            )
+            if authorization_error is not None:
+                return replace(principal, grants={}, authorization_error=authorization_error)
+        if principal.delegation_id is not None and not principal.local:
+            user = request.app[USER_SESSIONS_KEY].current(principal.principal_id)
+            if user is None:
+                return replace(principal, grants={}, authorization_error="user-session-required")
+            principal = replace(
+                principal,
+                grants={
+                    scope: user.grants.get(scope, frozenset()) - {"principals:manage"}
+                    for scope in principal.grants
+                },
+            )
+        return request.app[PRINCIPAL_PERMISSIONS_KEY].apply(principal)
+    except web.HTTPServiceUnavailable:
+        if request.headers.get("Upgrade", "").lower() != "websocket":
+            raise
+        # Streams must withdraw authority, not write an HTTP error into a WebSocket.
+        return replace(principal, grants={}, authorization_error="authorization-store-unavailable")
 
 
 def authorization_reason(principal: Principal) -> str:
@@ -659,10 +720,17 @@ USER_SESSIONS_KEY: web.AppKey[VerifiedUserSessions] = web.AppKey("verified_user_
 class DelegationStore:
     """Durable hash-only credentials with owner permissions stored by principal."""
 
-    def __init__(self, path: str | Path | None = None) -> None:
-        if path is not None:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, path: str | Path | LibraryClient | None = None) -> None:
+        self._helper = path if isinstance(path, LibraryClient) else None
         self._lock = threading.Lock()
+        self._conn: sqlite3.Connection | None = None
+        if self._helper is not None:
+            if "delegations" not in cast("list[str]", self._helper.hello["capabilities"]):
+                raise ValueError("library helper does not support delegations")
+            return
+        if path is not None:
+            assert not isinstance(path, LibraryClient)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(
             str(path) if path is not None else ":memory:", check_same_thread=False
         )
@@ -686,65 +754,109 @@ class DelegationStore:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+
+    def _find(self, identifier: str, *, credential: bool = False) -> dict[str, object] | None:
+        with self._lock:
+            if self._helper is not None:
+                return cast(
+                    "dict[str, object] | None",
+                    _authority_request(
+                        self._helper,
+                        "delegations.lookup" if credential else "delegations.get",
+                        **({"credentialHash": identifier} if credential else {"id": identifier}),
+                    )["delegation"],
+                )
+            assert self._conn is not None
+            row = self._conn.execute(
+                "SELECT id, principal_id AS principalId, scope, session_id AS sessionId, "
+                "display_name AS displayName, expires_at AS expiresAt, revoked_at AS revokedAt "
+                "FROM delegations WHERE " + ("credential_hash" if credential else "id") + " = ?",
+                (identifier,),
+            ).fetchone()
+            return dict(row) if row is not None else None
 
     def authorization_error(self, delegation_id: str) -> str | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT expires_at, revoked_at FROM delegations WHERE id = ?",
-                (delegation_id,),
-            ).fetchone()
-        if row is None or (row["expires_at"] is not None and row["expires_at"] <= time.time()):
+        row = self._find(delegation_id)
+        expiry = cast("float | None", row.get("expiresAt")) if row else None
+        if row is None or (expiry is not None and expiry <= time.time()):
             return "authorization-expired"
-        return "delegation-revoked" if row["revoked_at"] is not None else None
+        return "delegation-revoked" if row.get("revokedAt") is not None else None
 
     def authenticate(self, token: str) -> Principal | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM delegations WHERE credential_hash = ?",
-                (hashlib.sha256(token.encode()).hexdigest(),),
-            ).fetchone()
-        if row is None or (row["expires_at"] is not None and row["expires_at"] <= time.time()):
+        row = self._find(hashlib.sha256(token.encode()).hexdigest(), credential=True)
+        expiry = cast("float | None", row.get("expiresAt")) if row else None
+        if row is None or (expiry is not None and expiry <= time.time()):
             return None
         return Principal(
-            row["principal_id"],
-            {row["scope"]: frozenset()},
+            cast(str, row["principalId"]),
+            {cast(str, row["scope"]): frozenset()},
             kind="agent",
-            delegation_id=row["id"],
-            session_id=row["session_id"],
-            display_name=row["display_name"],
-            expires_at=row["expires_at"],
-            authorization_error=("delegation-revoked" if row["revoked_at"] is not None else None),
+            delegation_id=cast(str, row["id"]),
+            session_id=cast("str | None", row.get("sessionId")),
+            display_name=cast(str, row["displayName"]),
+            expires_at=expiry,
+            authorization_error=(
+                "delegation-revoked" if row.get("revokedAt") is not None else None
+            ),
         )
 
     def list(self, principal_id: str) -> list[dict[str, object]]:
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT * FROM delegations WHERE principal_id = ? AND revoked_at IS NULL"
-                " ORDER BY created_at, id",
-                (principal_id,),
-            ).fetchall()
+            rows: list[dict[str, object]] = []
+            if self._helper is not None:
+                cursor = None
+                while True:
+                    page = _authority_request(
+                        self._helper, "delegations.list", principalId=principal_id, cursor=cursor
+                    )
+                    rows.extend(cast("list[dict[str, object]]", page["items"]))
+                    cursor = cast("str | None", page["cursor"])
+                    if cursor is None:
+                        break
+            else:
+                assert self._conn is not None
+                rows = [
+                    dict(row)
+                    for row in self._conn.execute(
+                        "SELECT id, agent_principal_id AS agentPrincipalId, "
+                        "display_name AS displayName, scope, session_id AS sessionId, "
+                        "created_at AS createdAt, expires_at AS expiresAt "
+                        "FROM delegations WHERE principal_id = ? AND revoked_at IS NULL "
+                        "ORDER BY created_at, id",
+                        (principal_id,),
+                    ).fetchall()
+                ]
         return [
             {
                 "id": row["id"],
-                "agentPrincipalId": row["agent_principal_id"],
-                "displayName": row["display_name"],
+                "agentPrincipalId": row["agentPrincipalId"],
+                "displayName": row["displayName"],
                 "scope": row["scope"],
-                "sessionId": row["session_id"],
-                "createdAt": row["created_at"],
+                "sessionId": row.get("sessionId"),
+                "createdAt": row["createdAt"],
                 "kind": "agent",
-                **({"expiresAt": row["expires_at"]} if row["expires_at"] is not None else {}),
+                **({"expiresAt": row["expiresAt"]} if row.get("expiresAt") is not None else {}),
             }
             for row in rows
         ]
 
     def revoke(self, principal_id: str, delegation_id: str) -> None:
-        with self._lock, self._conn:
-            self._conn.execute(
-                "UPDATE delegations SET revoked_at = ? WHERE principal_id = ? AND id = ?"
-                " AND revoked_at IS NULL",
-                (time.time(), principal_id, delegation_id),
-            )
+        with self._lock:
+            if self._helper is not None:
+                _authority_request(
+                    self._helper, "delegations.revoke", principalId=principal_id, id=delegation_id
+                )
+                return
+            assert self._conn is not None
+            with self._conn:
+                self._conn.execute(
+                    "UPDATE delegations SET revoked_at = ? WHERE principal_id = ? AND id = ?"
+                    " AND revoked_at IS NULL",
+                    (time.time(), principal_id, delegation_id),
+                )
 
     def mint(
         self,
@@ -754,10 +866,33 @@ class DelegationStore:
         session_id: str | None,
         lifetime: int | None = None,
     ) -> dict[str, object]:
-        token = "dinkster_delegate_" + secrets.token_urlsafe(32)
+        token = _DELEGATION_TOKEN_PREFIX + secrets.token_urlsafe(32)
         delegation_id = secrets.token_urlsafe(16)
         now = time.time()
         expiry = now + lifetime if lifetime is not None else None
+        if self._helper is not None:
+            with self._lock:
+                _authority_request(
+                    self._helper,
+                    "delegations.create",
+                    record={
+                        "id": delegation_id,
+                        "principalId": principal.principal_id,
+                        "agentPrincipalId": "agent:" + delegation_id,
+                        "credentialHash": hashlib.sha256(token.encode()).hexdigest(),
+                        "scope": scope,
+                        "sessionId": session_id,
+                        "displayName": name,
+                        "createdAt": now,
+                        **({"expiresAt": expiry} if expiry is not None else {}),
+                    },
+                )
+            return {
+                "token": token,
+                "id": delegation_id,
+                **({"expiresAt": expiry} if expiry is not None else {}),
+            }
+        assert self._conn is not None
         with self._lock, self._conn:
             self._conn.execute("BEGIN IMMEDIATE")
             total, owned = self._conn.execute(
@@ -884,6 +1019,8 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "training:read"
     if path == "/api/environment":
         return "assets:read"
+    if path == "/api/account" or path.startswith("/api/account/"):
+        return "settings:read" if read else "settings:write"
     if path == "/api/security" or path == "/api/security/answers":
         return "settings:read" if read else "settings:write"
     if path.startswith("/api/settings"):
@@ -910,7 +1047,12 @@ def required_capability(method: str, path: str) -> str | object | None:
         return "settings:write"
     if path.startswith("/api/models/downloads"):
         return "assets:read" if read or path.endswith("/plan") else "assets:write"
-    if path in {"/api/assets/guess", "/api/workflows/plan", "/api/mounts/resolve-path"}:
+    if path in {
+        "/api/assets/guess",
+        "/api/models/presence",
+        "/api/workflows/plan",
+        "/api/mounts/resolve-path",
+    }:
         return "assets:read"
     if read and path == "/api/output-profiles/model":
         return "assets:read"
@@ -967,7 +1109,8 @@ def install_auth(
             scheme, separator, token = request.headers.get("Authorization", "").partition(" ")
             principal = None
             if separator and scheme.lower() == "bearer" and _BEARER_TOKEN.fullmatch(token):
-                principal = request.app[DELEGATIONS_KEY].authenticate(token)
+                if token.startswith(_DELEGATION_TOKEN_PREFIX):
+                    principal = request.app[DELEGATIONS_KEY].authenticate(token)
                 if principal is None:
                     principal = await authenticator.authenticate(token)
                     if principal is not None:
@@ -1043,7 +1186,12 @@ def install_auth(
                 and principal.delegation_id is not None
             ):
                 error["delegationId"] = principal.delegation_id
-            return web.json_response(error, status=403)
+            return web.json_response(
+                error,
+                status=503
+                if principal.authorization_error == "authorization-store-unavailable"
+                else 403,
+            )
         if (
             capability is None
             and authenticator is not None
@@ -1083,4 +1231,26 @@ def install_auth(
             )
         return await handler(request)
 
+    @web.middleware
+    async def federated_authority_errors(
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        try:
+            return await handler(request)
+        except web.HTTPServiceUnavailable as exc:
+            route = request.match_info.route
+            resource = route.resource if isinstance(route, ResourceRoute) else None
+            if (
+                isinstance(exc.__cause__, LibraryError)
+                and resource is not None
+                and resource.canonical in federated_asset_paths
+            ):
+                return _federated_error(
+                    "service-unavailable", "the service is temporarily unavailable", 503
+                )
+            raise
+
+    if federated_asset_paths:
+        app.middlewares.append(federated_authority_errors)
     app.middlewares.append(authenticate)

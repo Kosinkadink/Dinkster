@@ -65,6 +65,7 @@ from dinkster_protocol import (
     canonical_attention_route_token_bytes,
     derive_attention_route_token,
 )
+from dinkster_protocol.lookups import LOOKUP_ERRORS, LookupCallError, lookup_marks_from_wire
 from dinkster_protocol.pack_surfaces import PackRoute, pack_surfaces_from_wire
 from dinkster_schema import (
     NodeSchema,
@@ -74,6 +75,7 @@ from dinkster_schema import (
     schema_to_wire,
     validate_name,
 )
+from dinkster_schema.body import LookupMark
 from dinkster_values import (
     IMAGE_DOCUMENT_TYPE,
     EncodedPayload,
@@ -412,6 +414,10 @@ class PackDeclarations:
             declarations, role=role, pack=pack
         )
         self.renditions = _renditions_from_hello(declarations, role=role, pack=pack)
+        try:
+            self.lookup_marks = lookup_marks_from_wire(declarations.get("lookups"))
+        except ValueError as exc:
+            raise RuntimeError(f"{role} '{pack}' carried malformed lookup marks: {exc}") from exc
         registered_types = declarations.get("registeredTypes", [])
         if not isinstance(registered_types, list) or any(
             not isinstance(tid, str) or TypeExpr.runtime_type_atom(tid) != tid
@@ -459,9 +465,11 @@ class BoundarySession:
         self._on_diagnostic = on_diagnostic
         self._death_detail = death_detail
         self._artifact_authority = artifact_authority
-        vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
+        vault_root = os.environ.get("DINKSTER_TEMPORARY_VAULT") or os.environ.get(
+            "DINKSTER_ASSET_VAULT"
+        )
         self._produced_assets = ProducedAssetAuthority(
-            AssetVault(vault_root) if vault_root else None,
+            saved_preview_vault or (AssetVault(vault_root) if vault_root else None),
             produced_asset_source,
             resolver_from_env(),
             preview_vault=saved_preview_vault,
@@ -563,6 +571,7 @@ class BoundarySession:
         self._resident_types: tuple[str, ...] = ()
         self._lazy_choice_ids: tuple[str, ...] = ()
         self._compat_skips: dict[str, CompatGateDiagnostic] = {}
+        self._lookup_marks: dict[str, LookupMark] = {}
         self._body_arms: dict[str, tuple[str, ...]] | None = None
         self._vision_providers: tuple[VisionProvider, ...] | None = None
         self._generation_providers: tuple[GenerationProvider, ...] | None = None
@@ -682,6 +691,11 @@ class BoundarySession:
         if self._schemas is None:
             raise RuntimeError("BoundarySession.begin() has not completed")
         return self._lazy_choice_ids
+
+    @property
+    def lookup_marks(self) -> Mapping[str, LookupMark]:
+        """The marks of the lookups this pack's schemas declare, by wire name."""
+        return self._lookup_marks
 
     @property
     def compat_skips(self) -> Mapping[str, CompatGateDiagnostic]:
@@ -848,6 +862,7 @@ class BoundarySession:
         self._resident_types = declarations.resident_types
         self._lazy_choice_ids = declarations.lazy_choice_ids
         self._compat_skips = declarations.compat_skips
+        self._lookup_marks = declarations.lookup_marks
         self._body_arms = declarations.body_arms
         self._vision_providers = None
         if "visionProviders" in header:
@@ -1193,6 +1208,44 @@ class BoundarySession:
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
                 await self.send({"type": "cancelPackRoute", "requestId": request_id}, [])
+            raise
+        finally:
+            self._route_pending.pop(request_id, None)
+
+    async def call_lookup(self, function: str, args: Sequence[object]) -> object:
+        """Ask this worker for one declared lookup's answer.
+
+        Raises ``LookupCallError`` with the worker's code when the call ends
+        without an answer; cancelling the caller cancels the call."""
+        if not self._alive:
+            raise WorkerDied()
+        request_id = f"lookup-{self._route_request_index}"
+        self._route_request_index += 1
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self._route_pending[request_id] = future
+        try:
+            await self.send(
+                {
+                    "type": "lookup",
+                    "requestId": request_id,
+                    "function": function,
+                    "args": list(args),
+                },
+                [],
+            )
+            reply = await future
+            error = reply.get("error")
+            if error is not None:
+                code = (
+                    error if isinstance(error, str) and error in LOOKUP_ERRORS else "lookup-failed"
+                )
+                raise LookupCallError(code)
+            if "answer" not in reply:
+                raise LookupCallError("lookup-wrong-shape", "the worker sent no answer")
+            return reply["answer"]
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await self.send({"type": "cancelLookup", "requestId": request_id}, [])
             raise
         finally:
             self._route_pending.pop(request_id, None)
@@ -2344,7 +2397,7 @@ class BoundarySession:
                     future = self._conversion_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result(header)
-                elif kind == "packRouteResult":
+                elif kind in ("packRouteResult", "lookupResult"):
                     future = self._route_pending.pop(str(header.get("requestId")), None)
                     if future is not None and not future.done():
                         future.set_result(header)

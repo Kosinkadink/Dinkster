@@ -4,9 +4,18 @@ A session is a server-authoritative, append-only log of forward JSON
 patches over one document. The server orders operations with contiguous
 revisions and optimistic concurrency on baseRevision, makes operations
 replayable after a revision cursor, and keeps one snapshot checkpoint so
-the log stays bounded. It never applies or interprets a patch. Clients
-materialize documents and retain inverse patches for undo. Presence is
-an ephemeral relay in the routes layer and never touches this module.
+the log stays bounded. Clients materialize documents and retain inverse
+patches for undo. Presence is an ephemeral relay in the routes layer and
+never touches this module.
+
+Write checks: with a ``write_check``, the service keeps each session's
+current document by applying ops exactly as clients do, and shows the
+check the document before and after each new op. A refused op is not
+ordered. An op that does not apply to the current document cannot be
+judged; it is ordered as before, and no client can apply it either. The
+service also remembers every value each path the check names has held in
+the session, starting with the document the session opened with, so the
+check can accept a value being put back, such as by an undo.
 
 Concurrency contract (v1, protocolVersion 1): an op names the revision
 it was built on (baseRevision). If that is no longer the head, the
@@ -40,7 +49,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from .store import SessionStore
@@ -129,13 +138,105 @@ class InvalidSnapshotError(ValueError):
     """The document-kind validator refused a session snapshot."""
 
 
+type DocPath = tuple[str | int, ...]
+
+
+class WriteCheck(Protocol):
+    """A host's judgment of session writes."""
+
+    def remembers(self, document_kind: str, path: DocPath, value: object) -> bool:
+        """Whether the service keeps ``value`` as one ``path`` held during a session."""
+        ...
+
+    def refusal(
+        self,
+        document_kind: str,
+        before: object,
+        after: object,
+        held: Callable[[DocPath, object], bool],
+    ) -> Mapping[str, object] | None:
+        """The JSON answer refusing a write, or None to accept it.
+
+        ``held(path, value)`` tells whether a remembered path held ``value``
+        earlier in the session."""
+        ...
+
+
+class WriteRefusedError(Exception):
+    """The write check refused an op; ``refusal`` is its JSON answer."""
+
+    def __init__(self, refusal: Mapping[str, object]) -> None:
+        super().__init__(str(refusal.get("message", "write refused")))
+        self.refusal = refusal
+
+
+class PatchConflictError(ValueError):
+    """A patch does not apply to the document."""
+
+
+def apply_patch(document: object, patch: Sequence[Mapping[str, Any]]) -> object:
+    """The document after ``patch``, applied as the editor's ``applyOps`` does.
+
+    Containers along each path are copied, so ``document`` is unchanged."""
+    for entry in patch:
+        document = _apply_at(document, list(cast("list[str | int]", entry["path"])), entry)
+    return document
+
+
+def _apply_at(node: object, path: list[str | int], entry: Mapping[str, Any]) -> object:
+    op = entry["op"]
+    if not path:
+        if op != "replace":
+            raise PatchConflictError(f"{op} cannot target the root")
+        return entry["value"]
+    segment, rest = path[0], path[1:]
+    if isinstance(segment, int):
+        if not isinstance(node, list):
+            raise PatchConflictError(f"expected an array at segment {segment}")
+        items = list(cast("list[object]", node))
+        if segment < 0:
+            raise PatchConflictError(f"index {segment} is not a non-negative integer")
+        if rest:
+            if segment >= len(items):
+                raise PatchConflictError(f"index {segment} out of bounds")
+            items[segment] = _apply_at(items[segment], rest, entry)
+        elif op == "add":
+            if segment > len(items):
+                raise PatchConflictError(f"insert index {segment} out of bounds")
+            items.insert(segment, entry["value"])
+        elif segment >= len(items):
+            raise PatchConflictError(f"{op} index {segment} out of bounds")
+        elif op == "remove":
+            del items[segment]
+        else:
+            items[segment] = entry["value"]
+        return items
+    if not isinstance(node, dict) or segment == "__proto__":
+        raise PatchConflictError(f"expected an object at segment {segment!r}")
+    fields = dict(cast("dict[str, object]", node))
+    if rest:
+        if segment not in fields:
+            raise PatchConflictError(f"key {segment!r} not found")
+        fields[segment] = _apply_at(fields[segment], rest, entry)
+    elif op == "add":
+        if segment in fields:
+            raise PatchConflictError(f"key {segment!r} already exists")
+        fields[segment] = entry["value"]
+    elif segment not in fields:
+        raise PatchConflictError(f"key {segment!r} not found")
+    elif op == "remove":
+        del fields[segment]
+    else:
+        fields[segment] = entry["value"]
+    return fields
+
+
 def validate_patch(patch: object) -> str | None:
     """Shape-validate a forward patch: a list of {op, path, value?} ops
     where op is add|remove|replace and path is an ARRAY of string|int
     segments (the frontend's native DocPath shape - no JSON Pointer
     strings, no ~0/~1 escaping). Returns an error message or None.
-    Shape ONLY - paths are not resolved and values are not interpreted;
-    the server orders patches, it never applies them."""
+    Shape ONLY - paths are not resolved and values are not interpreted."""
     if not isinstance(patch, list):
         return "'patch' must be a JSON array of operations"
     entries = cast(list[object], patch)
@@ -157,6 +258,9 @@ def validate_patch(patch: object) -> str | None:
         if op in _NEEDS_VALUE and "value" not in entry:
             return f"patch[{index}] ('{op}') requires 'value'"
     return None
+
+
+_MISSING = object()
 
 
 def new_session_id() -> str:
@@ -189,8 +293,8 @@ class DocumentSession:
     scope: str
     document_id: str
     snapshot: object
-    """Client-materialized document at ``snapshot_revision``. Opaque JSON;
-    the server never applies ops to it - checkpoints replace it wholesale."""
+    """Client-materialized document at ``snapshot_revision``. Ops are never
+    applied to it; checkpoints replace it wholesale."""
     snapshot_revision: int = 0
     created_at: float = field(default_factory=time.time)
     ops: list[SessionOp] = field(default_factory=lambda: [])
@@ -200,6 +304,8 @@ class DocumentSession:
     acl: dict[str, str] = field(default_factory=lambda: {})
     default_role: str = DEFAULT_SESSION_ROLE
     document_kind: str = "workflow"
+    held: dict[str, set[str]] = field(default_factory=lambda: {})
+    """Every value each remembered path has held, as canonical JSON, by path."""
 
     @property
     def revision(self) -> int:
@@ -217,12 +323,15 @@ class SessionService:
         max_retained_ops: int = 4096,
         store: SessionStore | None = None,
         snapshot_validator: Callable[[str, str, object], str | None] | None = None,
+        write_check: WriteCheck | None = None,
     ) -> None:
         if max_retained_ops < 1:
             raise ValueError("max_retained_ops must be >= 1")
         self._max_retained_ops = max_retained_ops
         self._store = store
         self._snapshot_validator = snapshot_validator
+        self._write_check = write_check
+        self._documents: dict[str, tuple[int, object]] = {}
         loaded = store.load_all() if store is not None else []
         self._sessions = {session.session_id: session for session in loaded}
 
@@ -253,10 +362,75 @@ class SessionService:
             document_kind=document_kind,
             acl={principal_id: "owner"},
         )
+        self._remember(session, session.snapshot, [()])
         self._sessions[session.session_id] = session
         if self._store is not None:
             self._store.put_session(session)
         return deepcopy(session)
+
+    def _document(self, session: DocumentSession) -> object:
+        """The session's current document: its snapshot with every retained op applied."""
+        cached = self._documents.get(session.session_id)
+        if cached is not None and cached[0] == session.revision:
+            return cached[1]
+        document = session.snapshot
+        for op in session.ops:
+            try:
+                document = apply_patch(document, op.patch)
+            except PatchConflictError:
+                continue
+            self._remember(session, document, [tuple(entry["path"]) for entry in op.patch])
+        self._documents[session.session_id] = (session.revision, document)
+        return document
+
+    def _remember(self, session: DocumentSession, document: object, paths: list[DocPath]) -> None:
+        """Record the values ``document`` holds at remembered paths at or under ``paths``."""
+        check = self._write_check
+        if check is None:
+            return
+        kind = session.document_kind
+
+        def record(path: DocPath, value: object) -> None:
+            canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            session.held.setdefault(json.dumps(list(path)), set()).add(canonical)
+
+        def walk(path: DocPath, value: object) -> None:
+            if check.remembers(kind, path, value):
+                record(path, value)
+            elif isinstance(value, dict):
+                for key, item in cast("dict[str, object]", value).items():
+                    walk((*path, key), item)
+            elif isinstance(value, list):
+                for index, item in enumerate(cast("list[object]", value)):
+                    walk((*path, index), item)
+
+        for path in paths:
+            # Descend to the written value, stopping at a remembered ancestor,
+            # which then holds a new value as a whole.
+            at: DocPath = ()
+            node: object = document
+            for segment in path:
+                if check.remembers(kind, at, node):
+                    break
+                if isinstance(node, dict) and isinstance(segment, str):
+                    node = cast("dict[str, object]", node).get(segment, _MISSING)
+                elif isinstance(node, list) and isinstance(segment, int):
+                    items = cast("list[object]", node)
+                    node = items[segment] if segment < len(items) else _MISSING
+                else:
+                    node = _MISSING
+                if node is _MISSING:
+                    break
+                at = (*at, segment)
+            if node is not _MISSING:
+                walk(at, node)
+
+    def _held(self, session: DocumentSession) -> Callable[[DocPath, object], bool]:
+        def held(path: DocPath, value: object) -> bool:
+            canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+            return canonical in session.held.get(json.dumps(list(path)), ())
+
+        return held
 
     def _get_authoritative(self, session_id: str) -> DocumentSession:
         session = self._sessions.get(session_id)
@@ -315,6 +489,7 @@ class SessionService:
         minimum_role = "owner" if "owner" in session.acl.values() else "editor"
         self.require_role(session_id, principal_id, minimum_role)
         del self._sessions[session_id]
+        self._documents.pop(session_id, None)
         if self._store is not None:
             self._store.delete_session(session_id)
         return deepcopy(session)
@@ -353,6 +528,21 @@ class SessionService:
             raise StaleBaseError(session.revision)
         if len(session.ops) >= self._max_retained_ops:
             raise SnapshotRequiredError(session.revision, session.snapshot_revision)
+        document: object | None = None
+        if self._write_check is not None:
+            document = self._document(session)
+            try:
+                after = apply_patch(document, normalized_patch)
+            except PatchConflictError:
+                pass
+            else:
+                refusal = self._write_check.refusal(
+                    session.document_kind, document, after, self._held(session)
+                )
+                if refusal is not None:
+                    raise WriteRefusedError(refusal)
+                document = after
+                self._remember(session, after, [tuple(entry["path"]) for entry in normalized_patch])
         op = SessionOp(
             op_id=op_id,
             actor_id=actor_id,
@@ -368,6 +558,8 @@ class SessionService:
         session.ops.append(op)
         session.ops_by_id[op_id] = op
         session.actor_bindings.setdefault(actor_id, principal_id)
+        if self._write_check is not None:
+            self._documents[session_id] = (op.revision, document)
         return deepcopy(op), False
 
     def bind_actor(self, session_id: str, actor_id: str, principal_id: str) -> None:
@@ -430,13 +622,16 @@ class SessionService:
                 f"snapshot revision {revision} is ahead of the session (at {session.revision})"
             )
         snapshot = self._validated_snapshot(session.document_kind, session.document_id, document)
+        # Remember the values of the ops about to be pruned before they are gone.
+        self._document(session)
         session.snapshot = snapshot
         session.snapshot_revision = revision
+        self._documents.pop(session_id, None)
         retained = [op for op in session.ops if op.revision > revision]
         pruned = [op for op in session.ops if op.revision <= revision]
         session.ops = retained
         for op in pruned:
             del session.ops_by_id[op.op_id]
         if self._store is not None:
-            self._store.checkpoint(session_id, json.dumps(session.snapshot), revision)
+            self._store.checkpoint(session_id, json.dumps(session.snapshot), revision, session.held)
         return deepcopy(session)

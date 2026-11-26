@@ -1,9 +1,9 @@
 [project]
 name = "dinkster-library"
-version = "0.0.17"
+version = "0.0.18"
 description = "Dinkster library records over a private child-process pipe"
 requires-python = ">=3.12"
-dependencies = ["blake3>=1.0", "filelock>=4.2.4,<5"]
+dependencies = ["blake3>=1.0", "filelock>=4.2.4,<5", "pillow>=10"]
 
 [project.scripts]
 dinkster-library = "dinkster_library.__main__:main"

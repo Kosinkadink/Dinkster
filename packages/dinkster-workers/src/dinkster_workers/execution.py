@@ -62,8 +62,8 @@ class SourceStagingProvider(Protocol):
 class ExecutionContext:
     """Host-authoritative facts for one worker invocation.
 
-    ``node_id`` is the executing graph node's id. It is host-authoritative
-    and None when the context is not invocation-scoped.
+    ``node_id`` is the executing graph node's id; ``job_ref`` identifies its
+    run. Both come from the invocation, not any enclosing execution context.
     """
 
     arm: str | None
@@ -87,6 +87,7 @@ class ExecutionContext:
     materialize_source: SourceMaterializer | None = None
     artifact_sink: ArtifactSink | None = None
     started_at_ns: int = 0
+    job_ref: str | None = None
 
     def __post_init__(self) -> None:
         if self.extension_snapshot_digest is not None and not is_extension_snapshot_digest(

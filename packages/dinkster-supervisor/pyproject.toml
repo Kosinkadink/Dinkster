@@ -1,6 +1,6 @@
 [project]
 name = "dinkster-supervisor"
-version = "0.0.14"
+version = "0.0.15"
 description = "Dinkster supervisor: layer-0 process that owns the public port, spawns engine hosts, and proxies to them"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -10,6 +10,7 @@ dependencies = [
     "cryptography>=44",
     "filelock>=4.2.4,<5",
     "packaging>=24",
+    "pillow>=10",
     "pygit2==1.21.0",
     "pydantic>=2.10,<3",
     "zstandard>=0.25",
@@ -20,6 +21,7 @@ environment-tools = ["uv==0.13.6"]
 
 [project.scripts]
 dinkster-env = "dinkster_supervisor.environment:main"
+dinkster-home = "dinkster_supervisor.home:main"
 dinkster-installs = "dinkster_supervisor.install_manager:main"
 dinkster-supervisor = "dinkster_supervisor.supervisor:main"
 dinkster-station = "dinkster_supervisor.station:main"

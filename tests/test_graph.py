@@ -1,4 +1,7 @@
+import json
 from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 import pytest
 from dinkster_graph import (
@@ -22,6 +25,7 @@ from dinkster_schema import (
     Group,
     Input,
     InputFamilyMapping,
+    InputFamilyMember,
     MappingSource,
     Named,
     Node,
@@ -36,6 +40,7 @@ from dinkster_schema import (
     ReplacementRule,
     TypeExpr,
     build_schemas,
+    schema_from_wire,
 )
 from scaffold_nodes import SCAFFOLD_NODES
 
@@ -198,6 +203,82 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
     assert list(node.inputs) == ["kind", "payload", "kinds.z", "kinds.a"]
 
 
+@pytest.mark.parametrize(("stored", "pick"), [(True, "b2"), (False, "b1")])
+def test_a_rule_naming_a_foreign_nodes_inputs_renames_them_and_moves_its_stored_value(
+    stored: bool, pick: str
+) -> None:
+    from dinkster_schema import ReplacementMigration
+    from dinkster_schema.replace import rule_from_wire, rule_to_wire
+
+    integer = TypeExpr.concrete("INT")
+    branches = {
+        "branch": InputFamilyMapping.from_members(
+            InputFamilyMember.build("b1", inputs={"value": MappingSource.copy("on_false")}),
+            InputFamilyMember.build("b2", inputs={"value": MappingSource.copy("on_true")}),
+        )
+    }
+    rule = ReplacementRule(
+        "ForeignSwitch",
+        tuple(
+            ReplacementCase.build(
+                "test.switch",
+                when=when,
+                inputs={"pick": source},
+                input_families=branches,
+                outputs={"result": "output"},
+            )
+            for when, source in (
+                (ReplacementPredicate.input_connected("switch"), MappingSource.link("switch")),
+                (ReplacementPredicate.value_equals("switch", True), MappingSource.constant("b2")),
+                (None, MappingSource.constant("b1")),
+            )
+        ),
+        migration=ReplacementMigration(("switch", "on_false", "on_true")),
+    )
+    assert rule_from_wire(json.loads(json.dumps(rule_to_wire(rule)))) == rule
+    schemas = {
+        "test.switch": NodeSchema(
+            "test.switch",
+            body=(
+                Input("pick", TypeExpr.union("BOOLEAN", "STRING"), required=False),
+                Group(
+                    "branch",
+                    value=Input("value", integer, required=False),
+                    keys=Named(("b1", "b2")),
+                    grows="button",
+                ),
+                Output("result", integer),
+            ),
+            replacements=(rule,),
+        ),
+        "source": NodeSchema("source", body=(Output("value", integer),)),
+        "sink": NodeSchema("sink", body=(Input("value", integer),)),
+    }
+    graph = Graph(
+        {
+            "a": GraphNode("source"),
+            "b": GraphNode("source"),
+            "old": GraphNode(
+                "ForeignSwitch",
+                {"switch": stored, "on_false": Link("a", "value"), "on_true": Link("b", "value")},
+            ),
+            "use": GraphNode("sink", {"value": Link("old", "output")}),
+        }
+    )
+    migrated = migrate_node_replacements(graph, schemas)
+    node = migrated.nodes["old"]
+    assert isinstance(node, GraphNode) and node.node_type == "test.switch"
+    # A plain pick on a union input carries its type; a button group keeps its members.
+    assert node.inputs == {
+        "pick": TypedLiteral("STRING", pick),
+        "branch.b1": Link("a", "value"),
+        "branch.b2": Link("b", "value"),
+    }
+    assert node.output_members == {"branch": ("b1", "b2")}
+    assert migrated.nodes["use"].inputs["value"] == Link("old", "result")
+    assert [d.code for d in validate(migrated, schemas, ["use"]) if d.severity == "error"] == []
+
+
 def test_a_copied_counted_output_group_keeps_each_wire_on_its_member_or_reports_it() -> None:
     from dinkster_schema import Count, Formula, validate_replacement_references
 
@@ -329,6 +410,36 @@ def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reo
         body,
         outputs={"result": RegionOutput(Link("old", "final"))},
     )
+
+
+SPREAD_GOLDEN = json.loads(
+    (Path(__file__).parent / "fixtures" / "replace_spread_v1.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("case", SPREAD_GOLDEN["cases"], ids=lambda case: case["name"])
+def test_a_spread_turns_one_stored_list_into_group_members_in_order(
+    case: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    schemas = {wire["nodeType"]: schema_from_wire(wire) for wire in SPREAD_GOLDEN["schemas"]}
+    graph = Graph({"old": GraphNode(case["type"], dict(case["values"]))})
+    expect = case["expect"]
+    if "error" in expect:
+        with pytest.raises(ValueError) as raised:
+            migrate_node_replacements(graph, schemas)
+        assert expect["error"]["message"] in str(raised.value)
+        return
+    with caplog.at_level("WARNING", logger="dinkster_graph.migrate"):
+        node = migrate_node_replacements(graph, schemas).nodes["old"]
+    assert isinstance(node, GraphNode) and node.node_type == expect["type"]
+    (family,) = expect["members"]
+    in_group = {key: value for key, value in node.inputs.items() if key.startswith(family + ".")}
+    assert in_group == expect["values"]
+    members = list(dict.fromkeys(key.split(".")[1] for key in in_group))
+    assert members == expect["members"][family]
+    assert [record.getMessage() for record in caplog.records] == [
+        warning["message"] for warning in expect["warnings"]
+    ]
 
 
 STRING = TypeExpr.concrete("STRING")

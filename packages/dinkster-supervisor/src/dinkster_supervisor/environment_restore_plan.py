@@ -518,7 +518,8 @@ def _pack_missing_inputs(
             inherited = versions.get(name)
             if inherited is not None and name not in overrides:
                 continue
-            wheels = artifact_rows(package.get("wheels"), "filename")
+            # Older locks can repeat cached and registry locations for the same bytes.
+            wheels = artifact_rows(package.get("wheels"), "filename", allow_identical=True)
             selected_wheel = next(
                 (
                     row
@@ -1111,7 +1112,9 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
     return alternatives
 
 
-def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
+def plan_restore(
+    root: Path, entry_id: int, *, consent: dict[str, object] | None = None
+) -> dict[str, object]:
     entries = history(root)
     selected = next((entry for entry in entries if entry["id"] == entry_id), None)
     if selected is None:
@@ -1135,6 +1138,8 @@ def plan_restore(root: Path, entry_id: int) -> dict[str, object]:
         "settings": content_digest(root / "environment.json"),
         "store": content_digest(root / "store"),
     }
+    if consent is not None:
+        observed["consent"] = consent
     sources: dict[str | None, list[dict[str, object]]] = {}
 
     def unavailable_inputs(candidate: dict[str, object]) -> list[dict[str, object]]:

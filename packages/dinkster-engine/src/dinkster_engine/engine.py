@@ -37,6 +37,7 @@ from dinkster_graph import (
     PORTS_NODE_ID,
     REGION_INDEX_PORT_ID,
     REGION_INDEX_PORT_TYPE,
+    AbsentInput,
     Diagnostic,
     Graph,
     GraphNode,
@@ -91,10 +92,13 @@ from dinkster_protocol import (
 )
 from dinkster_protocol.run_control import InvocationLease
 from dinkster_schema import (
+    ColorWidget,
+    CurveWidget,
     Input,
     NodeSchema,
     RunExecutionContext,
     TypeExpr,
+    WidgetRepresentations,
     combo_type_mismatch_is_error,
     plan_asset_coercion,
     plan_type_equivalence,
@@ -102,16 +106,18 @@ from dinkster_schema import (
 )
 from dinkster_schema.body import input_group_view
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
+from dinkster_schema.reporting import LOG_EVENT, EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
     ABSENT_REASON_META_KEY,
     ABSENT_STANDS_FOR_META_KEY,
     ASSET_BASE_TYPE,
+    HISTOGRAM_TYPE,
     LENGTH_META_KEY,
     RESOURCES_META_KEY,
     ResourcePins,
     TypeRegistry,
+    UnresolvablePayload,
     Value,
     ValueMeta,
     default_encode,
@@ -126,6 +132,7 @@ from dinkster_values import (
     value_resource_ids,
     value_resource_refs,
 )
+from dinkster_values.colors import fit_color
 
 from .compile import (
     CompiledGraph,
@@ -281,6 +288,8 @@ class ExecutionRuntime:
     run_finished: Callable[[str], None] | None = None
     run_context: Callable[[str], AbstractContextManager[None]] | None = None
     owner_alive: Callable[[str], bool] | None = None
+    cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None
+    """Host-side validator for external references in a cached result."""
     extension_snapshot: ExtensionSnapshot = ExtensionSnapshot()
     sampler_registry_snapshot: SamplerRegistrySnapshot = SamplerRegistrySnapshot()
     graph_compiler_registry: GraphCompilerRegistrySnapshot = GraphCompilerRegistrySnapshot()
@@ -451,6 +460,20 @@ class _ProducedReferences:
                 self._uses[dependency] -= 1
                 if self._uses[dependency] == 0 and dependency not in self._targets:
                     retired.append(dependency)
+
+
+def _selected_branch(schema: NodeSchema, inputs: Mapping[str, Value], node: GraphNode) -> str:
+    """The member input a selector node's pick names; ``ValueError`` explains a bad pick."""
+    selector = schema.selector
+    assert selector is not None
+    pick = inputs.get(selector.input)
+    names = inputs.get(selector.names) if selector.names is not None else None
+    return selector.pick(
+        selector.members(schema.inputs),
+        None if pick is None else pick.resolve(),
+        linked=isinstance(node.inputs.get(selector.input), Link),
+        names=None if names is None else cast("list[str]", names.resolve()),
+    )
 
 
 class Engine:
@@ -701,6 +724,10 @@ class Engine:
                     linked_types[name] = (
                         source_type.runtime_type_id() if source_type is not None else None
                     ) or "unknown"
+                elif isinstance(value, AbsentInput):
+                    # The run applies its absent policy; admission sees it as
+                    # not connected.
+                    continue
                 else:
                     literal_inputs[name] = value.value if isinstance(value, TypedLiteral) else value
             result = await cast("AdmissionWorker", worker).validate_admission(
@@ -769,6 +796,65 @@ class Engine:
                         ]
                     },
                 )
+            )
+
+    def _emit_curve_histograms(
+        self,
+        run_id: str,
+        node_id: str,
+        schema: NodeSchema,
+        inputs: Mapping[str, Value],
+        selection: ExecutionSelection | None,
+    ) -> None:
+        """Send each curve the histogram arriving at the input its widget names.
+
+        The histogram stands beside its curve, so its flattened id is the
+        curve's own prefix with the declared name. Sent for a node that ran
+        and for one taken from the cache, so the editor shows the bars of the
+        run it reads either way."""
+        for spec in schema.inputs:
+            shown = spec.widget
+            widgets = (
+                tuple(item.widget for item in shown.representations)
+                if isinstance(shown, WidgetRepresentations)
+                else (shown,)
+            )
+            names = {w.histogram for w in widgets if isinstance(w, CurveWidget) and w.histogram}
+            if not names:
+                continue
+            (name,) = names
+            prefix, _dot, _name = spec.id.rpartition(".")
+            value = inputs.get(f"{prefix}.{name}" if prefix else name)
+            if value is None or value.type_id != HISTOGRAM_TYPE:
+                continue
+            try:
+                bins = value.resolve()
+            except UnresolvablePayload:
+                continue
+            self._emit_node_event(
+                run_id,
+                node_id,
+                InvocationEvent(
+                    "dinkster.curve.histogram",
+                    {"curve": spec.id, "histogram": list(cast("list[int]", bins))},
+                ),
+                selection,
+            )
+
+    def _emit_cached_warnings(
+        self,
+        run_id: str,
+        node_id: str,
+        entry: CachedResult,
+        selection: ExecutionSelection | None,
+    ) -> None:
+        """Send again, as if the node had run, the warnings it gave when it made ``entry``."""
+        for warning in entry.warnings:
+            self._emit_node_event(
+                run_id,
+                node_id,
+                InvocationEvent(LOG_EVENT, {**warning, "ts": time.time()}),
+                selection,
             )
 
     def _emit_node_event(
@@ -1114,9 +1200,8 @@ class Engine:
         Equivalent atoms are restamped before both cache identity and worker
         transport, so the destination receives only the spelling declared by
         its interface. Asset coercions restamp the fingerprint with their
-        provider identity (typed assets, joint contract 2026-07-26: coerced
-        cache identity = source digest(s) + decoder identity + merger
-        identity; decoded tensors are never fingerprinted).
+        provider identity: coerced cache identity = source digest(s) + decoder
+        identity + merger identity; decoded tensors are never fingerprinted.
 
         Asset payloads stay encoded: the WORKER's shim applies the same plan
         with its own providers at kwargs time. A plan whose providers this
@@ -1203,6 +1288,15 @@ class Engine:
                     spec,
                     self._registry.wrap(raw.type_id, raw.value),
                 )
+            elif isinstance(raw, AbsentInput):
+                # The input's own absent policy applies to it before the node
+                # runs, as to an absent value arriving on a wire.
+                resolved[spec.id] = make_absent_value(
+                    origin=f"{node_id}/{spec.id}",
+                    reason=raw.reason,
+                    stands_for=spec.type.runtime_type_id(),
+                )
+                continue
             else:
                 # Literals are wrapped by the engine using the declared
                 # runtime-resolvable input type - concrete or list-of-concrete
@@ -1213,7 +1307,22 @@ class Engine:
                         f"{node_id}: literal on non-runtime-resolvable input {spec.id}"
                     )
                 resolved[spec.id] = self._registry.wrap(runtime, raw)
+            resolved[spec.id] = self._fit_color(spec, resolved[spec.id])
         return resolved
+
+    def _fit_color(self, spec: Input, value: Value) -> Value:
+        """Give a color field the form it declares, before the value joins the cache key.
+
+        A field with opacity receives ``#rrggbbaa`` and one without ``#rrggbb``,
+        whether the value was stored, a default or wired in; text that is not
+        a color passes unchanged. The workflow's stored text is never touched."""
+        if not isinstance(spec.widget, ColorWidget) or is_absent(value):
+            return value
+        text = value.resolve()
+        if not isinstance(text, str):
+            return value
+        fitted = fit_color(text, alpha=spec.widget.alpha)
+        return value if fitted == text else self._registry.wrap(value.type_id, fitted)
 
     def _apply_absent_policies(
         self,
@@ -1258,7 +1367,9 @@ class Engine:
                         raise ValueError(
                             f"{node_id}: default on non-runtime-resolvable input {spec.id}"
                         )
-                    inputs[spec.id] = self._registry.wrap(runtime, spec.default)
+                    inputs[spec.id] = self._fit_color(
+                        spec, self._registry.wrap(runtime, spec.default)
+                    )
                 else:
                     del inputs[spec.id]
             elif policy == "skip" and skip is None:
@@ -1348,7 +1459,7 @@ class Engine:
         return [spec.id for spec in schema.inputs if spec.id in names]
 
     @staticmethod
-    def _cache_hit_valid(schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
+    def _cache_entry_valid(schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
         """Cache hits honor the same output contract as worker results: exact
         elaborated output ids, and concrete declared types match the stored
         Value's type_id. An invalid entry (corrupt/foreign cache) is treated
@@ -1370,6 +1481,12 @@ class Engine:
                     continue
                 return False
         return True
+
+    def _cache_hit_valid(self, schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
+        if not self._cache_entry_valid(schema, hit):
+            return False
+        validator = self._runtime().cache_hit_valid
+        return validator is None or validator(hit)
 
     def _cached_output_origins(
         self, label: str, schema: NodeSchema, outputs: Mapping[str, Value]
@@ -1406,6 +1523,7 @@ class Engine:
             )
             if isinstance(outputs, CachedResult)
             else (),
+            outputs.warnings if isinstance(outputs, CachedResult) else (),
         )
 
     def _pin_outputs(self, outputs: Mapping[str, Value], pinned: list[str]) -> bool:
@@ -1553,18 +1671,13 @@ class Engine:
                 if skip is not None:
                     break
                 if schema.selector is not None:
-                    selector = schema.selector
-                    selected = inputs[selector.input].resolve()
-                    if type(selected) is not bool:
+                    try:
+                        branch = _selected_branch(schema, inputs, node)
+                    except ValueError as error:
                         result = LazyStatusResult(
-                            error=NodeError(
-                                label,
-                                node.node_type,
-                                "selector input did not resolve to a boolean",
-                            )
+                            error=NodeError(label, node.node_type, str(error))
                         )
                     else:
-                        branch = selector.branches["true" if selected else "false"]
                         result = LazyStatusResult(
                             requested_inputs=(branch,)
                             if branch in lazy_links and branch not in inputs
@@ -1756,6 +1869,8 @@ class Engine:
                     continue  # owner's run died; try to take ownership
                 raise
             outputs = self._cached_output_origins(label, schema, outputs)
+            if not self._cache_hit_valid(schema, outputs):
+                break
             # Dead-owner check FIRST: a known-unresolvable result must not
             # take pins it would only hold until run cleanup.
             if self._dead_owner(outputs) is not None or not self._pin_outputs(outputs, pinned):
@@ -1775,6 +1890,8 @@ class Engine:
             if publisher := self._runtime().publish_outputs:
                 await publisher(run_id, label, produced[node_id])
             self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+            self._emit_curve_histograms(run_id, label, schema, inputs, selection)
+            self._emit_cached_warnings(run_id, label, outputs, selection)
             self._emit(
                 EngineEvent(
                     "node_cached",
@@ -1834,6 +1951,8 @@ class Engine:
                     await publisher(run_id, label, produced[node_id])
                 future.set_result(hit)
                 self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+                self._emit_curve_histograms(run_id, label, schema, inputs, selection)
+                self._emit_cached_warnings(run_id, label, hit, selection)
                 cache_detail: dict[str, object] = {}
                 if cache_layer is not None:
                     cache_detail["cacheLayer"] = cache_layer
@@ -1875,6 +1994,7 @@ class Engine:
                 )
             )
             started = time.perf_counter()
+            warnings: list[dict[str, object]] = []
             started_at_ns = time.time_ns()
             preview_policy = self._run_preview_policy.get(run_id)
             invocation = Invocation(
@@ -1927,20 +2047,27 @@ class Engine:
                 ),
             )
             if schema.selector is not None:
-                selector = schema.selector
-                selected = inputs[selector.input].resolve()
-                assert type(selected) is bool
-                branch = selector.branches["true" if selected else "false"]
-                output = schema.outputs[0]
-                value = inputs.get(branch)
-                if value is None:
-                    value = make_absent_value(
-                        origin=f"{label}/{output.id}",
-                        reason="",
-                        stands_for=output.type.runtime_type_id(),
-                    )
-                result = InvocationResult(outputs={output.id: value})
+                try:
+                    branch = _selected_branch(schema, inputs, node)
+                except ValueError as error:
+                    result = InvocationResult(error=NodeError(label, node.node_type, str(error)))
+                else:
+                    output = schema.outputs[0]
+                    value = inputs.get(branch)
+                    if value is None:
+                        value = make_absent_value(
+                            origin=f"{label}/{output.id}",
+                            reason="",
+                            stands_for=output.type.runtime_type_id(),
+                        )
+                    result = InvocationResult(outputs={output.id: value})
             else:
+
+                def on_event(event: InvocationEvent) -> None:
+                    if event.name == LOG_EVENT and event.data.get("level") == "warning":
+                        warnings.append({k: v for k, v in event.data.items() if k != "ts"})
+                    self._emit_node_event(run_id, label, event, selection)
+
                 async with InvocationLease(
                     lambda: self._admission(schema, inputs, selection)
                 ) as lease:
@@ -1948,10 +2075,7 @@ class Engine:
                         invocation = replace(
                             invocation, run_control=lease.bind(control_context(node_id, inputs))
                         )
-                    result = await self._runtime().worker.invoke(
-                        invocation,
-                        on_event=lambda ev: self._emit_node_event(run_id, label, ev, selection),
-                    )
+                    result = await self._runtime().worker.invoke(invocation, on_event=on_event)
             duration_ms = (time.perf_counter() - started) * 1000.0
 
             if result.error is not None:
@@ -2107,10 +2231,13 @@ class Engine:
                 self._run_artifacts[run_id].extend(saved_artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
             entry = CachedResult(
-                result.outputs, result.expansion, (*document_artifacts, *saved_artifacts)
+                result.outputs,
+                result.expansion,
+                (*document_artifacts, *saved_artifacts),
+                tuple(warnings),
             )
             if entry.expansion is not None:
-                if not self._cache_hit_valid(schema, entry):
+                if not self._cache_entry_valid(schema, entry):
                     raise ExecutionError(
                         NodeError(
                             label, node.node_type, "expansion violates the declared output contract"
@@ -2130,6 +2257,7 @@ class Engine:
                 await self._cache.put(key, entry)
             future.set_result(entry)
             self._emit_media_diagnostics(run_id, label, schema, inputs, produced[node_id])
+            self._emit_curve_histograms(run_id, label, schema, inputs, selection)
             self._emit(
                 EngineEvent(
                     "node_finished",
@@ -2260,7 +2388,7 @@ class Engine:
 
         def control_context(node_id: str, inputs: Mapping[str, Value]) -> RunExecutionContext:
             def publish(target: str, value: Mapping[str, Value]) -> None:
-                if not self._cache_hit_valid(effective[target], value):
+                if not self._cache_entry_valid(effective[target], value):
                     raise ValueError(f"published value does not match {target!r} outputs")
                 if self._dead_owner(value) is not None or not self._pin_outputs(value, pinned):
                     raise ValueError("published value has an unavailable resource owner")
@@ -2446,7 +2574,7 @@ class Engine:
                         reason=binding.message or "",
                         stands_for=output.type.runtime_type_id(),
                     )
-            if not self._cache_hit_valid(effective[parent_id], outputs):
+            if not self._cache_entry_valid(effective[parent_id], outputs):
                 raise ExecutionError(
                     NodeError(label, parent.node_type, "expanded output contract mismatch")
                 )
@@ -2686,6 +2814,12 @@ class Engine:
                 # own runtime type, covering ports whose declared type does
                 # not resolve to one.
                 inputs[input_id] = self._registry.wrap(raw.type_id, raw.value)
+            elif isinstance(raw, AbsentInput):
+                inputs[input_id] = make_absent_value(
+                    origin=f"{node_id}/{input_id}",
+                    reason=raw.reason,
+                    stands_for=region.ports[input_id].runtime_type_id(),
+                )
             else:
                 port_type = region.ports[input_id]
                 expected = (
@@ -3287,6 +3421,19 @@ class Engine:
             )
             if has_errors(diagnostics):
                 raise GraphValidationError(diagnostics)
+            for diagnostic in diagnostics:
+                if diagnostic.code == "rule-failed":
+                    self._emit(
+                        EngineEvent(
+                            "node_event",
+                            run_id,
+                            diagnostic.node_id,
+                            {
+                                "name": "log",
+                                "data": {"level": "warning", "message": diagnostic.message},
+                            },
+                        )
+                    )
             await self._validate_admission(graph, effective)
             signatures = {node_id: schema_signature(s) for node_id, s in effective.items()}
 

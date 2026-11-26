@@ -1,4 +1,4 @@
-"""The host installer: an install root on disk (DESIGN M8).
+"""The host installer: an install root on disk.
 
 What this proves: applying a lockfile stages artifacts content-addressed
 and provisions venvs BEFORE the one-file pointer swap (a staging failure
@@ -1487,6 +1487,8 @@ def git_pack(tmp_path: Path, git_server) -> tuple[Path, str]:
     directory = git_server["root"] / tmp_path.name
     write_pack(directory, "demo")
     _git(directory, "init", "-q")
+    # The archive assertion compares committed bytes with the original worktree.
+    _git(directory, "config", "core.autocrlf", "false")
     _commit(directory, "init")
     return directory, git_server["url"].replace("source.git", f"{directory.name}/.git")
 

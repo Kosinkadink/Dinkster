@@ -102,6 +102,7 @@ name = "my-pack"                 # the pack id; also the attribution key
 publisher = "my-publisher"       # checkout publisher identity
 # namespaces = ["my-pack"]       # node-type claims; default: the pack name
 # type-namespaces = ["my-pack"]  # type id or namespace claims; default: the pack name
+# uses-types = ["seg-pack.SEGS"] # other packs' types used without requiring them
 requires = ["numpy>=1.26"]       # pip requirements; PIN them (doctor warns)
 
 [pack.sandbox]                   # requests only; the host grants authority
@@ -784,10 +785,11 @@ from signatures:
   slot construct paths to literal declared keys. Source-dependent selections
   use guarded cases; ordinary input mappings carry slot connections. The
   planner resolves choices before elaborating the target, so `inputs` can
-  address only paths active in the selected shape. A same-type rule can attach
-  `ReplacementMigration` with retired flat input IDs for one-shot stored-
-  workflow migration. Doctor and the server validate all source and target
-  references.
+  address only paths active in the selected shape. A rule can attach
+  `ReplacementMigration` with its historical inputs: source inputs that no
+  installed schema declares, such as retired flat input IDs or the inputs of a
+  foreign node it replaces. Doctor and the server validate all source and
+  target references.
 
 ## Value types and codecs
 
@@ -812,9 +814,27 @@ in the install lock and receives no first-party privileges.
 A shared type has one definition and one owner. Request promotion of a
 widely shared concept to a bare built-in with an official codec in
 `dinkster-values`. For a niche concept, one pack owns the prefixed type and
-other packs declare that pack in their manifest `dependencies` and reference
-its type in their schemas. A small shared types pack can own the definition
-when neither consuming pack should own it. Ownership restricts registration,
+other packs list it in `[pack] uses-types` and reference it in their
+schemas, without requiring the owning pack. A pack may register its own
+storing for a listed type in `register_types` with `registry.register`; a
+listed type it does not register uses the default codec (JSON for
+JSON-shaped values, pickle otherwise). When the owning pack is installed,
+its registration stores the type in every worker that uses it, and the
+listing packs' registrations are set aside. Without the owner, the listing
+pack whose canonical name sorts first stores the type for all of them, so
+the choice is the same on every start. Only that pack's types registration
+is loaded into the other packs' workers; if it cannot load there, values of
+the type fail at that worker with both pack names and the error. Both packs
+then share one module namespace, so if both put a top-level module of the
+same name on the import path, values of the type fail the same way, naming
+the module. A published pack exposes only its one import package, so this
+can happen only with loose modules in a local source checkout. The storing
+pack is chosen when a worker starts: after adding, removing or reloading a
+pack that stores a listed type during development, restart the server. A
+value stored by one pack's codec and read where another pack's codec is in
+force fails before the reading node runs, naming both packs. Listing a type
+claims nothing: only an id under another pack's name may be listed, and the
+owner can be installed later at any time. Ownership restricts registration,
 not reference: any pack may reference a registered type.
 
 Built-in identities are reserved to the foundation pack by the shared type
@@ -970,6 +990,38 @@ Facts that matter:
   implementation (see `tests/fixtures/math_expression_v1.json` for the
   expression corpus shape) before shipping it.
 
+### GLSL author and client integration
+
+For a GLSL mirror, bind each image input `<id>` as `uniform sampler2D u_<id>`.
+Declare `precision highp sampler2D;`: GLSL ES 3.00's default lowp sampler
+precision affects texel reads even with highp floats. Read exact coordinates
+with `texelFetch(u_<id>, ivec2(gl_FragCoord.xy), 0)` rather than relying on
+filtering or wrap state.
+
+Bind float, int and boolean inputs as `uniform float <id>`, `uniform int <id>`
+and `uniform bool <id>`. Bind a combo as `uniform int <id>` containing the
+selected value's index in its declared options. Draw one batch frame per pass
+into a framebuffer with that frame's pixel dimensions. Channels beyond the
+value's real channel count are unspecified; compare only real channels.
+
+Render no estimate for inputs `execute()` would reject: mirrors model only
+successful execution. Honor `MirrorSpec.applies` coverage before rendering.
+Pin parity corpora to equal shader and execution dimensions. A preview can use
+different dimensions, but output-pixel parameters such as blur radius then look
+coarser or finer; do not interpret that presentation difference as execution
+parity. Use bounded `tolerance.per_channel` for shaders: GLSL ES 3.00 does not
+guarantee correctly rounded arithmetic, so `exact` generally overclaims.
+
+For `OutputRepresents(rendition="decoded-image", ...)`, clients use the selected
+still image after EXIF orientation, ICC-aware sRGB conversion and contiguous
+RGB float conversion in `[0, 1]`. Do not include alpha masks, metadata, video
+or audio in that rendition. Render only understood rendition kinds, and replace
+estimates with authoritative results. See the
+[schema declarations](../packages/dinkster-schema/src/dinkster_schema/model.py)
+for coverage and validation. For a known-value output, preserve upstream
+execution provenance when its input is connected; do not treat the displayed
+pre-execution value as an estimate or a cached execution result.
+
 ## The import contract (what doctor enforces)
 
 `dinkster doctor` is the pack linter; run it locally and in CI:
@@ -1047,7 +1099,7 @@ Install `dinkster-engine` and `pytest` alongside your pack, then use
 fixture. The context shares one real worker process and engine cache by default;
 `in_process=True` opts out without changing test calls. Run a single node or
 connect a graph in Python and assert decoded values and engine cache behavior.
-See [the engine testing guide](../packages/dinkster-engine/README.md#tests-from-pytest)
+See [the pack testing guide](pack-testing.md)
 for a complete fixture and graph example. The helper installs without Torch;
 CPU-only Torch is enough for tensor pack tests:
 
@@ -1134,9 +1186,9 @@ become input groups, `is_api_node` becomes `io_bound`,
 search visibility, and per-socket tooltips become doc strings. Opaque
 types are registered by the generated `register_types` only when their ids
 are prefixed by the generated pack's name. Shared types retain their ids
-and must come from built-ins or an owning pack dependency. Doctor reports
-unresolved shared types and missing codecs for owned types as warnings
-until the port declares those dependencies and codecs.
+and must be built-ins or listed in `uses-types`. Doctor reports unresolved
+shared types and missing codecs for owned types as warnings until the port
+lists those types and declares those codecs.
 
 What you do NOT get is behavior: every generated `execute()` raises
 `NotImplementedError` with a `TODO(port)` marker and carries the source

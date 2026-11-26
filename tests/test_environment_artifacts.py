@@ -1231,6 +1231,15 @@ def test_corrupt_manifest_and_wheel_fall_back_across_configured_mirrors(tmp_path
     )
 
 
+def test_engine_manifest_rejects_even_identical_duplicate_artifacts(tmp_path: Path):
+    _, engine, _ = _mirror(tmp_path / "mirror")
+    engine["artifacts"].append(dict(engine["artifacts"][1]))
+    data = _json(engine)
+    expected = "sha256:" + hashlib.sha256(data).hexdigest()
+    with pytest.raises(EnvironmentError, match="distinct portable basenames"):
+        environment_artifacts.validate_manifest(data, expected, None)
+
+
 def test_refuses_protocol_mismatch_before_creating_a_store(tmp_path: Path):
     _mirror(tmp_path / "mirror", protocol=12)
     with pytest.raises(EnvironmentError, match="workerProtocol mismatch"):

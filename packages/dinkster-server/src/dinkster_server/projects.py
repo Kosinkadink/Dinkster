@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -13,7 +14,7 @@ from typing import cast
 
 from aiohttp import web
 from dinkster_assets import AssetError, AssetRef, LibraryRecord
-from dinkster_library import AsyncLibraryClient, LibraryError
+from dinkster_library import AsyncLibraryClient, LibraryClient, LibraryError
 
 from .library import json_body
 
@@ -34,7 +35,7 @@ async def project_for_run(app: web.Application, identifier: str) -> dict[str, ob
     if environment is None:
         if previous is not None:
             raise ValueError("this engine cannot identify the project's environment")
-        return None
+        return project
     if previous is not None and previous["id"] != environment["id"]:
         raise ValueError("open this project's own environment before running it")
     return project
@@ -43,7 +44,8 @@ async def project_for_run(app: web.Application, identifier: str) -> dict[str, ob
 async def record_project_run(app: web.Application, identifier: str, started_at: float) -> None:
     while (project := await project_for_run(app, identifier)) is not None:
         environment = app[ACTIVE_ENVIRONMENT_KEY]
-        assert environment is not None
+        if environment is None:
+            return
         previous = cast("dict[str, object] | None", project["environment"])
         last_run = datetime.fromtimestamp(started_at, UTC)
         if previous is not None and previous["lastRunAt"] is not None:
@@ -216,57 +218,96 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
 
 
 async def project_request(request: web.Request) -> web.Response:
+    from dinkster_library.http_routes import (
+        ERROR_STATUS,
+        outputs_call,
+        project_call,
+        restore_call,
+    )
+
     client = request.app[PROJECTS_KEY]
     identifier = request.match_info.get("project")
-    arguments: dict[str, object] = {}
-    if identifier is not None:
-        arguments["id"] = identifier
+    # The matched route, not the path, names the action: a project may be called "restore".
+    resource = request.match_info.route.resource
+    route = resource.canonical if resource is not None else ""
     try:
-        if request.method == "GET":
-            if request.path.endswith("/needs"):
-                assert identifier is not None
-                return web.json_response(
-                    await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
-                )
-            elif identifier is not None:
-                operation = "projects.get"
-            else:
-                operation = "projects.list"
-                arguments.update(request.query)
-                if "limit" in arguments:
-                    arguments["limit"] = int(cast(str, arguments["limit"]))
-                if "includeDeleted" in arguments:
-                    if arguments["includeDeleted"] not in ("true", "false"):
-                        raise ValueError("includeDeleted must be true or false")
-                    arguments["includeDeleted"] = arguments["includeDeleted"] == "true"
+        if route.endswith("/needs"):
+            assert identifier is not None
+            return web.json_response(
+                await project_needs(request, identifier), headers={"Cache-Control": "no-store"}
+            )
+        if route.endswith("/opened"):
+            assert identifier is not None
+            return web.json_response(await client.call("projects.opened", id=identifier))
+        if route.endswith("/usage"):
+            assert identifier is not None
+            return web.json_response(await client.call("projects.usage", id=identifier))
+        if route.endswith("/outputs"):
+            assert identifier is not None
+            result = await client.call("assets.list", **outputs_call(identifier, request.query))
+            return web.json_response(result)
+        body = {} if request.method == "GET" else await json_body(request)
+        if route.endswith("/restore"):
+            assert identifier is not None
+            operation, arguments = restore_call(identifier, body)
         else:
-            body = await json_body(request)
-            if request.method == "POST":
-                operation = "projects.register"
-                arguments.update(body)
-            else:
-                operation = "projects.delete" if request.method == "DELETE" else "projects.patch"
-                arguments.update(body)
-                arguments["id"] = identifier
+            operation, arguments = project_call(request.method, identifier, request.query, body)
         result = await client.call(operation, **arguments)
         return web.json_response(result)
     except ValueError as error:
         return web.json_response({"error": str(error)}, status=400)
     except LibraryError as error:
-        status = {"stale": 409, "missing": 404, "invalid": 400}.get(error.code, 503)
+        status = ERROR_STATUS.get(error.code, 503)
         return web.json_response({"error": str(error)}, status=status)
 
 
-def add_project_routes(app: web.Application, root: Path, *, engine_version: str) -> None:
+def add_project_routes(
+    app: web.Application, root: Path | LibraryClient, *, engine_version: str
+) -> None:
     environment: dict[str, str] | None = None
 
     async def active_environment(request: web.Request) -> web.Response:
         return web.json_response({"environment": environment})
 
+    async def relay_changes(client: AsyncLibraryClient, cursor: int) -> None:
+        from dinkster_schema import core_logger
+
+        from .app import STATE_KEY
+
+        unavailable = False
+        while True:
+            try:
+                page = await client.call("changes", cursor=cursor, limit=1000)
+            except LibraryError as error:
+                if not unavailable:
+                    core_logger("server").warning("Library change relay unavailable: %s", error)
+                unavailable = True
+                await asyncio.sleep(0.5)
+                continue
+            unavailable = False
+            cursor = cast(int, page["cursor"])
+            items = cast("list[dict[str, object]]", page["items"])
+            # Working-reference publications do not change a library view. No
+            # record identities or scope details cross the broadcast; subscribers
+            # refetch through their authorized HTTP routes.
+            if any(item["kind"] != "engine-references" for item in items):
+                app[STATE_KEY].hub.publish(
+                    {"type": "library_changed"}, client_id=None, droppable=False
+                )
+            if len(items) < 1000:
+                await asyncio.sleep(0.5)
+
     async def helper_lifetime(app: web.Application) -> AsyncIterator[None]:
         nonlocal environment
-        client = await AsyncLibraryClient.start(root)
+        client = (
+            AsyncLibraryClient(root)
+            if isinstance(root, LibraryClient)
+            else await AsyncLibraryClient.start(root)
+        )
+        relay: asyncio.Task[None] | None = None
         try:
+            if "changes.head" not in cast("list[str]", client.sync.hello["capabilities"]):
+                raise LibraryError("capability", "Library change relay requires updated tools.")
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
             if identity is not None:
                 value: object = json.loads(identity)
@@ -292,16 +333,25 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
                 )
             app[PROJECTS_KEY] = client
             app[ACTIVE_ENVIRONMENT_KEY] = environment
+            cursor = cast(int, (await client.call("changes.head"))["cursor"])
+            relay = asyncio.create_task(relay_changes(client, cursor))
             yield
         finally:
             from .app import STATE_KEY
 
             try:
-                state = app.get(STATE_KEY)
-                if state is not None:
-                    await state.queue.close()
+                try:
+                    if relay is not None:
+                        relay.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await relay
+                finally:
+                    state = app.get(STATE_KEY)
+                    if state is not None:
+                        await state.queue.close()
             finally:
-                await client.close()
+                if not isinstance(root, LibraryClient):
+                    await client.close()
 
     app.cleanup_ctx.append(helper_lifetime)
     app.router.add_get("/api/environment", active_environment)
@@ -310,4 +360,8 @@ def add_project_routes(app: web.Application, root: Path, *, engine_version: str)
     app.router.add_get("/api/projects/{project}", project_request)
     app.router.add_patch("/api/projects/{project}", project_request)
     app.router.add_delete("/api/projects/{project}", project_request)
+    app.router.add_post("/api/projects/{project}/restore", project_request)
     app.router.add_get("/api/projects/{project}/needs", project_request)
+    app.router.add_get("/api/projects/{project}/usage", project_request)
+    app.router.add_post("/api/projects/{project}/opened", project_request)
+    app.router.add_get("/api/projects/{project}/outputs", project_request)

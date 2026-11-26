@@ -128,6 +128,7 @@ class LazyWorker:
             "body_arms",
             "extension_contributions",
             "renditions",
+            "lookup_marks",
             "registered_types",
             "resident_types",
         ):
@@ -140,6 +141,7 @@ class LazyWorker:
             "check_lazy_status",
             "fetch_choices",
             "call_pack_route",
+            "call_lookup",
             "resolve_rendition",
             "resolve_rendition_mime",
             "render_rendition",

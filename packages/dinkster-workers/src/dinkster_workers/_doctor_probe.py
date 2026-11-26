@@ -273,23 +273,24 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     registry = TypeRegistry()
     register_core_types(registry)
     core_ids = set(registry.type_ids())
-    if types_fn is not None:
-        if not callable(types_fn):
-            report["types_error"] = (
-                f"entry.types must name a callable taking a TypeRegistry, "
-                f"got {type(types_fn).__name__}"
-            )
-        else:
-            try:
-                with registry.registering_pack(
-                    manifest.name,
-                    manifest.type_namespaces,
-                    allow_bare=manifest.publisher == "dinkster",
-                ):
+    if types_fn is not None and not callable(types_fn):
+        report["types_error"] = (
+            f"entry.types must name a callable taking a TypeRegistry, got {type(types_fn).__name__}"
+        )
+    else:
+        try:
+            with registry.registering_pack(
+                manifest.name,
+                manifest.type_namespaces,
+                allow_bare=manifest.publisher == "dinkster",
+                uses=manifest.uses_types,
+            ):
+                if types_fn is not None:
                     types_fn(registry)
-            except BaseException as exc:  # noqa: BLE001
-                report["types_error"] = _exception_detail(exc)
-    pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids]
+        except BaseException as exc:  # noqa: BLE001
+            report["types_error"] = _exception_detail(exc)
+    used = set(registry.used_type_ids(manifest.name))
+    pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids | used]
     report["registered_type_ids"] = pack_ids
     report["fallback_codec_type_ids"] = [
         tid for tid in pack_ids if not registry.spec(tid).declared_codec
@@ -298,6 +299,8 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             from types import SimpleNamespace
+
+            from dinkster_protocol.lookups import lookup_functions, lookup_marks
 
             from .catalog import worker_declarations
             from .host import load_choices, load_extension_contributions, load_skips
@@ -311,6 +314,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
                     compat_skips=load_skips(manifest),
                     body_arms=dict(manifest.arms),
                     extension_contributions=load_extension_contributions(manifest),
+                    lookup_marks=lookup_marks(lookup_functions(pack_schemas)),
                     renditions=registry.registered_renditions(),
                     # Match worker ownership: dependency codecs are usable here
                     # but are not declarations owned by this pack.

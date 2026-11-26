@@ -18,7 +18,7 @@
 - The optional development pack provides CPU-only examples for type choices,
   counted output groups, rows shown by a formula, multi-combo, Markdown,
   palette, list and button widgets, switchable widget forms, described outputs,
-  and image mirror estimates. It also supplies help, a guide, a blueprint
+  automatic values from a formula or a lookup, and image mirror estimates. It also supplies help, a guide, a blueprint
   that inserts an independent boundary subgraph, a saved pack preference,
   Chinese labels, and a separate template. See
   [Try optional node features](../dev-node-features.md).
@@ -33,6 +33,18 @@
   or disabled, with a reason, each a literal or a formula; these are layout
   only, so they never change a schema signature, a cache key or what a run
   receives.
+- An input may declare `automatic`: a formula or a lookup that works out its
+  value while nothing is stored for it. It needs a default and a field type
+  (whole number, decimal, text, choice or yes or no), and may not read values
+  outside the run or another automatic field in a circle. When a run is
+  queued the engine works each such value out before any cache lookup, uses
+  the default when it cannot, and records the value used and whether it was
+  worked out in the job and history. Its lookups go to the owning pack's
+  worker side by side, equal calls once, within 10 seconds in all; a lookup
+  that fails or has not answered by then gives the default. A lookup argument
+  that names a file field is handed the picked file as an `AssetRef`, bound as
+  the lookup route binds it; with no file picked the default is used. It never
+  blocks a run.
 - Backend choices can declare hidden presentation while retaining optionality
   and their complete option trees. The flag round-trips through the schema
   wire without changing execution choices. An optional choice declares no
@@ -133,10 +145,6 @@
   FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
   types and numeric defaults remain unchanged, including with named widget
   representations. This does not claim frontend numeric-union editor support.
-- Forced-input FLOATS sockets accept numeric presentation with FLOAT constraint
-  semantics, retaining their canonical socket type and default on the wire,
-  including named representations. This does not change runtime values or
-  provide frontend FLOATS editing.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
@@ -163,9 +171,11 @@
   with numeric epsilon; lazy typed selection;
   variadic boolean logic; clamping; range remapping with easing curves; and
   deterministic seeded integer or float random values
-- Native `ComfySwitchNode` uses ComfyUI's `switch`, `on_false`, and `on_true`
-  inputs. Only the selected branch executes; an unconnected selected input
-  produces an absent output. The two arms share one type template.
+- ComfyUI's If/Else Switch (`ComfySwitchNode`) opens as the Switch: a wired
+  `switch` moves to Pick, a stored true picks the `on_true` branch and anything
+  else the `on_false` branch, and the `output` wires move to Value. Only the
+  selected branch executes; an unconnected selected input produces an absent
+  output.
 - Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
   body escape paths, and accumulation controls fed from their own body,
   including boundaries inside region bodies. Boundaries use

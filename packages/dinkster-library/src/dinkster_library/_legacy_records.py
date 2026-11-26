@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
 
 from .client import LibraryError
+
+
+def legacy_store_exists(root: Path, name: str = "library.sqlite") -> bool:
+    # Publication retires every legacy store. An old engine may recreate side
+    # stores before the library revision fence refuses it; those are not live records.
+    # Helper admission refuses an interrupted publication before any consumer runs.
+    if (root / "library-format.json").exists():
+        return False
+    return os.path.lexists(root / name)
 
 
 def _json(value: object) -> str:
@@ -30,8 +40,8 @@ def convert_databases(backup: Path, target: sqlite3.Connection, engine: str) -> 
     No live record is replaced here, and all legacy identity and revision fields
     are copied rather than allocated again through create operations.
     """
-    # Only the unpublished staging database gets these conversion tables. The
-    # live helper retains its existing schema until managed migration is enabled.
+    # Create any conversion tables absent from the backed-up helper schema.
+    # This connection is unpublished; conversion never populates live records.
     tables = {
         "saved_records": "id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
         "modified REAL NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,"
@@ -54,15 +64,6 @@ def convert_databases(backup: Path, target: sqlite3.Connection, engine: str) -> 
         "cache_key TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(engine,token,cache_key)",
         "terminal_results": "engine TEXT NOT NULL,scope TEXT NOT NULL,job_ref TEXT NOT NULL,"
         "document TEXT NOT NULL,PRIMARY KEY(engine,scope,job_ref)",
-        "retention_universes": "engine TEXT PRIMARY KEY,document TEXT NOT NULL",
-        "retention_clients": "engine TEXT NOT NULL,id TEXT NOT NULL,principal TEXT NOT NULL,"
-        "generation TEXT NOT NULL,document TEXT NOT NULL,"
-        "PRIMARY KEY(engine,id),UNIQUE(engine,generation)",
-        "retained_owners": "engine TEXT NOT NULL,scope TEXT NOT NULL,kind TEXT NOT NULL,"
-        "id TEXT NOT NULL,document TEXT NOT NULL,client_id TEXT,classes TEXT NOT NULL,"
-        "PRIMARY KEY(engine,scope,kind,id)",
-        "retention_quarantine": "engine TEXT NOT NULL,client_id TEXT NOT NULL,digest TEXT NOT NULL,"
-        "size INTEGER NOT NULL,PRIMARY KEY(engine,client_id,digest)",
         "finished_history": "run_id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
         "finished REAL NOT NULL,document TEXT NOT NULL,deleted INTEGER NOT NULL DEFAULT 0",
         "permission_records": "principal TEXT PRIMARY KEY,revision INTEGER NOT NULL,"
@@ -83,7 +84,7 @@ def convert_databases(backup: Path, target: sqlite3.Connection, engine: str) -> 
         path = backup / "library" / name
         if not path.exists():
             continue
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as source:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)) as source:
             source.row_factory = sqlite3.Row
             with target:
                 target.execute("BEGIN IMMEDIATE")
@@ -113,6 +114,7 @@ def _assets(source: sqlite3.Connection, target: sqlite3.Connection, engine: str)
             "asset_retention_members",
         ),
         "0012_retention_departure": ("asset_retention_quarantine",),
+        "0013_remove_retention_lists": (),
     }
     versions = [row[0] for row in _rows(source, "alembic_version")]
     if len(versions) != 1 or versions[0] not in schemas:
@@ -122,6 +124,16 @@ def _assets(source: sqlite3.Connection, target: sqlite3.Connection, engine: str)
         expected.update(tables)
         if revision == versions[0]:
             break
+    if versions[0] == "0013_remove_retention_lists":
+        expected.difference_update(
+            {
+                "asset_retentions",
+                "asset_retention_universe",
+                "asset_retention_clients",
+                "asset_retention_members",
+                "asset_retention_quarantine",
+            }
+        )
     present = {
         row[0]
         for row in source.execute(
@@ -230,74 +242,6 @@ def _assets(source: sqlite3.Connection, target: sqlite3.Connection, engine: str)
             "INSERT INTO terminal_results VALUES (?,?,?,?)",
             (engine, row["scope"], row["job_ref"], row["manifest"]),
         )
-    _retention(source, target, engine)
-
-
-def _retention(source: sqlite3.Connection, target: sqlite3.Connection, engine: str) -> None:
-    universe = next(_rows(source, "asset_retention_universe"), None)
-    target.execute(
-        "INSERT INTO retention_universes VALUES (?,?)",
-        (
-            engine,
-            _json(
-                {
-                    "closed": bool(universe["closed"]) if universe else False,
-                    "legacy": bool(universe["legacy"]) if universe else True,
-                }
-            ),
-        ),
-    )
-    for row in _rows(source, "asset_retention_clients"):
-        document = {
-            "engine": engine,
-            "clientId": row["client_id"],
-            "principalId": row["principal_id"],
-            "generation": row["generation"],
-            "revision": row["revision"],
-            "connected": bool(row["connected"]),
-            "acknowledged": bool(row["acknowledged"]),
-            "pendingRequests": row["pending_requests"],
-            "activeStreams": row["active_streams"],
-            "lastActivity": row["last_activity"] if "last_activity" in row.keys() else 0,
-            "departed": bool(row["departed"]) if "departed" in row.keys() else False,
-        }
-        target.execute(
-            "INSERT INTO retention_clients VALUES (?,?,?,?,?)",
-            (engine, row["client_id"], row["principal_id"], row["generation"], _json(document)),
-        )
-    members: dict[tuple[str, str, str], tuple[str, list[int]]] = {}
-    for row in _rows(source, "asset_retention_members"):
-        key = (row["scope"], row["owner_kind"], row["owner_id"])
-        previous = members.setdefault(key, (row["client_id"], []))
-        if previous[0] != row["client_id"]:
-            raise LibraryError("migration", "Retained owner belongs to multiple clients")
-        previous[1].append(row["holder_class"])
-    for row in _rows(source, "asset_retentions"):
-        key = (row["scope"], row["owner_kind"], row["owner_id"])
-        unbound: tuple[str | None, list[int]] = (None, [])
-        client, classes = members.pop(key, unbound)
-        document = {
-            "engine": engine,
-            "scope": row["scope"],
-            "ownerKind": row["owner_kind"],
-            "ownerId": row["owner_id"],
-            "revision": row["revision"],
-            "digests": json.loads(row["digests"]),
-            "complete": bool(row["complete"]) if "complete" in row.keys() else False,
-        }
-        if "source_token" in row.keys() and row["source_token"] is not None:
-            document["sourceToken"] = row["source_token"]
-        target.execute(
-            "INSERT INTO retained_owners VALUES (?,?,?,?,?,?,?)",
-            (engine, *key, _json(document), client, _json(sorted(classes))),
-        )
-    if members:
-        raise LibraryError("migration", "Retained client binding has no owner")
-    for row in _rows(source, "asset_retention_quarantine"):
-        target.execute(
-            "INSERT INTO retention_quarantine VALUES (?,?,?,?)",
-            (engine, row["client_id"], row["digest"], row["size"]),
-        )
 
 
 def _history(source: sqlite3.Connection, target: sqlite3.Connection, engine: str) -> None:
@@ -332,6 +276,8 @@ def _history(source: sqlite3.Connection, target: sqlite3.Connection, engine: str
             if "asset_digests" in row.keys() and row["asset_digests"] is not None
             else None,
         }
+        if "thumbnail" in row.keys() and row["thumbnail"] is not None:
+            document["thumbnail"] = json.loads(row["thumbnail"])
         for column, field in (
             ("started", "startedAt"),
             ("source_document", "sourceDocument"),

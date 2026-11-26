@@ -40,7 +40,6 @@ from dinkster_values import (
     CORE_INT,
     CORE_STRING,
     CURVE_TYPE,
-    FLOATS_TYPE,
     SAVE_TARGET_TYPE,
     CustomWidgetDescriptor,
     asset_type_id,
@@ -59,7 +58,16 @@ from .names import validate_name
 from .replace import ReplacementRule
 
 if TYPE_CHECKING:
-    from .body import BodyRow, Button, FlagOrFormula, Formula, Rule, Step, TextOrFormula
+    from .body import (
+        BodyRow,
+        Button,
+        FlagOrFormula,
+        Formula,
+        Lookup,
+        Rule,
+        Step,
+        TextOrFormula,
+    )
 
 TypeExprKind = Literal[
     "concrete",
@@ -265,8 +273,9 @@ class TypeExpr:
 
     @staticmethod
     def asset_of(element: TypeExpr) -> TypeExpr:
-        """An asset that decodes to ``element`` (typed assets, joint contract
-        2026-07-26). The VALUE is one AssetRef - what the decode yields is
+        """An asset that decodes to ``element``.
+
+        The VALUE is one AssetRef - what the decode yields is
         the element expression, so ``asset_of(list_of(...))`` is one asset
         decoding to a list, distinct from ``list_of(asset_of(...))``."""
         return TypeExpr(kind="asset", element=element)
@@ -575,9 +584,13 @@ class ComboWidget:
     route has not answered yet is a legal transient state - the frontend
     renders a loading/empty dropdown, and a stored value outside the
     current option set is a frontend diagnostic, never a reset.
+
+    ``options`` may also be a ``Formula`` the editor works out or a
+    ``Lookup`` the host calls; such a list is the only source of choices
+    and, like the others, never decides the stored value.
     """
 
-    options: tuple[str | bool | int | float | ComboOption, ...] | NamedList = ()
+    options: tuple[str | bool | int | float | ComboOption, ...] | NamedList | Formula | Lookup = ()
     remote_route: str = ""
     refresh_button: bool = False
     control_after_refresh: Literal["first", "last"] | None = None
@@ -585,13 +598,38 @@ class ComboWidget:
     remote_max_retries: int | None = None
     remote_refresh_ms: int | None = None
     editable_options: bool = False
+    options_input: str = ""
+    """With ``editable_options``, names a top-level hidden ``list<STRING>``
+    input that the editor fills with the authored options, in order, on every
+    submission, so the node can read them. Empty means the options stay in the
+    editor."""
 
     @property
     def static_options(self) -> tuple[str | bool | int | float | ComboOption, ...]:
         """The static choices; a ``NamedList`` given as ``options`` has become the route."""
-        return () if isinstance(self.options, NamedList) else self.options
+        return self.options if isinstance(self.options, tuple) else ()
 
     def __post_init__(self) -> None:
+        from .body import Formula, Lookup
+
+        if isinstance(self.options, (Formula, Lookup)):
+            remote_policy = (
+                self.control_after_refresh,
+                self.remote_timeout_ms,
+                self.remote_max_retries,
+                self.remote_refresh_ms,
+            )
+            if (
+                self.remote_route
+                or self.editable_options
+                or self.refresh_button
+                or any(value is not None for value in remote_policy)
+            ):
+                raise ValueError(
+                    "combo widget options from a formula or a lookup take no other option "
+                    "source and no refresh button"
+                )
+            return
         if isinstance(self.options, NamedList):
             if self.remote_route:
                 raise ValueError("combo widget takes a NamedList or a remote route, not both")
@@ -604,6 +642,10 @@ class ComboWidget:
             raise ValueError("combo widget editable_options must be a bool")
         if self.editable_options and self.remote_route:
             raise ValueError("editable combo options cannot have another option source")
+        if type(self.options_input) is not str:
+            raise ValueError("combo widget options_input must be a string")
+        if self.options_input and not self.editable_options:
+            raise ValueError("combo widget options_input requires editable options")
         if self.remote_route:
             _remote_choice_id(self.remote_route)
         if not self.options and not self.remote_route and not self.editable_options:
@@ -753,10 +795,12 @@ _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 class NumberWidget:
     """Presentation request for a numeric input's editor.
 
-    Numeric sockets, their exact union, and forced-input ``FLOATS`` use
-    this presentation without changing their runtime value domains.
-    All constraints are UI vocabulary: out-of-range stored values are the frontend's diagnostic to
-    surface, never a schema error. Absent min/max means unbounded. Integer
+    Numeric sockets and their exact union use this presentation without
+    changing their runtime value domains.
+    Out-of-range stored values are the frontend's diagnostic to surface, never a schema error;
+    a collaborative session write that changes a number to below ``min``, above ``max`` or,
+    for a whole-number input, off its step is refused by the server unless the number is
+    one of ``special``. Absent min/max means unbounded. Integer
     constraints through signed 64-bit minimum and unsigned 64-bit maximum are
     lossless as canonical decimal strings outside the JSON-double-safe range.
 
@@ -764,38 +808,82 @@ class NumberWidget:
     step are independent constraints: they never imply a slider or any other
     presentation. ``round`` is an independent finite positive rendering
     precision, or literal False to disable rounding, using FLOAT semantics;
-    it never implies display or changes bounds/step. Absence of the descriptor means "no
+    it never implies display or changes bounds/step. A whole number is on a
+    step when it is ``offset`` plus a multiple of ``step``; ``offset`` is
+    ``min`` when not given, and 0 when there is no ``min``. ``special`` maps
+    values allowed outside the limits and off the step to their labels.
+    ``reason`` is the short text that explains a limit. Absence of the descriptor means "no
     presentation metadata", and the frontend still renders a number editor
     by primitive type inference; it never means the input is widgetless
     (pinned with the frontend).
 
     Socket binding: this descriptor is only
     legal on concrete ``INT``/``FLOAT`` inputs, their one-level lists,
-    the scalar ``INT``/``FLOAT`` union, and forced concrete ``FLOATS``.
-    Constraints use the socket's domain (FLOAT for the union and FLOATS) - an int socket with a
+    and the scalar ``INT``/``FLOAT`` union.
+    Constraints use the socket's domain (FLOAT for the union) - an int socket with a
     fractional min/max/step is malformed. Enforced by Input, which is
     the first place the widget meets its socket type."""
 
-    min: int | float | None = None
-    max: int | float | None = None
-    step: int | float | None = None
+    min: int | float | Formula | Lookup | None = None
+    max: int | float | Formula | Lookup | None = None
+    step: int | float | Formula | Lookup | None = None
     display: Literal["number", "slider", "knob", "gradientslider", "color"] | None = None
     round: int | float | Literal[False] | None = None
+    offset: int | float | Formula | Lookup | None = None
+    special: Mapping[int | float, str] = field(
+        default_factory=lambda: cast("Mapping[int | float, str]", {})
+    )
+    reason: str | None = None
+    """``min``, ``max``, ``step`` and ``offset`` may also be a ``Formula`` the
+    editor works out or a ``Lookup`` the host calls; ``None`` from either means
+    no bound and no offset. While an offset is not known the editor draws no
+    step grid. The number checks below apply to literal numbers only."""
 
     def __post_init__(self) -> None:
+        if not isinstance(cast("object", self.special), Mapping):
+            raise ValueError("number widget special must map each value to its label")
+        special = dict(cast("Mapping[object, object]", self.special))
+        for value, label in special.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"number widget special value must be a number, got {value!r}")
+            if not isinstance(label, str) or not label:
+                raise ValueError(
+                    f"number widget special label for {value!r} must be non-empty text"
+                )
+        object.__setattr__(
+            self,
+            "special",
+            dict(sorted(cast("dict[int | float, str]", special).items())),
+        )
+        if self.reason is not None and (
+            not isinstance(cast("object", self.reason), str) or not self.reason
+        ):
+            raise ValueError("number widget reason must be non-empty text")
         if (
             self.min is None
             and self.max is None
             and self.step is None
             and self.round is None
             and self.display is None
+            and self.offset is None
+            and not self.special
+            and self.reason is None
         ):
             raise ValueError(
                 "number widget needs at least one constraint or a display "
                 "(a metadata-less numeric input carries no widget)"
             )
-        for name in ("min", "max", "step"):
-            bound = getattr(self, name)
+        from .body import Formula, Lookup
+
+        for name in ("min", "max", "step", "offset"):
+            value = getattr(self, name)
+            if value is not None and type(value) not in (int, float):
+                if not isinstance(value, (Formula, Lookup)):
+                    raise ValueError(
+                        f"number widget {name} must be a number, a Formula or a Lookup, "
+                        f"got {value!r}"
+                    )
+        for name, bound in self.numbers():
             if bound is None:
                 continue
             if isinstance(bound, bool):
@@ -826,10 +914,16 @@ class NumberWidget:
             raise ValueError(
                 f"number widget round must be False or a finite positive number, got {self.round!r}"
             )
-        if self.min is not None and self.max is not None and self.min > self.max:
-            raise ValueError(f"number widget min ({self.min}) must not exceed max ({self.max})")
-        if self.step is not None and self.step <= 0:
-            raise ValueError(f"number widget step must be positive, got {self.step}")
+        literal = dict(self.numbers())
+        low, high, step = literal["min"], literal["max"], literal["step"]
+        if low is not None and high is not None and low > high:
+            raise ValueError(f"number widget min ({low}) must not exceed max ({high})")
+        if step is not None and step <= 0:
+            raise ValueError(f"number widget step must be positive, got {step}")
+        if self.offset is not None and self.step is None:
+            raise ValueError("number widget offset needs a step to count from")
+        if self.reason is not None and self.min is None and self.max is None and self.step is None:
+            raise ValueError("number widget reason needs a min, a max or a step to explain")
         if self.display is not None and (
             type(self.display) is not str
             or self.display not in {"number", "slider", "knob", "gradientslider", "color"}
@@ -839,6 +933,22 @@ class NumberWidget:
                 "['color', 'gradientslider', 'knob', 'number', 'slider'], "
                 f"got {self.display!r}"
             )
+
+    def numbers(self) -> tuple[tuple[str, int | float | None], ...]:
+        """Each literal number the widget declares, named for messages: limits,
+        offset, special values. A limit or offset given by a formula or a
+        lookup is None here."""
+
+        def literal(value: object) -> int | float | None:
+            return cast("int | float", value) if type(value) in (int, float) else None
+
+        return (
+            ("min", literal(self.min)),
+            ("max", literal(self.max)),
+            ("step", literal(self.step)),
+            ("offset", literal(self.offset)),
+            *((f"special value {value!r}", value) for value in self.special),
+        )
 
 
 TextCompletionKind = Literal["identifier", "operator"]
@@ -902,7 +1012,9 @@ class StringWidget:
     multiline: bool | None = True
     placeholder: str | None = None
     dynamic_prompts: bool | None = None
-    completions: TextCompletions | None = None
+    completions: TextCompletions | Formula | Lookup | None = None
+    """Literal ``TextCompletions``, or a ``Formula`` or ``Lookup`` whose
+    list the editor filters while the user types."""
 
     def __post_init__(self) -> None:
         if self.multiline is not None and type(self.multiline) is not bool:
@@ -911,8 +1023,14 @@ class StringWidget:
             raise ValueError("string widget placeholder must be a string")
         if self.dynamic_prompts is not None and type(self.dynamic_prompts) is not bool:
             raise ValueError("string widget dynamic_prompts must be a bool")
-        if self.completions is not None and type(self.completions) is not TextCompletions:
-            raise ValueError("string widget completions must be TextCompletions")
+        from .body import Formula, Lookup
+
+        if self.completions is not None and not isinstance(
+            cast("object", self.completions), (TextCompletions, Formula, Lookup)
+        ):
+            raise ValueError(
+                "string widget completions must be TextCompletions, a Formula or a Lookup"
+            )
         if (
             self.multiline is None
             and self.placeholder is None
@@ -924,12 +1042,61 @@ class StringWidget:
 
 @dataclass(frozen=True)
 class ColorWidget:
-    """Fieldless color-picker presentation over a canonical STRING value."""
+    """Color-picker presentation over a canonical STRING value.
+
+    ``alpha`` says the node uses opacity, so the picker offers it."""
+
+    alpha: bool = False
+
+
+_STRIP_COLOR: Final = re.compile(r"#[0-9a-fA-F]{6}")
+"""A color of a curve's strip: "#rrggbb", either case of hex digit."""
+
+
+def _strip_colors(value: object, where: str) -> tuple[str, str]:
+    """A strip's ``(low, high)`` colors in lower case, or ValueError."""
+
+    if not isinstance(value, (tuple, list)):
+        raise ValueError(f"{where} must be a pair of #rrggbb colors")
+    colors = cast("Sequence[object]", value)
+    if len(colors) != 2 or not all(
+        isinstance(color, str) and _STRIP_COLOR.fullmatch(color) for color in colors
+    ):
+        raise ValueError(f"{where} must be a pair of #rrggbb colors")
+    return (cast("str", colors[0]).lower(), cast("str", colors[1]).lower())
 
 
 @dataclass(frozen=True)
 class CurveWidget:
-    """Fieldless curve-editor presentation over a canonical dinkster.curve value."""
+    """Curve-editor presentation over a canonical dinkster.curve value.
+
+    ``input_strip`` draws a color strip under the plot, along the curve's
+    input, and ``output_strip`` one at its left, along its output. Each is a
+    ``(low, high)`` pair of "#rrggbb" colors, stored in lower case, or None
+    for no strip. They are layout: neither signature includes them.
+
+    ``histogram`` names the input beside the curve that is its histogram: an
+    optional HISTOGRAM input of the curve's own scope, whose pin the editor
+    draws inside the curve's editor. Empty means the curve has none. The
+    engine sends the value arriving there to this curve's editor. Like the
+    strips, it is layout: neither signature includes it. ``histogram_visible``
+    sets the line's default visibility; a wire always shows it and a saved
+    workflow may override it. It is layout too."""
+
+    input_strip: tuple[str, str] | None = None
+    output_strip: tuple[str, str] | None = None
+    histogram: str = ""
+    histogram_visible: bool = True
+
+    def __post_init__(self) -> None:
+        if type(self.histogram) is not str:
+            raise ValueError("curve widget histogram must be a string")
+        if type(self.histogram_visible) is not bool:
+            raise ValueError("curve widget histogram_visible must be a bool")
+        for name in ("input_strip", "output_strip"):
+            value = cast("object", getattr(self, name))
+            if value is not None:
+                object.__setattr__(self, name, _strip_colors(value, f"curve widget {name}"))
 
 
 @dataclass(frozen=True)
@@ -1088,9 +1255,7 @@ Widget = WidgetDescriptor | WidgetRepresentations
 """A singular descriptor or a finite named set of descriptors."""
 
 
-def _validate_widget_binding(
-    input_id: str, input_type: TypeExpr, widget: WidgetDescriptor, *, force_input: bool
-) -> None:
+def _validate_widget_binding(input_id: str, input_type: TypeExpr, widget: WidgetDescriptor) -> None:
     """Bind one descriptor to the canonical socket/value domain."""
 
     primitive_type = (
@@ -1100,17 +1265,14 @@ def _validate_widget_binding(
         socket = primitive_type.types[0] if primitive_type.kind == "concrete" else None
         if input_type.kind == "union" and set(input_type.types) == {CORE_INT, CORE_FLOAT}:
             socket = CORE_FLOAT
-        if force_input and input_type == TypeExpr.concrete(FLOATS_TYPE):
-            socket = CORE_FLOAT
         if socket not in (CORE_INT, CORE_FLOAT):
             raise ValueError(
                 f"input {input_id}: number widget requires a concrete "
-                f"INT or FLOAT input, their scalar union, or forced FLOATS, got {input_type.kind} "
+                f"INT or FLOAT input or their scalar union, got {input_type.kind} "
                 f"{socket or ''}".rstrip()
             )
         if socket == CORE_INT:
-            for name in ("min", "max", "step"):
-                bound = getattr(widget, name)
+            for name, bound in widget.numbers():
                 if bound is not None and bound != int(bound):
                     raise ValueError(
                         f"input {input_id}: number widget {name} must be integral "
@@ -1122,13 +1284,17 @@ def _validate_widget_binding(
                         f"on a INT input, got {bound}"
                     )
         if socket == CORE_FLOAT:
-            for name in ("min", "max", "step"):
-                bound = getattr(widget, name)
+            for name, bound in widget.numbers():
                 if isinstance(bound, int) and abs(bound) > _JSON_SAFE_INT:
                     raise ValueError(
                         f"input {input_id}: number widget {name} must use a float "
                         f"outside the safe integer range on a FLOAT input, got {bound}"
                     )
+        if widget.offset is not None and socket == CORE_FLOAT:
+            raise ValueError(
+                f"input {input_id}: number widget offset applies to whole numbers, "
+                "not a FLOAT input"
+            )
         if widget.round is not None and socket != CORE_FLOAT:
             raise ValueError(
                 f"input {input_id}: number widget round requires a concrete FLOAT input"
@@ -1226,6 +1392,8 @@ class Input:
     read_only: FlagOrFormula = False
     disabled: FlagOrFormula = False
     disabled_reason: TextOrFormula = ""
+    automatic: Formula | Lookup | None = None
+    sent: bool = True
     """``label`` is presentation only, text or a formula; empty means "derive
     from the id". Like
     ``tooltip`` and ``widget`` it never
@@ -1248,8 +1416,20 @@ class Input:
     ``visible`` they are layout and never join signatures or execution
     identity.
 
+    ``sent=False`` keeps the field with the workflow only, like a ``State``
+    with ``part_of_run=False``: it is stored and edited, but a run neither
+    receives it nor keys its cache on it, and no formula the engine works out
+    may read it. It has no pin.
+
     ``after_run`` shows an after-run controller on a number or combo field,
     seeded with this mode: what the editor does to the value after each run.
+
+    ``automatic`` is the value used while nothing is stored for the field: a
+    formula or a lookup the editor works out to show and the host works out
+    again when a run is queued. When it cannot be worked out the field's
+    ``default`` is used, so a field that declares it must declare a default.
+    A formula form joins both signatures; a lookup form joins neither. The
+    value worked out is the field's value for the run.
 
     ``on_edit`` holds the steps the host applies with the user's own change of
     this field, in the same undo step. The engine never runs them.
@@ -1284,17 +1464,25 @@ class Input:
             raise ValueError(f"input {self.id}: pin must be a bool")
         if not self.pin and self.pin_first:
             raise ValueError(f"input {self.id}: pin=False conflicts with pin_first")
+        if type(self.sent) is not bool:
+            raise ValueError(f"input {self.id}: sent must be a bool")
+        if not self.sent and self.pin:
+            raise ValueError(
+                f"input {self.id}: a field that is not sent cannot be wired; "
+                "declare it with pin=False"
+            )
         if type(self.hidden) is not bool:
             raise ValueError(f"input {self.id}: hidden must be a bool")
         if type(self.on_edit) is not tuple:
             raise ValueError(f"input {self.id}: on_edit is a tuple of steps")
-        from .body import check_flag_or_formula, check_text_or_formula
+        from .body import check_automatic, check_flag_or_formula, check_text_or_formula
 
         check_text_or_formula(self.label, f"input {self.id} label")
         check_flag_or_formula(self.visible, f"input {self.id} visible")
         check_flag_or_formula(self.read_only, f"input {self.id} read_only")
         check_flag_or_formula(self.disabled, f"input {self.id} disabled")
         check_text_or_formula(self.disabled_reason, f"input {self.id} disabled_reason")
+        check_automatic(self)
         if self.after_run is not None:
             if self.after_run not in AFTER_RUN_MODES:
                 raise ValueError(
@@ -1363,11 +1551,9 @@ class Input:
         # domain. The wrapper contributes no execution state of its own.
         if isinstance(self.widget, WidgetRepresentations):
             for representation in self.widget.representations:
-                _validate_widget_binding(
-                    self.id, self.type, representation.widget, force_input=self.pin_first
-                )
+                _validate_widget_binding(self.id, self.type, representation.widget)
         elif self.widget is not None:
-            _validate_widget_binding(self.id, self.type, self.widget, force_input=self.pin_first)
+            _validate_widget_binding(self.id, self.type, self.widget)
         default: object = self.default
         if (
             self.type == TypeExpr.concrete(CORE_COMBO)
@@ -1456,15 +1642,47 @@ class OutputRepresents:
         )
 
 
+KNOWN_VALUE_LIMITS: Final = ("min", "max", "step", "default")
+"""The limits a known value may name, in their wire order."""
+
+
 @dataclass(frozen=True)
 class OutputKnownValue:
-    """An output equal to one typed primitive input before execution."""
+    """An output equal to one typed primitive input before execution.
+
+    The input and output share one of INT, FLOAT, STRING and BOOLEAN, or the
+    input is a COMBO and the output is a COMBO or a STRING, or both are typed
+    by the same type variable. A variable's known value applies only once the
+    variable is bound to one of those types; otherwise the node runs.
+
+    ``limits`` maps ``min``, ``max``, ``step`` and ``default`` to other optional
+    inputs of the value's type that hold them, so the editor can show the
+    value's own range and reset value. ``min``, ``max`` and ``step`` need an INT
+    or FLOAT value.
+    """
 
     input: str
+    limits: Mapping[str, str] = field(
+        default_factory=lambda: cast("Mapping[str, str]", MappingProxyType({})), hash=False
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.input), str) or not self.input:
             raise ValueError("output known value input must be a non-empty string")
+        raw = cast("object", self.limits)
+        if not isinstance(raw, Mapping):
+            raise ValueError("output known value limits must be a mapping")
+        limits = cast("Mapping[object, object]", raw)
+        for key, target in limits.items():
+            if key not in KNOWN_VALUE_LIMITS:
+                raise ValueError(f"unknown output known value limit: {key!r}")
+            if not isinstance(target, str) or not target:
+                raise ValueError(f"output known value limit {key} must name an input")
+        object.__setattr__(
+            self,
+            "limits",
+            MappingProxyType({key: limits[key] for key in KNOWN_VALUE_LIMITS if key in limits}),
+        )
 
 
 def _validate_media_policy(alpha: str, polarity: str | None, semantic: str | None) -> None:
@@ -1585,8 +1803,7 @@ class OutputProbeSpec:
 VARIANT_KEY_PATTERN = STRUCTURAL_ID_PATTERN
 """A type choice's variant keys."""
 OPTION_KEY_PATTERN = re.compile(r"[!-~]+( [!-~]+)*")
-"""A choice's option keys; widened a second time on 2026-07-29 by
-joint backend/frontend decision to admit printable non-space ASCII tokens
+"""A choice's option keys admit printable non-space ASCII tokens
 separated by single interior spaces (upstream BFL keys "Flux.2 [pro]" and
 "Flux.2 [max]"); no leading, trailing, or consecutive spaces; keys are
 exact-string identity - never trimmed, case-folded, or normalized."""
@@ -1616,23 +1833,110 @@ class SlotValue:
 
 @dataclass(frozen=True)
 class SelectorSpec:
+    """Engine-owned routing: the ``input`` row picks one member of the values
+    group ``group`` and the node's one output passes that member on. The
+    node's ``execute`` never runs.
+
+    The body holds a top-level ``input`` typed ``INT | BOOLEAN``, a top-level
+    group ``group`` of lazy inputs that keeps at least one member, and exactly
+    one output whose type every member shares.
+
+    The members are the branches, in the node's stored order. A stored pick is
+    a member key; a key that is no longer a member, or no pick, picks the
+    first member. A wired pick, or a stored whole number such as a known
+    value a client wrote in, is a position counting from 0; a boolean picks
+    between exactly two members, false first. Any other position fails the
+    Switch. A picked member with nothing plugged in passes nothing on.
+
+    At submission ``lower_selectors`` resolves every top-level Switch whose
+    pick is stored and removes the other members' exclusive cones before
+    validation and asset checks; a wired pick keeps every member and the
+    engine demands only the picked one.
+
+    ``names`` optionally names a top-level hidden ``list<STRING>`` input that
+    the client fills with the branch names, in member order, when the pick
+    is a text or choice wire whose value is not known before the run. The
+    pick input is then typed ``INT | BOOLEAN | STRING | COMBO``. Text on a
+    wire picks the branch with exactly that name, then the member with that
+    key, and otherwise fails the Switch; it never falls back to the first
+    member."""
+
     input: str
-    branches: Mapping[str, str]
+    group: str
+    names: str | None = None
 
     def __post_init__(self) -> None:
-        def nonempty_string(value: object) -> bool:
-            return isinstance(value, str) and bool(value)
-
-        branches = dict(cast("Mapping[object, object]", self.branches))
-        if set(branches) != {"false", "true"}:
-            raise ValueError("selector branches must be keyed by exactly 'false' and 'true'")
-        if not nonempty_string(self.input) or not all(
-            nonempty_string(value) for value in branches.values()
+        values = cast("tuple[object, ...]", (self.input, self.group))
+        if not all(isinstance(value, str) and value for value in values):
+            raise ValueError("selector input and group must be non-empty strings")
+        if self.input == self.group:
+            raise ValueError("selector input and group must be distinct")
+        if self.names is not None and (
+            not isinstance(cast("object", self.names), str)
+            or not self.names
+            or self.names in values
         ):
-            raise ValueError("selector input and branch ids must be non-empty strings")
-        if branches["false"] == branches["true"]:
-            raise ValueError("selector branch input ids must be distinct")
-        object.__setattr__(self, "branches", MappingProxyType(cast("dict[str, str]", branches)))
+            raise ValueError(
+                "selector names must be a non-empty string distinct from its input and group"
+            )
+
+    def members(self, inputs: Iterable[Input]) -> tuple[str, ...]:
+        """The flattened input ids of the members of an effective interface."""
+        prefix = f"{self.group}."
+        return tuple(spec.id for spec in inputs if spec.id.startswith(prefix))
+
+    def pick(
+        self,
+        members: Sequence[str],
+        value: object,
+        *,
+        linked: bool = False,
+        names: Sequence[str] | None = None,
+    ) -> str:
+        """The flattened input id ``value`` picks among ``members``.
+
+        ``linked`` says the pick arrived over a wire; ``names`` are the branch
+        names in member order, when the client sent them.
+
+        Raises ``ValueError`` with the message the Switch shows on its pick."""
+        count = len(members)
+        if not count:
+            raise ValueError("Switch has no branches.")
+        branches = "There is 1 branch" if count == 1 else f"There are {count} branches"
+        if value is None:
+            return members[0]
+        if isinstance(value, str):
+            member = f"{self.group}.{value}"
+            if not linked:
+                return member if member in members else members[0]
+            if names is not None and len(names) != count:
+                raise ValueError(f"Switch received {len(names)} branch names for {count} branches.")
+            if names is not None and value in names:
+                return members[list(names).index(value)]
+            if member in members:
+                return member
+            shown = (
+                list(names) if names is not None else [m[len(self.group) + 1 :] for m in members]
+            )
+            listed = shown[0] if count == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+            verb = "The branch is" if count == 1 else "The branches are"
+            raise ValueError(f'Switch received "{value}". {verb} {listed}.')
+        if type(value) is bool:
+            if count != 2:
+                raise ValueError(
+                    f"Switch received {str(value).lower()}, which picks between exactly two "
+                    f"branches. {branches}; wire a position from 0 to {count - 1} instead."
+                )
+            return members[int(value)]
+        if type(value) is int:
+            if not 0 <= value < count:
+                positions = {1: "0", 2: "0 or 1"}.get(count, f"0 to {count - 1}")
+                raise ValueError(f"Switch received position {value}. {branches}; use {positions}.")
+            return members[value]
+        raise ValueError(
+            f"Switch received {type(value).__name__}; a pick is a branch, a position or "
+            "true or false."
+        )
 
 
 MirrorKind = Literal["glsl", "expression"]
@@ -1908,7 +2212,12 @@ class NodeSchema:
     derived: Mapping[str, Formula] = field(default_factory=lambda: MappingProxyType({}), hash=False)
     """Named formulas other formulas use by name."""
     validate: tuple[Rule, ...] = ()
-    """Rules about the node as a whole, shown on its title."""
+    """Rules about the node as a whole, shown on its title.
+
+    When a run is queued, a rule whose check is false on the stored values
+    fails the run before any node runs, or, when the rule declares a fix,
+    leaves a warning on the node and the run goes on; the engine never runs
+    the fix. A check that reads a wired input has no answer then and passes."""
     title_suffix: TextOrFormula = ""
     """Text or a formula added to the node's title."""
     menu: tuple[Button, ...] = ()
@@ -1976,6 +2285,62 @@ class NodeSchema:
                 )
             except ValueError as exc:
                 raise ValueError(f"{self.node_type}: {exc}") from None
+
+    def _check_selector(self, selector: SelectorSpec) -> None:
+        from .body import Group, scope_rows
+
+        if len(self.outputs) != 1:
+            raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
+        output_type = self.outputs[0].type
+        pick = next((spec for spec in self.inputs if spec.id == selector.input), None)
+        pick_types = {CORE_INT, CORE_BOOLEAN}
+        if selector.names is not None:
+            pick_types |= {CORE_STRING, CORE_COMBO}
+        if pick is None or pick.type.kind != "union" or set(pick.type.types) != pick_types:
+            expected = " | ".join(sorted(pick_types))
+            raise ValueError(f"{self.node_type}: selector input must name a {expected} union input")
+        if selector.names is not None:
+            names = next((spec for spec in self.inputs if spec.id == selector.names), None)
+            in_body = self.effective or any(
+                isinstance(row, Input) and row.id == selector.names for row in self.body
+            )
+            if (
+                names is None
+                or not in_body
+                or not names.hidden
+                or names.required
+                or names.widget is not None
+                or names.type != TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
+            ):
+                raise ValueError(
+                    f"{self.node_type}: selector names {selector.names!r} must name a top-level "
+                    "hidden, not required list<STRING> input with no widget, outside any "
+                    "group, choice or section"
+                )
+        if self.effective:
+            member_types = {
+                spec.type for spec in self.inputs if spec.id in selector.members(self.inputs)
+            }
+        else:
+            group = next(
+                (
+                    row
+                    for row in scope_rows(self.body)
+                    if isinstance(row, Group) and row.id == selector.group
+                ),
+                None,
+            )
+            if group is None or not isinstance(group.value, Input) or not group.value.lazy:
+                raise ValueError(
+                    f"{self.node_type}: selector group must name a top-level group of lazy inputs"
+                )
+            if group.min_members < 1:
+                raise ValueError(f"{self.node_type}: a selector group keeps at least one branch")
+            if _body_has_structure(self.body, allowed=group):
+                raise ValueError(f"{self.node_type}: a selector body holds only rows and its group")
+            member_types = {group.value.type}
+        if member_types - {output_type}:
+            raise ValueError(f"{self.node_type}: selector branches must share the output type")
 
     def __post_init__(self) -> None:
         if not self.node_type:
@@ -2063,30 +2428,7 @@ class NodeSchema:
         if len(set(output_ids)) != len(output_ids):
             raise ValueError(f"{self.node_type}: duplicate output ids")
         if self.selector is not None:
-            selector = self.selector
-            inputs_by_id = {spec.id: spec for spec in self.inputs}
-            if len(self.outputs) != 1 or _body_has_structure(self.body):
-                raise ValueError(f"{self.node_type}: selector schemas require exactly one output")
-            selector_input = inputs_by_id.get(selector.input)
-            if selector_input is None or selector_input.type != TypeExpr.concrete(CORE_BOOLEAN):
-                raise ValueError(
-                    f"{self.node_type}: selector input must name a stored BOOLEAN input"
-                )
-            branch_ids = (selector.branches["false"], selector.branches["true"])
-            if selector.input in branch_ids:
-                raise ValueError(
-                    f"{self.node_type}: selector input must be distinct from branch inputs"
-                )
-            for branch_id in branch_ids:
-                branch = inputs_by_id.get(branch_id)
-                if branch is None:
-                    raise ValueError(
-                        f"{self.node_type}: selector branch {branch_id!r} is not an input"
-                    )
-                if branch.type != self.outputs[0].type:
-                    raise ValueError(
-                        f"{self.node_type}: selector branches must share the output type"
-                    )
+            self._check_selector(self.selector)
         reserved = RESERVED_INPUT_IDS & set(input_ids)
         if reserved:
             raise ValueError(
@@ -2117,6 +2459,7 @@ class NodeSchema:
                 raise ValueError("input types cannot reference another input")
         for output in self.outputs:
             validate_output_type(output.type)
+        self._check_options_inputs(inputs_by_id)
         for output in self.outputs:
             known_value = output.known_value
             if known_value is not None:
@@ -2132,11 +2475,44 @@ class NodeSchema:
                     TypeExpr.concrete(CORE_STRING),
                     TypeExpr.concrete(CORE_BOOLEAN),
                 }
-                if known_input.type != output.type or output.type not in primitive_types:
+                combo = TypeExpr.concrete(CORE_COMBO)
+                same_primitive = known_input.type == output.type and output.type in primitive_types
+                # A chosen option is its text, so a choice may also be known as a STRING.
+                from_choice = known_input.type == combo and output.type in {
+                    combo,
+                    TypeExpr.concrete(CORE_STRING),
+                }
+                # The editor applies a variable's known value only once the
+                # variable is bound to INT, FLOAT, STRING, BOOLEAN or COMBO.
+                same_variable = known_input.type == output.type and output.type.kind == "variable"
+                if not (same_primitive or from_choice or same_variable):
                     raise ValueError(
                         f"{self.node_type}: output {output.id!r} known value must reference "
-                        "an input with the same concrete primitive type"
+                        "an input with the same concrete primitive type or type variable, "
+                        "or a COMBO input for a COMBO or STRING output"
                     )
+                numeric = {TypeExpr.concrete(CORE_INT), TypeExpr.concrete(CORE_FLOAT)}
+                named: set[str] = set()
+                for limit, target in known_value.limits.items():
+                    if limit != "default" and known_input.type not in numeric:
+                        raise ValueError(
+                            f"{self.node_type}: output {output.id!r} known value limit "
+                            f"{limit} needs an INT or FLOAT value"
+                        )
+                    holder = inputs_by_id.get(target)
+                    if (
+                        holder is None
+                        or target == known_value.input
+                        or holder.required
+                        or holder.type != known_input.type
+                        or target in named
+                    ):
+                        raise ValueError(
+                            f"{self.node_type}: output {output.id!r} known value limit "
+                            f"{limit} must name another optional input of the value's type, "
+                            "and no input twice"
+                        )
+                    named.add(target)
             represents = output.represents
             if represents is None:
                 continue
@@ -2167,6 +2543,34 @@ class NodeSchema:
                     self._applies_choices(),
                 )
 
+    def _check_options_inputs(self, inputs_by_id: Mapping[str, Input]) -> None:
+        from .body import all_rows
+
+        rows = (*self.inputs, *(row for row in all_rows(self.body) if isinstance(row, Input)))
+        for row in rows:
+            widget = row.widget
+            widgets = (
+                tuple(item.widget for item in widget.representations)
+                if isinstance(widget, WidgetRepresentations)
+                else (widget,)
+            )
+            for combo in widgets:
+                if not isinstance(combo, ComboWidget) or not combo.options_input:
+                    continue
+                target = inputs_by_id.get(combo.options_input)
+                if (
+                    target is None
+                    or not target.hidden
+                    or target.required
+                    or target.widget is not None
+                    or target.type != TypeExpr.list_of(TypeExpr.concrete(CORE_STRING))
+                ):
+                    raise ValueError(
+                        f"{self.node_type}: input {row.id!r} options_input "
+                        f"{combo.options_input!r} must name a top-level hidden, not required "
+                        "list<STRING> input with no widget"
+                    )
+
     @property
     def is_static(self) -> bool:
         return (
@@ -2188,14 +2592,16 @@ class NodeSchema:
         return None
 
 
-def _body_has_structure(body: Sequence[object]) -> bool:
+def _body_has_structure(body: Sequence[object], *, allowed: object = None) -> bool:
     from .body import Button, Editor, Note, Row, Section, State
 
     for row in body:
         if isinstance(row, (Section, Row)):
-            if _body_has_structure(row.rows):
+            if _body_has_structure(row.rows, allowed=allowed):
                 return True
-        elif not isinstance(row, (Input, Output, State, Note, Button, Editor)):
+        elif row is not allowed and not isinstance(
+            row, (Input, Output, State, Note, Button, Editor)
+        ):
             return True
     return False
 

@@ -131,9 +131,17 @@ class DiskCacheStore:
         self._thread_lock = _root_thread_lock(root)
         self._lock_path = root / ".lock"
         self._pending_writes: dict[CacheKey, object] = {}
+        self._invalidate_asset_references: Callable[[], None] | None = None
         self.hits = 0
         self.misses = 0
         self._with_lock(self._recover)
+
+    def set_asset_reference_invalidator(self, invalidate: Callable[[], None]) -> None:
+        """Bind each store, including aliases sharing a root, before publishing completeness."""
+        with self._thread_lock:
+            if self._invalidate_asset_references not in (None, invalidate):
+                raise ValueError("disk cache already has an asset reference publisher")
+            self._invalidate_asset_references = invalidate
 
     @property
     def root(self) -> Path:
@@ -167,6 +175,8 @@ class DiskCacheStore:
     def _put_pending(self, key: CacheKey, encoded: EncodedEntry, token: object) -> None:
         # This store's invalidation can precede a queued writer taking the lock.
         if self._pending_writes.get(key) is token:
+            if self._invalidate_asset_references is not None:
+                self._invalidate_asset_references()
             self._put(key, encoded)
 
     # -- invalidation (ReleaseGuard contract) -----------------------------

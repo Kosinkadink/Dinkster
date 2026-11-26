@@ -39,6 +39,7 @@ from dinkster_schema.body import (
     Described,
     Formula,
     Group,
+    Lookup,
     Named,
     Note,
     Numbered,
@@ -51,31 +52,61 @@ from dinkster_schema.body import (
     TypeChoice,
     Use,
     Variant,
+    lookup,
 )
 from dinkster_schema.elaborate import elaborate
 from dinkster_schema.model import (
     AssetWidget,
+    ColorWidget,
     ComboWidget,
+    CurveWidget,
     Input,
     NodeSchema,
     NumberWidget,
     Output,
+    OutputKnownValue,
     StringWidget,
     TypeExpr,
 )
 from dinkster_schema.wire import schema_signature, schema_to_wire
-from dinkster_values import ASSET_TYPE, CORE_COMBO, CORE_FLOAT, CORE_INT, CORE_STRING
+from dinkster_values import (
+    ASSET_TYPE,
+    CORE_COMBO,
+    CORE_FLOAT,
+    CORE_INT,
+    CORE_STRING,
+    CURVE_TYPE,
+    HISTOGRAM_TYPE,
+)
 
 INT = TypeExpr.concrete(CORE_INT)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
 STRING = TypeExpr.concrete(CORE_STRING)
 ASSET = TypeExpr.concrete(ASSET_TYPE)
 COMBO = TypeExpr.concrete(CORE_COMBO)
+CURVE = TypeExpr.concrete(CURVE_TYPE)
+HISTOGRAM = TypeExpr.concrete(HISTOGRAM_TYPE)
 
 type Class = Literal["structure", "execution", "layout"]
 type Over = Mapping[str, Mapping[str, object]]
 
 T = TypeVar("T")
+
+
+@lookup
+def probe_seed(prompt: str) -> int:
+    """A lookup for the automatic seed case; never called."""
+    return len(prompt)
+
+
+@lookup
+def probe_limit(steps: int) -> int | None:
+    return steps * 2
+
+
+@lookup
+def probe_samplers() -> list[str]:
+    return ["euler", "ddim"]
 
 
 def declaration(over: Over) -> NodeSchema:
@@ -102,6 +133,10 @@ def declaration(over: Over) -> NodeSchema:
     rows: tuple[BodyRow, ...] = (
         make(Input, "input", id="seed", type=INT, default=1, widget=NumberWidget(min=0)),
         Input("prompt", STRING, default="", widget=make(StringWidget, "string widget")),
+        Input("tint", STRING, default="#ffffff", widget=make(ColorWidget, "color widget")),
+        Input("levels", CURVE, widget=make(CurveWidget, "curve widget")),
+        Input("bins", HISTOGRAM, required=False),
+        Input("floor", INT, required=False),
         Input(
             "model",
             COMBO,
@@ -250,19 +285,106 @@ CASES: tuple[Case, ...] = (
     Case("Input", "read_only", {"input": {"read_only": Formula("seed > 0")}}, "layout"),
     Case("Input", "disabled", {"input": {"disabled": True}}, "layout"),
     Case("Input", "disabled_reason", {"input": {"disabled_reason": "Set by the preset"}}, "layout"),
+    Case(
+        "Input",
+        "automatic (a formula)",
+        {"input": {"automatic": Formula("len(prompt)")}},
+        "execution",
+    ),
+    Case(
+        "Input",
+        "automatic (a lookup)",
+        {"input": {"automatic": Lookup(probe_seed, args=("prompt",))}},
+        "layout",
+    ),
+    Case("Input", "sent", {"input": {"sent": False, "pin": False}}, "structure"),
     # Widgets
     Case("NumberWidget", "max", {"input": {"widget": NumberWidget(min=0, max=9)}}, "layout"),
     Case("NumberWidget", "step", {"input": {"widget": NumberWidget(min=0, step=2)}}, "layout"),
+    Case(
+        "NumberWidget",
+        "offset",
+        {"input": {"widget": NumberWidget(min=0, step=2, offset=1)}},
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "special",
+        {"input": {"widget": NumberWidget(min=0, special={-1: "random"})}},
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "reason",
+        {"input": {"widget": NumberWidget(min=0, reason="Up to 8")}},
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "max as a lookup",
+        {"input": {"widget": NumberWidget(min=0, max=Lookup(probe_limit, args=("steps",)))}},
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "min, step and offset as formulas",
+        {
+            "input": {
+                "widget": NumberWidget(
+                    min=Formula("width // 2"), step=Formula("steps"), offset=Formula("height")
+                )
+            }
+        },
+        "layout",
+    ),
+    Case(
+        "NumberWidget",
+        "offset as a lookup",
+        {"input": {"widget": NumberWidget(step=2, offset=Lookup(probe_limit, args=("steps",)))}},
+        "layout",
+    ),
+    Case(
+        "CurveWidget",
+        "input_strip",
+        {"curve widget": {"input_strip": ("#000000", "#ffffff")}},
+        "layout",
+    ),
+    Case(
+        "CurveWidget",
+        "output_strip",
+        {"curve widget": {"output_strip": ("#000000", "#ff0000")}},
+        "layout",
+    ),
+    Case("CurveWidget", "histogram", {"curve widget": {"histogram": "bins"}}, "layout"),
+    Case(
+        "CurveWidget",
+        "histogram_visible",
+        {"curve widget": {"histogram_visible": False}},
+        "layout",
+    ),
     Case(
         "StringWidget", "dynamic_prompts", {"string widget": {"dynamic_prompts": True}}, "execution"
     ),
     Case("StringWidget", "multiline", {"string widget": {"multiline": False}}, "layout"),
     Case("StringWidget", "placeholder", {"string widget": {"placeholder": "Type"}}, "layout"),
+    Case(
+        "StringWidget",
+        "completions as a formula",
+        {"string widget": {"completions": Formula('["cat", "dog"]')}},
+        "layout",
+    ),
+    Case("ColorWidget", "alpha", {"color widget": {"alpha": True}}, "execution"),
     Case("AssetWidget", "kind", {"asset widget": {"kind": "model/diffusers"}}, "execution"),
     Case("AssetWidget", "selection", {"asset widget": {"selection": True}}, "execution"),
     Case("AssetWidget", "accept", {"asset widget": {"accept": (".safetensors",)}}, "layout"),
     Case(
         "ComboWidget", "options", {"combo widget": {"options": ("euler", "ddim", "lms")}}, "layout"
+    ),
+    Case(
+        "ComboWidget",
+        "options as a lookup",
+        {"combo widget": {"options": Lookup(probe_samplers)}},
+        "layout",
     ),
     # Output
     Case("Output", "id", {"output": {"id": "out2"}}, "structure"),
@@ -274,6 +396,12 @@ CASES: tuple[Case, ...] = (
     Case("Output", "preview", {"output": {"preview": True}}, "layout"),
     Case("Output", "label", {"output": {"label": "Out"}}, "layout"),
     Case("Output", "tooltip", {"output": {"tooltip": "The result"}}, "layout"),
+    Case(
+        "OutputKnownValue",
+        "limits",
+        {"output": {"known_value": OutputKnownValue("seed", limits={"min": "floor"})}},
+        "layout",
+    ),
     # State
     Case("State", "id", {"state": {"id": "camera2"}}, "structure"),
     Case("State", "type", {"state": {"type": INT, "default": 0}}, "execution"),
@@ -488,10 +616,9 @@ CASES: tuple[Case, ...] = (
 
 # Fields of the plan's tables that the declaration classes do not have yet.
 NOT_BUILT = (
-    "Input: order_only, automatic, sent, validate, types",
+    "Input: order_only, validate, types",
     "Output: known, types",
-    "Widgets: StringWidget.tokens, NumberWidget.offset, NumberWidget.reason, "
-    "NumberWidget.special, ColorWidget.alpha",
+    "Widgets: StringWidget.tokens",
 )
 
 

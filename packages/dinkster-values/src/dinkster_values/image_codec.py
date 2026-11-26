@@ -452,10 +452,9 @@ def _pillow() -> Any:
 def decode_image_file(asset: object) -> object:
     """One image-file asset -> a float32 RGB or RGBA batch in [0, 1].
 
-    The ``asset<comfy.IMAGE>`` decode provider (typed assets, joint
-    contract 2026-07-26). ``asset`` is the base asset runtime object,
-    duck-typed to its ``open()`` protocol so this module never imports
-    dinkster-assets (which depends on this package).
+    The ``asset<comfy.IMAGE>`` decode provider. ``asset`` is the base asset
+    runtime object, duck-typed to its ``open()`` protocol so this module
+    never imports dinkster-assets (which depends on this package).
 
     EXIF orientation is applied and colors are normalized to sRGB using a
     valid embedded ICC profile. Images without a usable profile are treated
@@ -547,8 +546,7 @@ def _resize_bilinear_center(array: Any, height: int, width: int) -> Any:
 def merge_image_batches(batches: Sequence[object]) -> object:
     """Merge decoded image batches into ONE batched array (concat on B).
 
-    The ``comfy.IMAGE`` batch-merge provider (typed assets, user amendment
-    2026-07-26): the explicit mechanism that lets a multi-select asset
+    The ``comfy.IMAGE`` batch-merge provider lets a multi-select asset
     widget feed a scalar image input as one batch. Shape policy is the
     parity floor, ComfyUI's ImageBatch: later images pad their channel
     count up to the widest seen (constant 1.0, ImageBatch's alpha fill)

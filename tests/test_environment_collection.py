@@ -1136,7 +1136,17 @@ def test_repeated_updates_collect_old_trees_and_restore_their_history(
     try:
         second_setup = setup[setup.index("setup") : -1]
         second_setup[second_setup.index("--port") + 1] = str(free_port())
+        # One engine uses the shared library at a time, and setup never stops one.
+        code, refused = _run(second, *second_setup)
+        assert code == 1 and "engine main in" in refused["error"], refused
+        assert "Nothing was downloaded or changed" in refused["error"]
+        assert str(root) in refused["error"] and "downloadBytes" not in refused
+        assert not second.exists()
+        assert _run(root, "status")[1]["engines"][0]["state"] == "ready"
+        # Both engines run below, so the second installation gets a library of its own.
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "other-library"))
         code, other_installed = _run(second, *second_setup)
+        monkeypatch.delenv("DINKSTER_LIBRARY_ROOT")
         assert code == 0 and other_installed["current"] == 1, other_installed
         assert Path((second / "store").read_text().strip()) == store
         other_engine = _run(second, "status")[1]["engines"][0]
@@ -1467,17 +1477,19 @@ def test_collection_defers_during_activation_and_rejects_its_old_retention_plan(
 @pytest.mark.parametrize("cleanup_project", [True], indirect=True)
 @pytest.mark.parametrize("command", ["gc", "cleanup"])
 def test_collection_defers_during_move_without_touching_source_generations(
-    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, command: str
+    cleanup_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+    command: str,
 ):
     from dinkster_supervisor import environment_move as move
     from dinkster_supervisor.environment_stores import register_project
 
     root = cleanup_project
+    move_roots = tmp_path_factory.mktemp("move-roots")
     for name in ("XDG_DATA_HOME", "LOCALAPPDATA"):
-        monkeypatch.setenv(name, str(root.parent / (root.name + "-user-data")))
-    store, destination = (
-        root.parent / (root.name + suffix) for suffix in ("-store", "-destination")
-    )
+        monkeypatch.setenv(name, str(move_roots / "user-data"))
+    store, destination = move_roots / "store", move_roots / "destination"
     store.mkdir()
     (root / "store").write_text(str(store) + "\n")
     register_project(root, store)

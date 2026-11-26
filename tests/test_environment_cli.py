@@ -2764,6 +2764,43 @@ def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
     assert (tmp_path / "current").read_bytes() == b"1\n"
 
 
+def test_history_marks_migrated_library_by_snapshot_capability(tmp_path: Path) -> None:
+    library = tmp_path / "dinkster-library"
+    library.mkdir()
+    (library / "library-format.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.library-format/1",
+                "libraryApi": 1,
+                "requiredCapabilities": ["library-helper/1"],
+            }
+        )
+    )
+    directory = tmp_path / "history"
+    directory.mkdir()
+    for number, capabilities in ((1, []), (2, ["library-helper/1"])):
+        (directory / f"{number:020d}.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.install-history/1",
+                    "id": number,
+                    "snapshot": {
+                        "engine": {"version": "0.0.15"},
+                        "metadata": {
+                            "engine-manifest.json": json.dumps({"capabilities": capabilities})
+                        },
+                    },
+                }
+            )
+        )
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    code, listed = _run(tmp_path, "history")
+    assert code == 0, listed
+    assert any("Snapshot 1 cannot open this migrated library" in line for line in listed["plan"])
+    assert not any("Snapshot 2 cannot open" in line for line in listed["plan"])
+    assert {path: path.read_bytes() for path in before} == before
+
+
 def _runtime_project(root: Path) -> int:
     make_generation(root)
     port = free_port()
@@ -2836,7 +2873,7 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
         (library / "project-folders.json").write_text('{"hiddenModels": {"art": ["model"]}}')
     retained = root / "history"
     retained.mkdir(parents=True)
-    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14", "0.0.17", "0.0.18"), 1):
+    for number, version in enumerate(("0.0.3", "0.0.4", "0.0.14", "0.0.17", "0.0.18", "0.0.19"), 1):
         (retained / f"{number:020d}.json").write_text(
             json.dumps(
                 {
@@ -2861,13 +2898,14 @@ def test_environment_plan_discloses_library_migrations_and_excluded_snapshots(
         "--plan",
     )
     assert code == 0, result
-    assert "library after apply requires Dinkster 0.0.18 or newer" in result["plan"]
+    assert "library after apply requires Dinkster 0.0.19 or newer" in result["plan"]
     excluded = next(line for line in result["plan"] if line.startswith("library excludes"))
     assert "history entry 1 (Dinkster 0.0.3)" in excluded
     assert "history entry 2 (Dinkster 0.0.4)" in excluded
     assert "history entry 3 (Dinkster 0.0.14)" in excluded
     assert "history entry 4 (Dinkster 0.0.17)" in excluded
-    assert "history entry 5 (Dinkster 0.0.18)" not in excluded
+    assert "history entry 5 (Dinkster 0.0.18)" in excluded
+    assert "history entry 6 (Dinkster 0.0.19)" not in excluded
     for arguments in (("history",), ("history", "show", "3")):
         code, listed = _run(root, *arguments)
         assert code == 0, listed
@@ -3587,8 +3625,12 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         assert _run(root, "doctor")[1]["status"] == "clean"
         initial_settings = (root / "environment.json").read_bytes()
         assert json.loads(initial_settings)["packageIndex"] == package_index
+        # Every installation setup creates binds to the one shared library.
+        assert json.loads(initial_settings)["libraryRoot"] == str(library.resolve())
         assert json.loads((store / "projects.json").read_bytes())["projects"] == [str(root)]
         other = tmp_path / "second project"
+        # The engine above holds the shared library; the store checks below need their own.
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "other-library"))
         code, second_plan = _run(
             other,
             "setup",
@@ -3617,6 +3659,7 @@ def test_confirmed_offline_setup_update_rollback_and_busy_refusal(
         )
         assert code == 1 and "volume already uses store" in conflict["error"]
         assert not other.exists() and not (tmp_path / "another-store").exists()
+        monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(library))
         subprocess.run(fixture["commands"]["advance"], check=True, capture_output=True, timeout=30)
         before_selection = {
             p.relative_to(root): content_digest(p)
@@ -4084,6 +4127,8 @@ def test_development_setup_shares_the_generations_selected_library(
     try:
         code, result = run("--approve", preview["sourceApproval"], "--yes")
         assert code == 0, result
+        # Only setup binds to the shared library in the Dinkster home folder.
+        assert "libraryRoot" not in json.loads((root / "environment.json").read_text())
         generation = root / "builds" / str(result["current"])
         html = subprocess.check_output(
             [

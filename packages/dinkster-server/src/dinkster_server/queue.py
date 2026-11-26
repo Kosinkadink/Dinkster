@@ -49,6 +49,7 @@ from dinkster_engine import (
     GraphValidationError,
     RunResult,
 )
+from dinkster_engine.automatic import AutomaticRecord
 from dinkster_graph import Graph, graph_to_wire, lower_selectors
 from dinkster_protocol import (
     AttentionPolicyConfig,
@@ -127,6 +128,9 @@ class Job:
     """Effective run-scoped single-job multi-GPU mode and CUDA lanes."""
     cache_enabled: bool = True
     """Whether native result reuse and single-flight coalescing apply."""
+    automatic: tuple[AutomaticRecord, ...] = ()
+    """Each automatic field the run uses: the value written into ``graph`` and
+    whether it was worked out or was the field's default."""
     attempt: int = 1
     """Engine-side execution attempt for this jobRef. Retry plumbing is not
     implemented yet, so every current job has exactly one attempt."""
@@ -190,6 +194,7 @@ class JobQueue:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
+        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -211,6 +216,7 @@ class JobQueue:
         self._job_context = job_context
         self._publish_outputs = publish_outputs
         self._publish_image_documents = publish_image_documents
+        self._cache_hit_valid = cache_hit_valid
         self._jobs: dict[JobKey, Job] = {}
         self._pending: list[Job] = []  # sorted by (-priority, seq) at dispatch
         self._seq = itertools.count()
@@ -278,11 +284,14 @@ class JobQueue:
         attention_config: AttentionPolicyConfig | None = None,
         single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
+        automatic: tuple[AutomaticRecord, ...] = (),
     ) -> Job:
         """Queue a lowered graph under an optional pre-pinned execution."""
         if self._closed:
             raise RuntimeError("queue is closed")
         execution = execution or self._engine.pin_execution()
+        if self._cache_hit_valid is not None:
+            execution = replace(execution, cache_hit_valid=self._cache_hit_valid)
         if self._publish_outputs is not None:
             execution = replace(execution, publish_outputs=self._publish_outputs)
         execution = replace(
@@ -375,6 +384,7 @@ class JobQueue:
             attention_config=attention_config,
             single_job_multi_gpu=single_job_multi_gpu,
             cache_enabled=cache_enabled,
+            automatic=automatic,
         )
         if self._store is not None:
             # Durability before acknowledgment: if the accepted-job record

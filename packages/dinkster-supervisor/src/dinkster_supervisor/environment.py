@@ -92,9 +92,11 @@ from .environment_state import (
     generation_number,
     interpreter,
     journal_paths,
+    library_engine,
     library_root,
     read_current,
     read_document,
+    shared_library,
     write_document,
     writer_lock,
     writer_operation,
@@ -494,6 +496,16 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     current = read_current(root)
     if args.operation == "setup" and current is not None:
         raise EnvironmentError("environment already has an active snapshot")
+    if args.operation == "setup" and settings is None:
+        library = shared_library()
+        if (engine := library_engine(library)) is not None:
+            # Never stop it here: it may be running a job.
+            raise EnvironmentError(
+                f"Setup starts the new installation's engine to check it, and only one "
+                f"engine uses the shared library {library} at a time. It is in use by "
+                f"{engine}. Stop that engine (dinkster stop) and run setup again. "
+                "Nothing was downloaded or changed."
+            )
     if args.operation == "update" and (settings is None or current is None):
         raise EnvironmentError("environment has no active snapshot; run setup first")
     if args.operation == "update" and current is not None:
@@ -1263,6 +1275,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                             "mirrors": list(mirrors),
                             "packageIndex": package_index,
                             "port": port,
+                            # A development environment keeps its own library, so
+                            # contributor runs never touch the shared one.
+                            **({} if developing else {"libraryRoot": str(shared_library())}),
                         },
                     )
                     snapshot = (root / "environment.json").read_bytes()
@@ -1606,7 +1621,14 @@ def _restore(
     destination = args.destination if args.operation == "fork" else None
     result.update(
         restore_entry(
-            args.root, entry_id, apply=False, approval=args.approve, destination=destination
+            args.root,
+            entry_id,
+            apply=False,
+            approval=args.approve,
+            destination=destination,
+            project=args.project,
+            revision=args.revision,
+            scope=args.scope,
         )
     )
     can_apply = result["status"] != "approval-required" or args.approve is not None
@@ -1625,6 +1647,9 @@ def _restore(
                 expected_plan=cast("dict[str, object]", result["restorePlan"]),
                 reason=reason,
                 destination=destination,
+                project=args.project,
+                revision=args.revision,
+                scope=args.scope,
             )
         )
         engines = list(engine_status(destination or args.root))
@@ -2369,6 +2394,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
             "--generation",
             dest="generation",
             type=int,
+            metavar="SNAPSHOT",
             help="inspect a retained snapshot",
         )
     for action in ("fix-one", "fix-all"):
@@ -2409,6 +2435,8 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         if action == "add":
             command.add_argument("url", help="explicit public HTTPS source repository URL")
         command.set_defaults(approve=None)
+        if action == "release":
+            command.set_defaults(project=None, revision=None, scope=None)
         if action != "release":
             target = command.add_mutually_exclusive_group()
             target.add_argument(
@@ -2678,6 +2706,11 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     legacy_import.add_argument("generation", type=int, metavar="snapshot")
     for command in (rollback, restore, fork):
         command.add_argument("--approve", help="approve one complete restore proposal digest")
+        command.add_argument("--project", help="review restore for this saved project")
+        command.add_argument("--revision", type=int, help="observed saved project revision")
+        command.add_argument(
+            "--scope", choices=("every-project", "only-project"), help="explicit restore scope"
+        )
     gc = commands.add_parser("gc", help="collect obsolete snapshot trees after confirmation")
     cleanup = commands.add_parser("cleanup", help="preview snapshot retention or set its policy")
     cleanup.add_argument(

@@ -11,8 +11,7 @@ stale "free" number behind.
 INFORMATIONAL ONLY: nothing here feeds admission. Physical free is
 global while allocator-reclaimable bytes are process-local; measured
 free entering admission math would double-count and admit memory another
-process cannot actually release (Oracle review, 2026-07-26 - see
-ROADMAP "Memory governance (interprocess)"). Measurements exist so
+process cannot actually release. Measurements exist so
 /memory/status shows ground truth beside declared budgets, nothing more.
 """
 

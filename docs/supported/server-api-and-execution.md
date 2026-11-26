@@ -57,14 +57,17 @@
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
   conflicting producer stamps are refused
-- Explicit public-acquisition receipt consumers can use a shared helper without
-  losing unknown fields or changing verified-fetch checks. Raw receipts are
-  immutable and query-bound pages observe peer writes. Ordinary startup retains
-  file-backed receipts; no source migration is activated.
-- Explicit runtime and pack-settings consumers can share revision-checked
-  preferences through a library helper. Unknown fields survive edits, stale
-  saves refuse, and helper failure does not fall back to file writes. Ordinary
-  engine startup still uses legacy settings; no settings migration is activated.
+- Persistent engine startup preserves legacy records in a backed-up,
+  restartable migration and serves shared records through the selected tools'
+  library helper. Finished history, sources, permissions, folder preferences and
+  environment/pack settings survive engine replacement. Accepted work, journals,
+  sessions, worker snapshots and values use private engine state outside the library.
+- Public-acquisition receipts retain unknown fields and verified-fetch checks.
+  Raw receipts are immutable and query-bound pages observe peer writes.
+- Runtime and pack preferences use revision-checked helper records. Unknown
+  fields survive edits, stale saves refuse, and helper failure does not fall
+  back to file writes. Incompatible snapshots are disclosed and refused before
+  an engine starts, based on library helper capability rather than version order.
 - Routes: health/auth, node catalog, extension/composition diagnostics,
   choices, pack assets, jobs (status, cancellation, event
   replay), values, queue control, live WebSocket events, settings, memory
@@ -87,13 +90,8 @@
   rendering settles, including after request cancellation and before a source
   descriptor opens. Independent readers keep their own lifetime. This does not
   certify legacy migration references or enable cleanup.
-- Completed image-document responses retain all declared external resources
-  under their exact original result source before returning, including cache
-  revalidation. Associations survive library restart and remain protected while
-  the source is unclaimed or any source-bound consumer survives. Final release
-  or replacement ends that protection; stale requests cannot revive it.
-  Original offers and completeness remain unchanged. Durable document copies
-  still require their own resource declarations; cleanup remains disabled.
+- Completed image-document responses retain their declared external resources while
+  rendering settles. Durable document copies require their own resource declarations.
 - Helper clients can request a file's content digest and reuse its verified
   account-local identity across libraries without reading unchanged bytes.
   Concurrent requests for one folder share the completed result. Helpers
@@ -155,100 +153,34 @@
   project and scope, with name, kind, origin and inclusive date filters.
   Pages retain all aliases for a matching digest and do not read asset bytes
   or inventory unrecorded files.
+- Generated preview and produced-source bytes use the engine's temporary
+  storage separately from uploaded and saved content. Saving a layered image
+  document preserves its non-inline resources in durable storage, so deleting
+  the temporary source does not remove the saved document's pixels. Each engine
+  collects only its own temporary directory. Temporary previews are cleared on
+  startup and clean stop unless `--keep-temporary-files` is set. Reopening
+  Desktop therefore leaves generated previews empty until the workflow runs
+  again; uploaded and saved files remain available. The default running limit
+  is 10 GB. Size cleanup removes the oldest eligible files first, and Clear
+  removes eligible files immediately. Queued inputs, active job data and open
+  readers are protected without browser file lists. The independent disk result
+  cache is not emptied: entries naming deleted files miss and recompute, while
+  self-contained cached values stay reusable.
 - Asset record catalogs upgrade automatically with versioned migrations.
   Matching unversioned catalogs retain scoped records, verified media grants,
   dependency manifests, and derivations; incompatible schemas are refused.
-- Scoped retained-value associations persist explicit asset identities for
-  documents, history, shown results and previews without parsing workflow
-  contents or granting access to bytes. Revision-checked replacement and
-  release prevent stale clients from removing newer associations, including
-  after restart or owner reuse. Association registration is explicit, not
-  automatic history or preview integration; it does not enable cleanup.
-- Clients can read immutable scoped result offers and claim their exact
-  server-selected roots into fresh shown-result or preview owners. Durable
-  source bindings permit reconciliation after a lost acknowledgment; a claim
-  cannot overwrite an existing owner. Releasing an owner does not delete
-  its result bytes. After the last owner releases a complete source, its
-  exact token can admit a fresh owner while its original bytes and derived
-  resources remain locally verifiable. The ordinary retention collector
-  may delete released, unreferenced data; a later claim then returns not
-  found rather than an ownership conflict. Library-backed jobs persist source offers
-  before fresh, cached and coalesced output events and terminal targets;
-  events, status and completed-value discovery expose the exact runtime
-  node/output binding. Selecting a nested element retains the complete
-  parent-output source rather than narrowing its roots. Unknown
-  codecs remain incomplete. Portable VIDEO and legacy tensor-layer results
-  have complete reference accounting, including previously stored cache
-  manifests when their types are admitted. Previously sealed incomplete
-  result offers remain incomplete; loading a codec never rewrites their
-  authority. This does not cover live previews or restored
-  history, certify frontend coverage, or enable cleanup.
-- Scoped terminal publication discovery retains original output tokens,
-  execution identity and provenance independently of process restart,
-  queue/cache retirement and ordinary history deletion. It never substitutes
-  a newer publication or reconstructs tokens for legacy rows. Terminal saved
-  artifacts carry original offers bound to the exact saved-file descriptor,
-  terminal index and optional published preview, retaining both identities.
-  Failed, cancelled and unknown-codec sets remain incomplete. This is source
-  discovery, not stored output payloads or completed frontend restoration;
-  cleanup remains disabled.
-- Durable terminal history retains external asset identities from target
-  values, saved artifacts and their optional published previews independently
-  of execution-cache entries, without storing output payloads or changing
-  history responses. If a process exits after publishing a complete result but
-  before recording history, restart preserves that result's exact output, saved
-  file and preview identities in interrupted history. Missing or incomplete
-  publications still refuse collection inspection. This does not retain opaque
-  workflow contents or live previews, or bypass other deletion safeguards.
-- Cached image-document renders retain their source, resources and output
-  identities independently of catalog records. Verified cache reuse can certify
-  previously unknown references without changing render provenance or responses.
-  Unknown or unreadable derivation references block collection inspection;
-  cleanup remains disabled.
-- New composed-server vaults have initialized produced accounting before serving,
-  including zero adopted bytes before the first produced output. Missing or corrupt
-  inventory in existing vaults remains unavailable and is not recreated.
-- Operators can inspect vault/adoption byte observations and held known asset
-  references without exposing filesystem paths. Unknown accounting is null,
-  with explicit blocked reasons. Cache atoms without exhaustive registered
-  reference declarations refuse inspection, including inside nested containers
-  and after disk-cache restart. Recognized inactive job scratch reports its
-  bytes while host-job and store ownership are exclusively held; live, unsafe
-  or unknown scratch remains unavailable. Individual owner registrations do
-  not enable collection. Server-admitted client generations can acknowledge
-  their exact eight-class owner census separately from vault-wide eligibility.
-  Census acknowledgments can exceed the job-submission size limit when the
-  actual census requires it; unrelated requests keep their normal size bounds,
-  and oversized, altered or stale acknowledgments do not authorize collection.
-  Native browser imports of selected immutable pack modules need no retention
-  header and do not invalidate the census; their authentication and digest
-  checks still apply. Management can observe whether queues are idle without
-  changing the asset census or reading job values. Full queue reads, executable
-  pack routes and asset reads remain admitted.
-  Legacy admission, historical unknown owners, active streams and pending reads
-  block collection. Disconnected or unacknowledged clients stop vetoing collection
-  after five minutes of inactivity, without releasing their owners or potentially
-  observed produced bytes. Those holdings stay until the same client returns and
-  acknowledges its exact census; repeated crashes can accumulate retained bytes.
-  Client and operator censuses report departed clients, owners and quarantined
-  bytes. Returning clients restore the veto before observing new values. Closing
-  streams alone does not authorize collection; a quiescent client must still
-  acknowledge its exact owner snapshot. Operator Clear and size-policy enforcement
-  collect only relinquished produced assets while all reference and publication
-  barriers are held; retained bytes remain protected.
-  Vault ownership inspection reports busy for active managed readers, writers
-  and server jobs, or unavailable for unknown ownership state. Server jobs keep
-  that ownership through terminal recovery and durable history publication;
-  media publication keeps it through reference commits despite cancellation.
-- Startup recovers explicitly offered publications from inactive job scratch
-  through verified engine-vault adoption, without rerunning jobs. Scratch removal
-  requires evaluated client completeness and verified durable handoffs; restart
-  invalidates known clients, and historical unknown clients remain blocked.
-  Active, unknown or corrupt stores remain blocked; recovery of another
-  recognized job can continue. Existing untracked assets are not reclassified.
-  Success, failure and cancellation also reconcile that job's offered bytes
-  after execution settles and before reporting its terminal state. Recovery
-  preserves the original job outcome; unrelated jobs are untouched.
+- Result offers are immutable server-created publications for runtime outputs.
+  Events, status, and completed-value discovery expose the matching publication;
+  nested-value selection keeps the parent output binding. Unknown codecs remain
+  incomplete.
+- Scoped terminal publication discovery retains original output publications,
+  execution identity, and provenance independently of process restart,
+  queue/cache retirement, and ordinary history deletion. It never substitutes a
+  newer publication or reconstructs legacy output bindings. Failed, cancelled,
+  and unknown-codec sets remain incomplete.
+- Durable terminal history retains recorded external asset identities from target
+  values, saved artifacts, and their optional published previews without storing
+  output payloads or changing history responses.
 - Host-validated saved-file artifacts are cataloged in the submitted project
   with job and node provenance before the job reports completion. Unavailable
   or revoked files and catalog failures fail the job rather than report a
@@ -442,6 +374,13 @@
   Hugging Face credentials are never sent to Civitai. Local files take
   precedence; disabled folders, missing writable destinations and ambiguous or
   absent declarations return distinct states. Plans expire after 15 minutes.
+  Operators with asset-read authority can POST `project`, `scope` and up to 256
+  `models` (`name`, `kind`) to `/api/models/presence` to learn, in order, whether
+  each name binds for that project: `local`, `model-hidden`, `folder-disabled`
+  (with `disabledLocations`), `duplicate` when more than one file in the
+  project's folders has the name, so it binds none of them, or `missing`, which
+  says whether the download plan accepts the name (`plannable`). It reads only local folders, as plans do before
+  any source lookup, and holds no plan.
   Operators can GET `/api/models/providers/huggingface?scope=local` with
   asset-read authority to inspect only whether a credential is configured.
   PUT with `{"token":"..."}` additionally requires settings-write authority
@@ -521,7 +460,14 @@
   expiry and explicit revocation. Authenticated servers require a recently
   verified user JWT; signing in resumes the same delegation under the user's
   current grants and permission toggles. Auth-off agents do not require JWT
-  freshness
+  freshness. Explicitly helper-backed hosts share permission overrides and
+  delegation revocations across engines and restarts. Stale permission edits
+  return 409; unavailable authorization storage returns 503 without using cached
+  grants. Human-kind credentials, whether JWT or static, remain usable during an
+  authorization storage outage. Federated asset routes report unavailable
+  authorization with their versioned `service-unavailable` error. Open event
+  streams close rather than continuing with stale authority.
+  Ordinary startup retains legacy authorization storage.
 - Declarative resolver-index subscriptions from local JSON files or HTTPS
   URLs, with ETag revalidation, regional mirror priority, digest-verified
   acquisition leads, isolated source removal, and exact-basename suggestions
@@ -538,6 +484,86 @@
   Newly acquired assets retain a discoverable name and sanitized winning
   download URL in the submitting scope and project. Interrupted catalog
   publication recovers verified vault bytes without downloading again.
+- Helper-capable engines with separate engine-state directories can serve one
+  library concurrently, see each other's saved records, and reject stale edits.
+  Stopping or killing one leaves the other able to read and save. Direct engines
+  still require exclusive library ownership, and migration and format upgrades
+  still require exclusive admission. Each engine relays committed library changes
+  to connected WebSocket clients with a `library_changed` invalidation ping.
+  The ping contains no record IDs, fields or scope details; clients refetch
+  through authorized HTTP routes. Working-reference updates alone do not send it.
+- Explicit server launches can keep accepted jobs, run journals, collaboration
+  sessions, worker snapshots and remote values in an exclusively owned
+  engine-state directory outside the library. Unfinished uploads stay in a
+  separate engine directory on the vault disk, even when engine state is on
+  another disk; linked upload-staging directories refuse. The state directory is
+  bound to its library even after shutdown; another library and unbound populated
+  state refuse without opening stores. Interrupted first-use binding retries
+  automatically without adopting arbitrary existing state or following linked
+  staging files. Restarts recover only that engine's accepted work and remove
+  only its unfinished latent uploads; finished history remains
+  shared. Managed launches declaring `library-helper/1` select engine state
+  before engine imports: equal or newer snapshots carry working state forward,
+  while an older snapshot starts in a fresh directory and preserves the newer
+  state and its uploads. Rebuilt older engine releases start clean even under a
+  higher snapshot number; restoring an earlier same-version release is also
+  isolated. Selection survives interrupted publication and refuses
+  incompatible or unbound populated state. Current engines declare that
+  capability; direct persistent launches select account-local engine state when
+  no explicit directory is supplied. Stale latent-upload cleanup uses only the
+  selected engine's staging on the vault disk, not shared scratch, the shared
+  vault or another engine's staging. Legacy working stores are backed up before
+  conversion.
+- Library API 1 can append, read, page and remove scoped, project-owned finished
+  history. Retries keep the original run and cannot resurrect deleted history;
+  unknown document fields survive. Pages bind their filters and order equal-time
+  runs deterministically. This API refuses an unmigrated legacy history rather
+  than hiding it. Explicitly helper-backed hosts share finished history while
+  keeping accepted work in separate engine files. A failed publication keeps the
+  accepted job for recovery, and a repeated terminal write cannot resurrect a
+  deleted run. HTTP lists preserve their existing paging and scope isolation;
+  unavailable helpers return 503 without fallback. Ordinary startup remains
+  legacy, and engine-side collection refuses these helper-backed stores.
+  Finished-history records, dependency and derivation manifests, saved records,
+  catalog observations, media grants, result offers, renditions, and terminal
+  results persist through Library API 1. Result and terminal publications remain
+  bound to their producing engine, scope, job, and attempt; conflicting
+  publications are refused. Library API 1 preserves provenance records and resolver snapshots
+  larger than a single protocol message, including large merged records and
+  source withdrawals. Older helpers still support ordinary-sized calls;
+  large calls require the advertised capability. Available memory and native
+  database limits still apply. Engine acquisition stores can use helper-backed
+  provenance and verified public receipts, observing other helpers' writes and
+  preserving unknown stored fields. Unavailable advisory provenance does not
+  block declared acquisition sources or requirement planning. Resolver consumers
+  can use shared helper subscriptions, atomic multi-source refreshes, regional
+  leads, filename guesses and durable official-provider choices. Unavailable
+  shared resolver state, including a snapshot this engine cannot parse, supplies
+  no optional declarations or guesses; management list and unsubscribe failures
+  return structured service-unavailable errors.
+  Concurrent unsubscribe prevents a stale refresh from restoring its source.
+  Project folder preferences can use shared helper storage for project order,
+  exclusions, outputs and hidden models. Reads observe peer changes; stale writes
+  refuse without losing unknown fields or another project's choices. Preferences
+  do not grant filesystem authority or relocate account-wide model locations.
+  Shared filesystem-grant configuration supports validated revision-bound reads
+  and edits, preserving unknown fields on retained grants. Stale edits refuse
+  atomically. Grant configuration and project preferences can also be read from
+  one snapshot and patched together: either both revisions match and both changes
+  commit, or neither changes. Explicitly helper-backed folder routes commit grants
+  and project membership together before publishing live changes. Stale edits
+  return conflict without changing live grants or worker snapshots; unavailable
+  helper reads return service-unavailable errors. Peer edits become visible on
+  folder access. Restart-only engines retain their live grants and snapshots
+  until restart. Explicit helper-backed model settings remain account-wide:
+  separate libraries share locations and remembered exact files without granting
+  one another project membership. Stale model edits refuse, unknown stored fields
+  survive, and helper or unmigrated-account failures return service-unavailable
+  errors without falling back to JSON. Restart-only engines retain active model
+  grants. Ordinary engine startup still uses legacy folder and model storage.
+  Named provenance updates retain extensions
+  on surviving records without retaining withdrawn digests. Legacy catalogs remain
+  read-only until migration; engine byte verification, history and cleanup are unchanged.
 - Durable job queue when history is configured: accepted jobs are recorded
   before acknowledgment, and jobs lost to a server crash or restart appear
   in history as "interrupted" (distinguishing never-started from
@@ -580,6 +606,13 @@
   Accelerator policy distinguishes current settings from budgets and Aimdo
   policies applied to each existing worker; changing a restart-bound setting
   never relabels a worker that has not restarted.
+  Explicitly helper-backed hosts persist runtime preferences per environment.
+  CLI choices retain precedence, unknown preferences survive edits, and stale
+  saves return 409 without changing live policy. Reading settings refreshes the
+  saved-edit view without applying another engine's policy to this one, even when
+  that engine saved preferences this version cannot use. Reopening validates and
+  adopts the saved values. Unavailable storage returns 503 without fallback.
+  Ordinary startup retains file-backed settings.
 - Paused, idle queues support `POST /memory/free` to release volatile
   execution caches and live workers' declared memory consumers without
   starting dormant workers. Results report each worker and consumer;

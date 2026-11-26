@@ -2271,6 +2271,16 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         ),
         engine=engine_requirement,
     ).write(path)
+    recorded_lock = json.loads(path.read_text())
+    candidates = recorded_lock["packages"][1]["wheels"]
+    candidates.append(
+        {
+            **candidates[-1],
+            "url": f"https://example.org/{source.name}",
+            "registry": "https://example.org/simple",
+        }
+    )
+    path.write_text(json.dumps(recorded_lock))
     record = Generation.read(generation / "build.json")
     files = [*record.files, (f"{lock_name}/pack-lock.json", content_digest(path))]
     shared_name = f"zzz~{part}" if part else "zzz"
@@ -2371,8 +2381,29 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
         }
         receipt_path = f"{lock_name}/installed-wheels.json"
         candidate["metadata"][receipt_path] = json.dumps(receipt)
+        duplicated = json.loads(private.to_json())
+        aliases = duplicated["packages"][1]["wheels"]
+        aliases.append(
+            {
+                **aliases[0],
+                "url": f"https://example.org/{source.name}",
+                "registry": "https://example.org/simple",
+            }
+        )
+        candidate["metadata"][f"{lock_name}/pack-lock.json"] = json.dumps(duplicated)
         missing = missing_inputs(candidate, store)
         assert not missing, json.dumps(missing, indent=2)
+        for field, value in (
+            ("sha256", "f" * 64),
+            ("size", required.size + 1),
+            ("filename", required.filename.replace("required_extra", "Required_extra")),
+        ):
+            original = aliases[-1][field]
+            aliases[-1][field] = value
+            candidate["metadata"][f"{lock_name}/pack-lock.json"] = json.dumps(duplicated)
+            with pytest.raises(EnvironmentError, match="distinct portable basenames"):
+                missing_inputs(candidate, store)
+            aliases[-1][field] = original
         candidate["metadata"][f"{lock_name}/pack-lock.json"] = replace(
             private, requirements=("fixture-base<1.2",)
         ).to_json()
@@ -3079,6 +3110,118 @@ def test_snapshot_refuses_modified_metadata_and_linked_pack_parents(tmp_path: Pa
     assert (target / "private").read_text() == "not software"
 
 
+@pytest.mark.parametrize("scope", ["every-project", "only-project"])
+def test_project_restore_binds_scope_and_rechecks_affected_projects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scope: str
+) -> None:
+    from dinkster_library import LibraryClient
+
+    from tests.fixtures.environments import build as publisher
+
+    encode = publisher.canonical_json
+
+    def canonical_json(document: dict) -> bytes:
+        if document.get("format") == "dinkster.engine/1":
+            document["capabilities"].append("library-helper/1")
+            document["libraryApi"] = 1
+        return encode(document)
+
+    monkeypatch.setattr(publisher, "canonical_json", canonical_json)
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.delenv("DINKSTER_LIBRARY_ROOT", raising=False)
+    monkeypatch.setenv("DINKSTER_TEST_FORBID_RESOLUTION", "1")
+    fixture = publisher.build(tmp_path / "fixture", "fixture-cpu", free_port())
+    source, target = Path(fixture["root"]), tmp_path / "isolated"
+    setup = fixture["commands"]["setup"]
+    code, installed = _run(source, *setup[setup.index("setup") : -1])
+    assert code == 0, installed
+    try:
+        shutil.copyfile(
+            fixture["updatedChannel"], Path(fixture["mirror"]) / "channels/nightly.json"
+        )
+        code, updated = _run(source, "update", "--yes")
+        assert code == 0 and updated["current"] == 2, updated
+        identity = (source / "environment-id").read_text().strip()
+        library = Path(json.loads((source / "environment.json").read_text())["libraryRoot"])
+        with LibraryClient(library) as helper:
+            projects = {}
+            for identifier in ("film", "sibling"):
+                helper.call("projects.register", id=identifier, name=identifier)
+                projects[identifier] = helper.call(
+                    "projects.patch",
+                    id=identifier,
+                    revision=1,
+                    patch={"environment": {"id": identity}},
+                )["project"]
+        original_history = history(source)
+        operation = ("restore", "1") if scope == "every-project" else ("fork", "1", str(target))
+        context = ("--project", "film", "--revision", "2")
+        scoped = (*context, "--scope", scope)
+        code, refused = _run(source, *operation, *context, "--plan")
+        assert code == 1 and "requires explicit" in refused["error"], refused
+        code, planned = _run(source, *operation, *scoped, "--yes")
+        assert code == 0 and planned["status"] == "approval-required", planned
+        assert planned["restorePlan"]["exact"] is True
+        review = planned["restorePlan"]["projectReview"]
+        assert review["project"] == projects["film"]
+        assert [item["project"] for item in review["projects"]] == list(projects.values())
+        assert planned["restorePlan"]["scope"] == scope
+        approval = planned["restorePlan"]["alternatives"][0]["approval"]
+        other_operation = (
+            ("fork", "1", str(tmp_path / "other")) if scope == "every-project" else ("restore", "1")
+        )
+        other_scope = "only-project" if scope == "every-project" else "every-project"
+        code, refused = _run(
+            source, *other_operation, *context, "--scope", other_scope, "--approve", approval
+        )
+        assert code == 1 and "approval is stale" in refused["error"], refused
+        if scope == "only-project":
+            code, refused = _run(
+                source, "fork", "1", str(tmp_path / "other"), *scoped, "--approve", approval
+            )
+            assert code == 1 and "approval is stale" in refused["error"], refused
+        with LibraryClient(library) as helper:
+            sibling = helper.call(
+                "projects.patch", id="sibling", revision=2, patch={"name": "Other film"}
+            )["project"]
+        code, refused = _run(source, *operation, *scoped, "--approve", approval)
+        assert code == 1 and "approval is stale" in refused["error"], refused
+        assert history(source) == original_history
+        assert not target.exists() and not (tmp_path / "other").exists()
+        assert engine_status(source)[0]["state"] == "ready"
+        code, planned = _run(source, *operation, *scoped, "--plan")
+        assert code == 0 and planned["status"] == "approval-required", planned
+        approval = planned["restorePlan"]["alternatives"][0]["approval"]
+        code, restored = _run(source, *operation, *scoped, "--approve", approval)
+        assert code == 0 and restored["status"] == "applied" and restored["exact"], restored
+        with LibraryClient(library) as helper:
+            film = helper.call("projects.get", id="film")["project"]
+            assert isinstance(film, dict)
+            assert helper.call("projects.get", id="sibling")["project"] == sibling
+        if scope == "only-project":
+            assert restored["engines"] == []
+            assert engine_status(source)[0]["state"] == "ready"
+            assert history(source) == original_history
+            assert restored["current"] == 1
+            assert film["uid"] == projects["film"]["uid"] and film["revision"] == 3
+            assert film["environment"] == {
+                "id": (target / "environment-id").read_text().strip(),
+                "lastSnapshot": None,
+                "lastRunAt": None,
+            }
+            assert film["environment"]["id"] != identity
+            assert history(target)[0]["snapshot"] == original_history[0]["snapshot"]
+        else:
+            assert restored["current"] == 3
+            assert len(history(source)) == 3 and history(source)[-1]["restoredFrom"] == 1
+            assert film == projects["film"]
+            assert engine_status(source)[0]["state"] == "ready"
+    finally:
+        _run(target, "stop", "--yes")
+        _run(source, "stop", "--yes")
+
+
 def test_snapshot_fork_preserves_source_and_reuses_its_library(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3111,7 +3254,7 @@ def test_snapshot_fork_preserves_source_and_reuses_its_library(
         code, updated = _run(source, "update", "--yes")
         assert code == 0 and updated["current"] == 2, updated
         shutil.rmtree(source / "builds/1")
-        library = source / "dinkster-library"
+        library = Path(json.loads((source / "environment.json").read_text())["libraryRoot"])
         with LibraryClient(library) as helper:
             helper.call("projects.register", id="short-film", name="Short film")
         (source / "private-token").write_text("source-only credential")

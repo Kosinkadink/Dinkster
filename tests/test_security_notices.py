@@ -698,18 +698,20 @@ def _execution_generation(
     number: int = 1,
 ) -> Path:
     from dinkster_supervisor.environment_state import interpreter
-    from test_environment_generations import _workspace_tree
+    from test_environment_runtime import make_generation
 
     from dinkster.generation_packs import stage_generation_packs
 
     generation = root / "builds" / str(number)
     generation.mkdir(parents=True)
-    _workspace_tree(generation / "python")
     stage_generation_packs(
         generation,
         Lockfile.of(entries),
         {entry.pack: archives[entry.artifact_digest] for entry in entries},
     )
+    make_generation(root, number, fake_serve=False)
+    engine = json.loads((generation / "build.json").read_text())["engine"]
+    (generation / "build.json").unlink()
     receipt = json.dumps({"format": "dinkster.installed-wheels/1", "wheels": [], "inherited": []})
     receipts = ["installed-wheels.json"]
     for entry in entries:
@@ -735,7 +737,7 @@ def _execution_generation(
     (generation / "constraints.txt").write_text("")
     files = {
         name: "sha256:" + hashlib.sha256((generation / name).read_bytes()).hexdigest()
-        for name in ["constraints.txt", *receipts]
+        for name in ["constraints.txt", "engine-manifest.json", *receipts]
     }
     if set(in_process) != {entry.pack for entry in entries}:
         from dinkster_supervisor.environment_generations import prepare_pack_catalogs
@@ -747,7 +749,7 @@ def _execution_generation(
                 "format": "dinkster.generation/1",
                 "generation": number,
                 "base": "sha256:" + "a" * 64,
-                "engine": {"version": "test", "release": "sha256:" + "b" * 64},
+                "engine": engine,
                 "constraints": files["constraints.txt"],
                 "variant": "linux-cpu",
                 "workerProtocol": 1,

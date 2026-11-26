@@ -1,3 +1,3 @@
-"""Node-free half of the out-of-tree S1 proof packs."""
+"""Node-free half of the out-of-tree sampler proof packs."""
 
 NODES: list[object] = []

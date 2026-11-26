@@ -9,6 +9,7 @@ namespaces (Ubuntu 24.04's default posture)."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import platform
@@ -1437,12 +1438,24 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
 
         run_scenario(scenario())
 
-    def test_gateway_bearer_rotation_is_visible_without_oauth_access(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("project_run", [False, True])
+    def test_gateway_bearer_rotation_is_visible_without_oauth_access(
+        self, tmp_path: Path, project_run: bool
+    ) -> None:
         from dinkster.compose import PackSpec, compose_serving
+        from dinkster.serve import _with_remote_config
+        from dinkster.services import resolve_services
 
         home = tmp_path / "account-home"
-        token = home / "gateway-tokens" / "install" / "access-token"
-        token.parent.mkdir(parents=True)
+        legacy = home / "gateway-tokens" / "install" / "access-token"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("legacy-bearer")
+        token = (
+            legacy.parent / "runs" / hashlib.sha256(b"credential-run").hexdigest()
+            if project_run
+            else legacy
+        )
+        token.parent.mkdir(parents=True, exist_ok=True)
         token.write_text("first-bearer")
         secret = home / "accounts" / "install" / "session.json"
         secret.parent.mkdir(parents=True)
@@ -1459,8 +1472,9 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
             'namespaces=["credentialprobe"]\n[pack.entry]\nnodes="credential_probe:NODES"\n'
         )
         (pack / "__init__.py").write_text(
-            "import json, os\nfrom pathlib import Path\n"
+            "import hashlib, json, os\nfrom pathlib import Path\n"
             "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr\n"
+            "from dinkster_api.v1 import current_execution_context\n"
             "class Probe(Node):\n"
             "    @classmethod\n"
             "    def define_schema(cls):\n"
@@ -1468,49 +1482,76 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
             "body=(Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
             "    @classmethod\n"
             "    async def execute(cls):\n"
-            "        token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
+            "        if directory := os.environ.get('DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY'):\n"
+            "            run = current_execution_context().job_ref\n"
+            "            token = Path(directory) / hashlib.sha256(run.encode()).hexdigest()\n"
+            "        else:\n"
+            "            token = Path(os.environ['DINKSTER_REMOTE_AUTH_TOKEN_FILE'])\n"
+            "        try:\n"
+            "            token.write_text('worker-must-not-write')\n"
+            "        except OSError:\n"
+            "            writable = False\n"
+            "        else:\n"
+            "            writable = True\n"
             f"        secret = Path({str(secret)!r})\n"
             f"        generation_secret = Path({str(generation_secret)!r})\n"
-            "        return cls.outputs(report=json.dumps([token.read_text(), secret.exists(), "
-            "generation_secret.exists()]))\n"
+            f"        legacy_visible = {project_run!r} and Path({str(legacy)!r}).exists()\n"
+            "        return cls.outputs(report=json.dumps([token.read_text() if token.exists() "
+            "else '<missing>', secret.exists(), generation_secret.exists(), writable, "
+            "legacy_visible]))\n"
             "NODES = (Probe,)\n"
         )
-        spec = PackSpec(
-            manifest,
-            env={"PYTHONPATH": str(pack_source), "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(token)},
-            remote_token_directory=token.parent,
+        spec = _with_remote_config(
+            PackSpec(
+                manifest,
+                env={
+                    "PYTHONPATH": str(pack_source),
+                    "DINKSTER_REMOTE_AUTH_TOKEN_FILE": str(secret),
+                    "DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY": str(secret.parent),
+                },
+            ),
+            services=resolve_services(),
+            token_file=str(legacy),
+            token_directory=legacy.parent,
+            run_token_directory=token.parent if project_run else None,
         )
 
         async def scenario() -> None:
+            policy = SandboxPolicy(
+                ro_binds=(str(REPO_ROOT),), protected_roots=(str(home), str(generation))
+            )
+            if project_run:
+                from dinkster.compose import CompositionError
+
+                for directory in (None, token.parent.parent):
+                    with pytest.raises(CompositionError, match="dedicated directory"):
+                        await compose_serving(
+                            (replace(spec, remote_token_directory=directory),),
+                            include_default_packs=False,
+                            sandbox_policy=policy,
+                        )
             composition = await compose_serving(
-                (spec,),
-                include_default_packs=False,
-                sandbox_policy=SandboxPolicy(
-                    ro_binds=(str(REPO_ROOT),), protected_roots=(str(home), str(generation))
-                ),
+                (spec,), include_default_packs=False, sandbox_policy=policy
             )
             try:
                 engine = composition.make_engine(lambda event: None)
                 graph = Graph(nodes={"read": GraphNode("credentialprobe.read", {})})
-                first = await engine.run(graph, ["read"])
+                first = await engine.run(graph, ["read"], run_id="credential-run")
                 report = first.outputs["read"]["report"].resolve()
                 assert isinstance(report, str)
-                assert json.loads(report) == [
-                    "first-bearer",
-                    False,
-                    False,
-                ]
+                assert json.loads(report) == ["first-bearer", False, False, False, False]
                 replacement = token.with_suffix(".new")
                 replacement.write_text("second-bearer")
                 replacement.replace(token)
-                second = await engine.run(graph, ["read"])
+                second = await engine.run(graph, ["read"], run_id="credential-run")
                 report = second.outputs["read"]["report"].resolve()
                 assert isinstance(report, str)
-                assert json.loads(report) == [
-                    "second-bearer",
-                    False,
-                    False,
-                ]
+                assert json.loads(report) == ["second-bearer", False, False, False, False]
+                token.unlink()
+                revoked = await engine.run(graph, ["read"], run_id="credential-run")
+                report = revoked.outputs["read"]["report"].resolve()
+                assert isinstance(report, str)
+                assert json.loads(report) == ["<missing>", False, False, False, False]
             finally:
                 await composition.close()
 
@@ -1566,14 +1607,11 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
         other_venv = library / "packs" / "other" / "venv" / "secret.txt"
         other_venv.parent.mkdir(parents=True)
         other_venv.write_text("other-pack-secret", encoding="utf-8")
-        own_scratch = library / "scratch" / "packs" / "sandbox-probe"
-        own_scratch.mkdir(parents=True)
+        state = tmp_path / "engine-state"
+        own_scratch = state / "scratch" / "packs" / "sandbox-probe"
         own_scratch_seed = own_scratch / "seed.txt"
-        own_scratch_seed.write_text("persistent", encoding="utf-8")
         own_scratch_output = own_scratch / "worker-output.txt"
-        other_scratch = library / "scratch" / "packs" / "other-pack" / "secret.txt"
-        other_scratch.parent.mkdir()
-        other_scratch.write_text("other-scratch-secret", encoding="utf-8")
+        other_scratch = state / "scratch" / "packs" / "other-pack" / "secret.txt"
         vault_file = library / "vault" / "sentinel.txt"
         vault_file.parent.mkdir()
         vault_file.write_text("allowed", encoding="utf-8")
@@ -1675,6 +1713,8 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                 str(port),
                 "--library-root",
                 str(library),
+                "--engine-state-root",
+                str(state),
                 "--sandbox-packs",
                 "--no-default-packs",
                 "--pack",
@@ -1710,6 +1750,9 @@ Path({str(observed)!r}).write_text("proxied", encoding="utf-8")
                             pass
                         await asyncio.sleep(0.05)
 
+                own_scratch_seed.write_text("persistent", encoding="utf-8")
+                other_scratch.parent.mkdir()
+                other_scratch.write_text("other-scratch-secret", encoding="utf-8")
                 job = {
                     "clientId": "sandbox-e2e",
                     "jobId": "probe",

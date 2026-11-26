@@ -20,7 +20,6 @@ from dinkster_values import (
     COLOR_TYPE,
     COLORS_TYPE,
     CONTROL_NET_TYPE,
-    FLOATS_TYPE,
     GLIGEN_TYPE,
     GUIDER_TYPE,
     HOOK_KEYFRAMES_TYPE,
@@ -115,7 +114,6 @@ _RESIDENT_TYPE_IDS = (
     HOOK_KEYFRAMES_TYPE,
 )
 _SAMPLING_TYPE_IDS = (SAMPLER_TYPE_ID, SIGMAS_TYPE_ID, NOISE_TYPE_ID)
-_STRUCTURAL_TYPE_IDS = (TIMESTEPS_RANGE_TYPE, FLOATS_TYPE)
 
 
 def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
@@ -167,12 +165,11 @@ def register_inference_types(registry: TypeRegistry) -> tuple[TypeSpec, ...]:
         registered.append(
             registry.spec(type_id) if type_id in registry else registry.register(type_id)
         )
-    for type_id in _STRUCTURAL_TYPE_IDS:
-        registered.append(
-            registry.spec(type_id)
-            if type_id in registry
-            else register_hook_structural_type(registry, type_id)
-        )
+    registered.append(
+        registry.spec(TIMESTEPS_RANGE_TYPE)
+        if TIMESTEPS_RANGE_TYPE in registry
+        else register_hook_structural_type(registry, TIMESTEPS_RANGE_TYPE)
+    )
     if CLIP_VISION_OUTPUT_TYPE not in registry:
         registry.register(
             CLIP_VISION_OUTPUT_TYPE,

@@ -9,7 +9,7 @@ records and ``<group>.<key>`` in a group of values; a choice's rows are
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from keyword import iskeyword
 from typing import Any, cast
@@ -52,6 +52,15 @@ class FlattenError(ValueError):
     """The node's document state does not fit its declared body."""
 
 
+@dataclass(frozen=True)
+class AutomaticSite:
+    """A field that declares ``automatic`` and has nothing stored and no wire:
+    its flattened input and the scopes a formula on it sees."""
+
+    input: Input
+    frames: tuple[_Frame, ...]
+
+
 @dataclass
 class Flattened:
     inputs: list[Input]
@@ -59,6 +68,58 @@ class Flattened:
     choices: list[tuple[str, str]]
     members: list[tuple[str, tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...]]]
+    )
+    automatic: list[AutomaticSite] = field(default_factory=list["AutomaticSite"])
+    rules: list[Outcome] = field(default_factory=list[Outcome])
+    """The outcome of each of the ``rules`` passed in, in order."""
+
+
+@dataclass(frozen=True)
+class SiteEvaluator:
+    """Works out formulas and file arguments in the scope of an automatic site."""
+
+    formula: Callable[[Formula, AutomaticSite], Outcome]
+    file: Callable[[str, AutomaticSite], object]
+    """The picked file of the file field a lookup argument names: its stored
+    wire form, None when no file is picked, unknown when a wire feeds it or
+    its row is not chosen. ``NOT_A_FILE`` when the name is not a file field."""
+
+
+NOT_A_FILE = object()
+
+
+def site_evaluator(
+    stored: Mapping[str, object],
+    output_members: Mapping[str, Sequence[str]],
+    choices: Mapping[str, str],
+    chosen: Mapping[str, str],
+    *,
+    tables: Mapping[str, object] | None,
+    derived: Mapping[str, Formula] | None,
+    linked: Callable[[object], bool] | None,
+    literal: Callable[[object], object] | None,
+    in_use: Mapping[str, object],
+) -> SiteEvaluator:
+    """Evaluates a formula in the scope of an automatic site, over the stored
+    values, the choices ``chosen`` by a walk, and ``in_use`` for unstored
+    automatic fields."""
+    flattener = _Flattener(
+        tuple(stored),
+        stored,
+        output_members,
+        choices,
+        Flattened([], [], []),
+        tables=dict(tables or {}),
+        derived={name: formula.text for name, formula in (derived or {}).items()},
+        linked=linked or (lambda _value: False),
+        literal=literal or (lambda value: value),
+        formulas=True,
+        in_use=in_use,
+    )
+    flattener.chosen = dict(chosen)
+    return SiteEvaluator(
+        lambda formula, site: flattener.evaluate(formula, site.frames),
+        lambda name, site: flattener.file(name, site.frames),
     )
 
 
@@ -78,6 +139,8 @@ def flatten_body(
     linked: Callable[[object], bool] | None = None,
     literal: Callable[[object], object] | None = None,
     formulas: bool = True,
+    in_use: Mapping[str, object] | None = None,
+    rules: Sequence[Formula] = (),
 ) -> Flattened:
     """Flatten ``body`` against one node's document state.
 
@@ -87,7 +150,10 @@ def flatten_body(
     tells a wire from a stored value and ``literal`` unwraps a stored value
     that carries its own type. ``formulas=False`` says the mapping holds only
     some values, such as the descriptions of described rows when a worker
-    re-checks a run: formulas are then unknown as well."""
+    re-checks a run: formulas are then unknown as well. ``in_use`` holds the
+    values in use of automatic fields with nothing stored, which formulas read
+    in place of their defaults. Each of ``rules`` is worked out in the body's
+    scope."""
     flat = Flattened([], [], [])
     values = stored if isinstance(stored, Mapping) else None
     flattener = _Flattener(
@@ -101,9 +167,11 @@ def flatten_body(
         linked=linked or (lambda _value: False),
         literal=literal or (lambda value: value),
         formulas=formulas,
+        in_use=in_use or {},
     )
     flattener.frames.append(_Frame("", tuple(body)))
     flattener.rows(body, "")
+    flat.rules = [flattener.evaluate(rule) for rule in rules]
     return flat
 
 
@@ -120,6 +188,26 @@ class _Frame:
 
 
 _MISSING = object()
+
+
+class _LazyValues(Mapping[str, object]):
+    """Formula values worked out only when the formula reads them, so an
+    automatic value is worked out only for the formulas that read it."""
+
+    def __init__(self, thunks: Mapping[str, Callable[[], object]]) -> None:
+        self._thunks = thunks
+        self._found: dict[str, object] = {}
+
+    def __getitem__(self, name: str) -> object:
+        if name not in self._found:
+            self._found[name] = self._thunks[name]()
+        return self._found[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._thunks)
+
+    def __len__(self) -> int:
+        return len(self._thunks)
 
 
 def scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
@@ -281,8 +369,10 @@ class _Flattener:
         linked: Callable[[object], bool],
         literal: Callable[[object], object],
         formulas: bool,
+        in_use: Mapping[str, object],
     ) -> None:
         self.stored_ids = stored_ids
+        self.in_use = in_use
         self.formulas = formulas
         self.values = values
         self.output_members = output_members
@@ -320,6 +410,8 @@ class _Flattener:
             return UNKNOWN, False
         raw = self.values.get(flat_id, _MISSING)
         if raw is _MISSING:
+            if flat_id in self.in_use:
+                return self.in_use[flat_id], False
             return defaults.get(flat_id), False
         if self.linked(raw):
             return UNKNOWN, True
@@ -388,32 +480,65 @@ class _Flattener:
         re-checking a run has only the members and choices the run names."""
         return self.values is not None and self.formulas
 
-    def evaluate(self, formula: Formula) -> Outcome:
-        """Work out a count or leader formula over stored values and link state."""
-        if not self.at_hand:
-            return UNKNOWN
+    def wired(self, flat_id: str) -> bool:
+        if self.values is None or flat_id in self.chosen or flat_id in self.choices:
+            return False
+        raw = self.values.get(flat_id, _MISSING)
+        return raw is not _MISSING and self.linked(raw)
+
+    def names_at(
+        self, frames: Sequence[_Frame]
+    ) -> tuple[dict[str, str], dict[str, str], set[str], set[str], set[str]]:
+        """What a formula in the scope of ``frames`` names: each name's kind,
+        its flattened id, the inputs, the unknown names and the file fields."""
         names: dict[str, str] = {}
         where: dict[str, str] = {}
         inputs: set[str] = set()
-        defaults: dict[str, object] = {}
-        self.defaults(self.frames[0].rows, "", defaults)
         unknown: set[str] = set()
-        for frame in self.frames:
+        files: set[str] = set()
+        for frame in frames:
             found = formula_names(frame.rows)
             hidden = self.unchosen(frame.rows, frame.prefix) | frame.hidden
             for name, kind in found.names.items():
                 names[name] = kind
                 where[name] = frame.prefix + name
-                if name in found.inputs:
-                    inputs.add(name)
-                else:
-                    inputs.discard(name)
-                if name in hidden:
-                    unknown.add(name)
-                else:
-                    unknown.discard(name)
-        member = next((frame for frame in reversed(self.frames) if frame.index is not None), None)
-        values: dict[str, object] = {}
+                for held, present in (
+                    (inputs, name in found.inputs),
+                    (unknown, name in hidden),
+                    (files, name in found.assets),
+                ):
+                    if present:
+                        held.add(name)
+                    else:
+                        held.discard(name)
+        return names, where, inputs, unknown, files
+
+    def file(self, name: str, frames: Sequence[_Frame]) -> object:
+        """The stored wire form of the file field ``name`` names in the scope
+        of ``frames``: None when no file is picked, unknown when a wire feeds
+        it or its row is not chosen, ``NOT_A_FILE`` when it is no file field."""
+        if not self.at_hand:
+            return UNKNOWN
+        _, where, _, unknown, files = self.names_at(frames)
+        if name not in files:
+            return NOT_A_FILE
+        if name in unknown:
+            return UNKNOWN
+        defaults: dict[str, object] = {}
+        self.defaults(frames[0].rows, "", defaults)
+        return self.value(where[name], defaults)[0]
+
+    def evaluate(self, formula: Formula, frames: Sequence[_Frame] | None = None) -> Outcome:
+        """Work out a formula over stored values and link state, in the scope
+        of ``frames`` (by default where the walk stands)."""
+        if not self.at_hand:
+            return UNKNOWN
+        frames = self.frames if frames is None else frames
+        names, where, inputs, unknown, _ = self.names_at(frames)
+        defaults: dict[str, object] = {}
+        self.defaults(frames[0].rows, "", defaults)
+        member = next((frame for frame in reversed(frames) if frame.index is not None), None)
+        values: dict[str, Callable[[], object]] = {}
         wired: dict[str, bool] = {}
         sizes: dict[str, int] = {}
         for name, kind in names.items():
@@ -422,23 +547,22 @@ class _Flattener:
                 # A row under an option that is not chosen is unknown and has no
                 # wire; so is a group there, its size and its members' rows.
                 if kind not in ("group", "opaque"):
-                    values[name] = UNKNOWN
+                    values[name] = lambda: UNKNOWN
                 if name in inputs:
                     wired[name] = False
             elif kind == "group":
                 sizes[name] = len(self.discovered(flat_id))
             elif kind.endswith("[]"):
                 group_path, row_id = flat_id.rsplit(".", 1)
-                values[name] = tuple(
+                values[name] = lambda group_path=group_path, row_id=row_id: tuple(
                     self.value(f"{group_path}.{key}.{row_id}", defaults)[0]
                     for key in self.discovered(group_path)
                 )
             else:
-                value, is_wired = self.value(flat_id, defaults)
                 if kind != "opaque":
-                    values[name] = value
+                    values[name] = lambda flat_id=flat_id: self.value(flat_id, defaults)[0]
                 if name in inputs:
-                    wired[name] = is_wired
+                    wired[name] = self.wired(flat_id)
         scope = FormulaScope(
             names=names,
             inputs=frozenset(inputs),
@@ -448,7 +572,7 @@ class _Flattener:
         )
         return parse_formula(formula.text, scope).evaluate(
             FormulaValues(
-                values=values,
+                values=_LazyValues(values),
                 linked=wired,
                 group_sizes=sizes,
                 member_index=None if member is None else member.index,
@@ -476,10 +600,14 @@ class _Flattener:
     def row(self, row: BodyRow, prefix: str, member: str | None, required: bool) -> None:
         path = f"{prefix}{row.id}" if not isinstance(row, Row) else prefix
         if isinstance(row, Input):
+            if not row.sent:
+                return
             spec = replace(row, id=path, required=row.required and required)
             if member is not None:
                 spec = replace(spec, type=scope_member_type(spec.type, member))
             self.flat.inputs.append(spec)
+            if spec.automatic is not None and self.values is not None and path not in self.values:
+                self.flat.automatic.append(AutomaticSite(spec, tuple(self.frames)))
         elif isinstance(row, Output):
             spec = replace(row, id=path)
             if member is not None:

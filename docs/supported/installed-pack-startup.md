@@ -134,17 +134,22 @@
 
 - A managed update, repair, restore or restore previous can start its replacement on
   another OS-assigned port if the planned port is occupied. The recorded URL
-  follows the actual listener. The previous engine stops before its replacement
-  opens the library. A failed replacement restarts the previous engine;
-  interrupted activation remains recoverable. An explicit standalone start still
-  uses its requested port.
+  follows the actual listener. Helper-era replacements open beside the previous
+  engine in separate working state. The previous engine's clients remain usable
+  through candidate health checks and revalidation; it stops only after those
+  checks pass. A refused candidate leaves the previous engine running. Direct
+  engines still take turns on the library, and a failed replacement restarts the
+  previous engine. Interrupted activation remains recoverable. An explicit
+  standalone start still uses its requested port.
 
-- One engine at a time owns a library. A competing start refuses and names the
-  running engine before opening library stores or sweeping unfinished work.
-  Project, environment and named-engine records are retained, including Desktop
-  projects with several local engines; stop the running engine before starting
-  another. The OS lock lives in the engine process, including older engines
-  launched by the updated environment tools, and releases when that engine exits.
+- Helper-era engines with private working state can share one library. A live
+  engine's working directory remains exclusively owned; an overlapping managed
+  start gets separate state without resetting its peer's jobs or uploads.
+  Direct engines still take turns: a competing direct start names the running
+  owner and refuses before opening stores or sweeping unfinished work. Project,
+  environment and named-engine records are retained, including Desktop projects
+  with several local engines. This removes the technical sharing restriction,
+  not Desktop's first-version rule that only one environment runs at a time.
   Managed start, restore previous and restore check the selected engine's library reader
   before stopping the current engine. Unsupported SQLite revisions and saved
   hidden-model preferences refuse with a required-version message, retaining
@@ -739,8 +744,9 @@
   before installation state changes. `--offline --plan` remains read-only.
 - Public setup, serve, stop, update, restore previous and bare launch use the managed
   project at `$DINKSTER_HOME/project` (default `~/.dinkster/project`) or an
-  explicit `--root`. Starting without setup refuses without acquiring software.
-  Bare launch opens the ready engine URL unless `--no-browser` is selected;
+  explicit `--root`. Serving without setup refuses without acquiring software.
+  Bare launch opens the always-on process's address, with the project's engine
+  starting behind it, unless `--no-browser` is selected;
   `serve` and `dinkster-serve` do not open a browser. The engine continues under
   the supervisor until stopped. Update and restore previous retain their plan/consent
   flow and software-history protections.

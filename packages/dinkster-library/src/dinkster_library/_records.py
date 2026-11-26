@@ -6,12 +6,14 @@ import json
 import re
 import sqlite3
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
 from filelock import FileLock, Timeout
 
+from ._references import References
 from .client import LibraryError
 
 FORMAT = 2
@@ -34,12 +36,34 @@ class Records:
     def __init__(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
         self.root = root
+        self._references = References(root)
+        from ._resolvers import Resolvers
+
+        self._resolvers = Resolvers(self)
         self._attachment = FileLock(root / f"helper-{uuid.uuid4()}.lock")
         self._connection: sqlite3.Connection | None = None
         try:
             # Admission and upgrades share this gate, so nobody can attach in the
             # interval between checking the live holders and changing the format.
             with FileLock(root / "records-format.lock"):
+                marker = root / "library-format.json"
+                if marker.exists():
+                    required = object_value(json.loads(marker.read_text("utf-8")), "library format")
+                    if required != {
+                        "format": "dinkster.library-format/1",
+                        "requiredCapabilities": ["library-helper/1"],
+                        "libraryApi": 1,
+                    }:
+                        raise LibraryError("format", "This library requires newer library code")
+                journal = root / "record-migration.json"
+                if journal.exists():
+                    migration = object_value(
+                        json.loads(journal.read_text("utf-8")), "record migration journal"
+                    )
+                    if "publication" in migration and migration.get("complete") is not True:
+                        raise LibraryError(
+                            "migration", "Finish the interrupted library migration first"
+                        )
                 self._attachment.acquire()
                 self._connection = sqlite3.connect(root / "records.sqlite", timeout=30)
                 db = self._connection
@@ -118,10 +142,37 @@ class Records:
                 db.execute("PRAGMA journal_mode=WAL")
                 with db:
                     db.execute("BEGIN IMMEDIATE")
+                    # Additive tables leave older helpers' project records readable.
+                    # When a project was last opened lives beside its document, so
+                    # recording an opening never advances its revision.
                     db.execute(
-                        "CREATE TABLE IF NOT EXISTS settings_records ("
-                        "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
-                        "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
+                        "CREATE TABLE IF NOT EXISTS project_openings ("
+                        "id TEXT PRIMARY KEY,opened TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS resolver_configuration ("
+                        "id INTEGER PRIMARY KEY CHECK(id=1),document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS resolver_subscriptions ("
+                        "id TEXT PRIMARY KEY,source TEXT NOT NULL,"
+                        "revision INTEGER NOT NULL,payload BLOB)"
+                    )
+                    db.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS resolver_source "
+                        "ON resolver_subscriptions(source) WHERE payload IS NOT NULL"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS provenance_layers ("
+                        "position INTEGER PRIMARY KEY AUTOINCREMENT,source TEXT NOT NULL UNIQUE)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS provenance_records ("
+                        "source TEXT NOT NULL,digest TEXT NOT NULL,document TEXT NOT NULL,"
+                        "PRIMARY KEY(source,digest))"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS provenance_digest ON provenance_records(digest)"
                     )
                     db.execute(
                         "CREATE TABLE IF NOT EXISTS acquisition_receipts ("
@@ -135,6 +186,103 @@ class Records:
                     db.execute(
                         "CREATE INDEX IF NOT EXISTS receipts_digest "
                         "ON acquisition_receipts(digest,fetched,id)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS permission_records ("
+                        "principal TEXT PRIMARY KEY,revision INTEGER NOT NULL,"
+                        "document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS delegation_records ("
+                        "id TEXT PRIMARY KEY,principal TEXT NOT NULL,agent TEXT NOT NULL UNIQUE,"
+                        "credential TEXT NOT NULL UNIQUE,created REAL NOT NULL,"
+                        "document TEXT NOT NULL,"
+                        "revoked REAL,revision INTEGER NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS delegations_principal "
+                        "ON delegation_records(principal,created,id)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS settings_records ("
+                        "kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(kind,id))"
+                    )
+                    for table in (
+                        "retention_universes",
+                        "retention_clients",
+                        "retention_quarantine",
+                        "retained_owners",
+                    ):
+                        db.execute(f"DROP TABLE IF EXISTS {table}")
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS terminal_results ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,job_ref TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(engine,scope,job_ref))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS claimed_result_offers ("
+                        "engine TEXT NOT NULL,token TEXT NOT NULL,PRIMARY KEY(engine,token))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS result_offers ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(engine,token))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS result_renditions ("
+                        "engine TEXT NOT NULL,scope TEXT NOT NULL,token TEXT NOT NULL,"
+                        "cache_key TEXT NOT NULL,document TEXT NOT NULL,"
+                        "PRIMARY KEY(engine,token,cache_key))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS media_grants ("
+                        "scope TEXT NOT NULL,digest TEXT NOT NULL,kind TEXT NOT NULL,"
+                        "document TEXT NOT NULL,PRIMARY KEY(scope,digest,kind))"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS asset_observations ("
+                        "id TEXT PRIMARY KEY,scope TEXT NOT NULL,digest TEXT NOT NULL,"
+                        "original_name TEXT NOT NULL,stored_name TEXT NOT NULL,kind TEXT NOT NULL,"
+                        "media_type TEXT NOT NULL,byte_size INTEGER NOT NULL,"
+                        "virtual_path TEXT NOT NULL,origin TEXT NOT NULL,project TEXT NOT NULL,"
+                        "created REAL NOT NULL,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS asset_observations_scope_digest "
+                        "ON asset_observations(scope,project,digest,created)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS saved_records ("
+                        "id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
+                        "modified REAL NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,"
+                        "deleted INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS saved_records_scope "
+                        "ON saved_records(scope,modified DESC,id DESC)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS dependency_manifests ("
+                        "digest TEXT PRIMARY KEY,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS derivation_manifests ("
+                        "digest TEXT PRIMARY KEY,document TEXT NOT NULL,asset_digests TEXT)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS engine_reference_manifests ("
+                        "engine TEXT PRIMARY KEY,document TEXT NOT NULL)"
+                    )
+                    db.execute(
+                        "CREATE TABLE IF NOT EXISTS finished_history ("
+                        "run_id TEXT PRIMARY KEY,scope TEXT NOT NULL,project TEXT NOT NULL,"
+                        "finished REAL NOT NULL,document TEXT NOT NULL,"
+                        "deleted INTEGER NOT NULL DEFAULT 0)"
+                    )
+                    db.execute(
+                        "CREATE INDEX IF NOT EXISTS finished_history_scope "
+                        "ON finished_history(scope,finished DESC,run_id DESC)"
                     )
                     if self.get_project("default") is None:
                         self._register("default", "Default")
@@ -162,20 +310,80 @@ class Records:
         return holders
 
     def close(self) -> None:
+        self._references.close()
         if self._connection is not None:
             self._connection.close()
         self._attachment.release()
 
     def get_project(self, identifier: str) -> dict[str, object] | None:
-        row = self.db.execute("SELECT document FROM projects WHERE id=?", (identifier,)).fetchone()
-        return object_value(json.loads(row[0]), "project") if row else None
+        row = self.db.execute(
+            "SELECT p.document,o.opened FROM projects p "
+            "LEFT JOIN project_openings o ON o.id=p.id WHERE p.id=?",
+            (identifier,),
+        ).fetchone()
+        return self._project_wire(row, self._output_folders()) if row else None
+
+    def _output_folders(self) -> Callable[[str], str | None]:
+        """Each project's output folder, chosen as the engine chooses where outputs
+        go: the grant the project selected, else the library's default output grant
+        (else a writable grant named "output"), and only while the project includes
+        that grant; None when outputs have nowhere to go."""
+        stored: dict[str, dict[str, object]] = {}
+        for identifier, document in self.db.execute(
+            "SELECT id,document FROM settings_records WHERE kind='folders' "
+            "AND id IN ('projects','grants')"
+        ):
+            stored[identifier] = object_value(json.loads(document), "folder settings")
+        grants = stored.get("grants", {})
+        mounts = cast("dict[str, dict[str, object]]", grants.get("mounts", {}))
+        default = cast("dict[str, object]", grants.get("settings", {})).get("output-mount")
+        if default is None and mounts.get("output", {}).get("mode") == "readwrite":
+            default = "output"
+        # Before any project decides, the engine shares every grant on start.
+        memberships = stored.get("projects", {"shared": list(mounts)})
+        nothing: dict[str, object] = {}
+
+        def listed(key: str, project: str) -> list[object]:
+            entries = cast("dict[str, object]", memberships.get(key, nothing))
+            return cast("list[object]", entries.get(project, []))
+
+        def folder(project: str) -> str | None:
+            outputs = cast("dict[str, object]", memberships.get("outputs", nothing))
+            mount = outputs.get(project, default)
+            shared = cast("list[object]", memberships.get("shared", []))
+            if (
+                not isinstance(mount, str)
+                or mount not in (*shared, *listed("projects", project))
+                or mount in listed("excluded", project)
+            ):
+                return None
+            path = mounts.get(mount, nothing).get("path")
+            return path if isinstance(path, str) else None
+
+        return folder
+
+    @staticmethod
+    def _project_wire(
+        row: tuple[str, str | None], folder: Callable[[str], str | None]
+    ) -> dict[str, object]:
+        """A stored project document with its output folder and when it was last
+        opened, None when never."""
+        document = object_value(json.loads(row[0]), "project")
+        document["folder"] = folder(cast(str, document["id"]))
+        document["lastOpenedAt"] = row[1]
+        return document
 
     def _save(self, document: dict[str, object]) -> dict[str, object]:
+        stored = {
+            key: value for key, value in document.items() if key not in ("folder", "lastOpenedAt")
+        }
         self.db.execute(
             "INSERT INTO projects VALUES (?,?) ON CONFLICT(id) "
             "DO UPDATE SET document=excluded.document",
-            (document["id"], json.dumps(document, allow_nan=False)),
+            (document["id"], json.dumps(stored, allow_nan=False)),
         )
+        document["folder"] = self._output_folders()(cast(str, document["id"]))
+        document["lastOpenedAt"] = document.get("lastOpenedAt")
         self.db.execute(
             "INSERT INTO changes(kind,id,revision) VALUES ('project',?,?)",
             (document["id"], document["revision"]),
@@ -247,23 +455,99 @@ class Records:
             "cursor": list(rows[limit - 1][:2]) if len(rows) > limit else None,
         }
 
-    def dispatch(self, operation: str, arguments: dict[str, object]) -> dict[str, object]:
+    def dispatch(
+        self,
+        operation: str,
+        arguments: dict[str, object],
+        *,
+        progress: Callable[[], None] | None = None,
+    ) -> dict[str, object]:
+        if operation.startswith("sources.resolvers."):
+            return self._resolvers.dispatch(operation, arguments)
+        if operation.startswith("sources.provenance."):
+            from ._provenance import provenance
+
+            return provenance(self, operation, arguments)
         if operation.startswith("sources.receipts."):
             from ._receipts import receipts
 
             return receipts(self, operation, arguments)
-        if operation.startswith("settings."):
+        if operation.startswith(("permissions.", "delegations.")):
+            from ._permissions import permissions
+
+            return permissions(self, operation, arguments)
+        if operation.startswith("folders.models."):
+            from ._settings import model_preferences
+
+            return model_preferences(operation, arguments)
+        if operation.startswith(("settings.", "folders.", "cleanup.policy.")):
             from ._settings import preferences
 
             return preferences(self, operation, arguments)
+        if operation.startswith("references."):
+            return self._references.dispatch(self.db, operation, arguments, progress=progress)
+        if operation.startswith("results."):
+            from ._results import results
+
+            engine = self._references.engine_id
+            if operation.endswith(".get"):
+                return results(self, engine, operation, arguments)
+            with self._references.writing():
+                return results(self, engine, operation, arguments)
+        if operation.startswith(("dependencies.", "derivations.")):
+            from ._manifests import manifests
+
+            if operation.endswith(".put"):
+                with self._references.writing():
+                    return manifests(self, operation, arguments)
+            return manifests(self, operation, arguments)
+        if operation.startswith("history."):
+            from ._history import history
+
+            if operation in ("history.append", "history.delete", "history.clear"):
+                with self._references.writing():
+                    return history(self, operation, arguments)
+            return history(self, operation, arguments)
+        if operation in ("grants.get", "grants.put"):
+            from .media import grants
+
+            if operation == "grants.get":
+                return grants(self, operation, arguments)
+            with self._references.writing():
+                return grants(self, operation, arguments)
+        if operation == "assets.record":
+            from .catalog import record_asset
+
+            with self._references.writing():
+                return record_asset(self, arguments)
+        if operation == "assets.recorded":
+            from .catalog import recorded_assets
+
+            return recorded_assets(self, arguments)
         if operation == "assets.list":
             from ._browse import list_assets
 
             return list_assets(self, arguments)
+        if operation == "assets.served":
+            from ._browse import served_asset
+            from ._manifests import asset_digest
+
+            return served_asset(self, asset_digest(arguments.get("digest")))
+        if operation == "projects.usage":
+            from ._browse import project_usage
+
+            return project_usage(self, project_id(arguments.get("id")))
         if operation == "records.list":
             from ._browse import list_records
 
             return list_records(self, arguments)
+        if operation in ("records.create", "records.get", "records.patch", "records.delete"):
+            from ._saved import saved
+
+            if operation == "records.get":
+                return saved(self, operation, arguments)
+            with self._references.writing():
+                return saved(self, operation, arguments)
         if operation == "compatibility.affected":
             from ._compatibility import affected
 
@@ -294,17 +578,39 @@ class Records:
             if type(include_deleted) is not bool:
                 raise LibraryError("invalid", "includeDeleted must be a boolean")
             rows = self.db.execute(
-                "SELECT document FROM projects WHERE id>? "
-                "AND (? OR json_extract(document,'$.deleted')=0) "
-                "AND (? IS NULL OR json_extract(document,'$.environment.id')=?) "
-                "ORDER BY id LIMIT ?",
+                "SELECT p.document,o.opened FROM projects p "
+                "LEFT JOIN project_openings o ON o.id=p.id WHERE p.id>? "
+                "AND (? OR json_extract(p.document,'$.deleted')=0) "
+                "AND (? IS NULL OR json_extract(p.document,'$.environment.id')=?) "
+                "ORDER BY p.id LIMIT ?",
                 (cursor, include_deleted, environment, environment, limit + 1),
             ).fetchall()
-            documents = [object_value(json.loads(row[0]), "project") for row in rows]
+            folder = self._output_folders()
+            documents = [self._project_wire(row, folder) for row in rows]
             page = documents[:limit]
             return {"items": page, "cursor": page[-1]["id"] if len(documents) > limit else None}
         if operation == "projects.get":
             return {"project": self.get_project(project_id(arguments.get("id")))}
+        if operation == "projects.opened":
+            identifier = project_id(arguments.get("id"))
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                document = self.get_project(identifier)
+                if document is None or document["deleted"]:
+                    raise LibraryError("missing", "project is unavailable")
+                document["lastOpenedAt"] = datetime.now(UTC).isoformat()
+                self.db.execute(
+                    "INSERT INTO project_openings VALUES (?,?) "
+                    "ON CONFLICT(id) DO UPDATE SET opened=excluded.opened",
+                    (identifier, document["lastOpenedAt"]),
+                )
+            return {"project": document}
+        if operation == "changes.head":
+            return {
+                "cursor": self.db.execute(
+                    "SELECT COALESCE(MAX(sequence),0) FROM changes"
+                ).fetchone()[0]
+            }
         if operation == "changes":
             after = arguments.get("cursor", 0)
             limit = arguments.get("limit", 100)
@@ -327,7 +633,12 @@ class Records:
                 ],
                 "cursor": rows[-1][0] if rows else after,
             }
-        if operation not in ("projects.register", "projects.patch", "projects.delete"):
+        if operation not in (
+            "projects.register",
+            "projects.patch",
+            "projects.delete",
+            "projects.restore",
+        ):
             raise LibraryError("operation", f"unknown library operation: {operation}")
         identifier = project_id(arguments.get("id"))
         with self.db:
@@ -348,6 +659,12 @@ class Records:
                 if identifier == "default":
                     raise LibraryError("invalid", "the default project cannot be deleted")
                 patch: dict[str, object] = {"deleted": True}
+            elif operation == "projects.restore":
+                # Deleting removes no workflow or output record, so clearing the
+                # mark gives the project back everything it had.
+                if not document["deleted"]:
+                    raise LibraryError("invalid", "project is not deleted")
+                patch = {"deleted": False}
             else:
                 patch = object_value(arguments.get("patch"), "project patch")
                 if set(patch) - {"name", "packs", "environment", "accountProject"}:

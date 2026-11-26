@@ -253,7 +253,7 @@ def test_invalid_asset_is_a_publish_gate_error(tmp_path: Path) -> None:
 
 def test_uncovered_node_type_is_an_error(tmp_path: Path) -> None:
     """Every probed node type must fall under a declared namespace claim
-    (DESIGN M8): the default claim is the pack name, and healthy does
+    - the default claim is the pack name, and healthy does
     not cover healthy.* - the registry and composition both refuse this,
     so doctor says it first, naming the node type and the claims."""
     manifest = HEALTHY_MANIFEST.replace(
@@ -632,7 +632,7 @@ def test_cli_macos_sandbox_readiness(
     assert capsys.readouterr().out.strip() == report["detail"]
 
 
-# -- sandboxed probe (DESIGN M8: publish-probe isolation) ----------------------
+# -- sandboxed publish-probe isolation ---------------------------------------
 #
 # The jail changes what a hostile import can DO, never what the report
 # means: findings are identical jailed or unjailed. These tests prove the

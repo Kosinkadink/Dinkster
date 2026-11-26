@@ -36,7 +36,7 @@ _COMMANDS: dict[str, _Command] = {
         summary="start the active managed snapshot (alias: dinkster-serve)",
     ),
     "run": _Command("dinkster.launch", True, "run a command in the active snapshot"),
-    "stop": _Command("dinkster.launch", True, "stop the active snapshot's engine"),
+    "stop": _Command("dinkster.launch", True, "stop Dinkster and the engines it started"),
     "update": _Command("dinkster.launch", True, "plan and apply a snapshot update"),
     "restore-previous": _Command("dinkster.launch", True, "restore the previous software snapshot"),
     "rollback": _Command("dinkster.launch", True, "alias for restore-previous"),

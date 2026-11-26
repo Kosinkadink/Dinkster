@@ -213,6 +213,8 @@ import hashlib
 import importlib.metadata
 import ipaddress
 import json
+import os
+import time
 from collections import deque
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -245,6 +247,7 @@ from dinkster_engine import (
     ProviderResolutionError,
     RunResult,
 )
+from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -325,6 +328,7 @@ from .auth import (
     principal_for,
     resolve_scope,
 )
+from .call_budget import CALL_BUDGETS_KEY, call_budgets
 from .events import (
     BINARY_BLOB_KEY,
     DROPPABLE_KINDS,
@@ -342,6 +346,15 @@ from .library import (
     recover_asset_observations,
     run_media_publication,
     run_owned_thread,
+)
+from .lookups import (
+    LOOKUP_DISPATCH_KEY,
+    LookupDispatch,
+    LookupMarks,
+    announce_asset_kinds,
+    install_lookups,
+    lookups_changed,
+    recorded_asset_kinds,
 )
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
@@ -626,6 +639,8 @@ def job_to_wire(
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
     if job.source_document:
         wire["sourceDocument"] = job.source_document
+    if job.automatic:
+        wire["automaticValues"] = [record.to_wire() for record in job.automatic]
     if job.error is not None:
         wire["error"] = job.error
     if job.result_offers:
@@ -1144,6 +1159,7 @@ class ServerState:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
+        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -1258,6 +1274,7 @@ class ServerState:
             job_context=job_context,
             publish_outputs=publish_outputs,
             publish_image_documents=publish_image_documents,
+            cache_hit_valid=cache_hit_valid,
         )
         default_budgets = {
             device: budget
@@ -2494,6 +2511,11 @@ async def handle_nodes(request: web.Request) -> web.Response:
             *cast("list[str]", needs["extra"]),
             *(str(pack["pack"]) for pack in cast("list[dict[str, object]]", needs["packs"])),
         }
+    return web.json_response(nodes_wire(state, enabled))
+
+
+def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str, object]:
+    """The ``/api/nodes`` body, limited to the ``enabled`` packs when given."""
     nodes: dict[str, dict[str, object]] = {}
     documented_nodes: set[tuple[str, str]] = set()
     documented_nodes = {
@@ -2560,11 +2582,10 @@ async def handle_nodes(request: web.Request) -> web.Response:
         # identity). schemaWire is the schema encoding epoch every node
         # entry below also carries per-entry. graphFeatures advertises
         # additive graph/job DOCUMENT wire capabilities (decoupled from the
-        # schema wire, joint contract 2026-07-25): clients gate optional
-        # emission forms on membership, never on version comparison.
-        # mergeableTypes (joint contract 2026-07-26, additive - no wire
-        # bump): the sorted atom type ids with a registered batch-merge
-        # provider, derived from the composed registry at envelope build
+        # schema wire): clients gate optional emission forms on membership,
+        # never on version comparison.
+        # mergeableTypes lists sorted atom type ids with a registered
+        # batch-merge provider, derived from the composed registry at envelope build
         # time so compat packs contribute automatically. The frontend
         # gates the scalar-T multi-select merge arm of asset widgets on
         # membership (list<asset<T>> -> T needs a merge provider; the
@@ -2572,7 +2593,13 @@ async def handle_nodes(request: web.Request) -> web.Response:
         "dinkster": {
             "version": _dinkster_version(),
             "schemaWire": SCHEMA_WIRE_VERSION,
-            "graphFeatures": ["typedLiteral", "decimalInt", "regions", "placement"],
+            "graphFeatures": [
+                "typedLiteral",
+                "decimalInt",
+                "regions",
+                "placement",
+                "absentInput",
+            ],
             "mergeableTypes": sorted(
                 type_id
                 for type_id in state.engine.registry.type_ids()
@@ -2606,7 +2633,25 @@ async def handle_nodes(request: web.Request) -> web.Response:
     # can tell "loading finished" positively at fetch time.
     if state.composition_progress is not None:
         wire["composing"] = True
-    return web.json_response(wire)
+    return wire
+
+
+def write_node_table_record(state: ServerState, path: Path, snapshot: str | None) -> None:
+    """Record the whole node table so the always-on process can serve it while no engine is up.
+
+    The record leaves out what only means something within this engine run:
+    the epoch, the extension snapshot digest and the composing flag.
+    """
+    wire = nodes_wire(state)
+    for key in ("epoch", "extensionSnapshotDigest", "composing"):
+        wire.pop(key, None)
+    wire["recordedAt"] = int(time.time() * 1000)
+    if snapshot is not None:
+        wire["snapshot"] = snapshot
+    path.parent.mkdir(parents=True, exist_ok=True)
+    staged = path.with_name(f".{path.name}.pending")
+    staged.write_text(json.dumps(wire, separators=(",", ":")), encoding="utf-8")
+    os.replace(staged, path)
 
 
 async def handle_extension_snapshot(request: web.Request) -> web.Response:
@@ -3430,6 +3475,9 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
+        graph, automatic = await resolve_automatic(
+            graph, targets, execution.schemas, call_lookup=request.app.get(LOOKUP_DISPATCH_KEY)
+        )
         with use_asset_folders(asset_folders):
             try:
                 graph, missing_names = await asyncio.to_thread(
@@ -3574,6 +3622,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     referenced.setdefault(digest, need.name)
             if referenced:
                 await run_media_publication(library, lambda: recover_asset_observations(library))
+                acquired_kinds: set[str] = set()
                 local_plan = await asyncio.to_thread(
                     asset_preflight,
                     library,
@@ -3582,7 +3631,9 @@ async def handle_submit(request: web.Request) -> web.Response:
                     hinted_sources,
                     scope=scope,
                     project=project,
+                    acquired_kinds=acquired_kinds,
                 )
+                announce_asset_kinds(request.app, acquired_kinds)
         if (
             execution.preflight_provider_assets is not None
             and remote_provider_plan
@@ -3624,6 +3675,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 attention_config=attention_config,
                 single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
+                automatic=automatic,
             )
         except JobGraphAdmissionError as exc:
             return web.json_response(
@@ -4623,6 +4675,8 @@ def create_app(
     schemas: Mapping[str, NodeSchema],
     *,
     pack_route_dispatch: PackRouteDispatch | None = None,
+    lookup_dispatch: LookupDispatch | None = None,
+    lookup_marks: LookupMarks | None = None,
     frontend_module_read: FrontendModuleRead | None = None,
     max_running_jobs: int = 1,
     governor: MemoryGovernor | None = None,
@@ -4643,6 +4697,7 @@ def create_app(
     principal_permissions: PrincipalPermissionStore | None = None,
     user_session_freshness_seconds: float = 600,
     library: ServerLibrary | None = None,
+    make_library: Callable[[Engine], ServerLibrary] | None = None,
     history: HistoryStore | None = None,
     training_sessions: TrainingSessionStore | None = None,
     choices: Mapping[str, Sequence[str]] | None = None,
@@ -4664,6 +4719,8 @@ def create_app(
     redactor: PathRedactor | None = None,
     execution_journal: ExecutionJournal | None = None,
     full_free: FullFree | None = None,
+    prepare_remote_run: Callable[[str, Mapping[str, object] | None], Awaitable[None]] | None = None,
+    finish_remote_run: Callable[[str], Awaitable[None]] | None = None,
     federated_asset_paths: Mapping[str, str] | None = None,
     federated_asset_store: ResolutionStore | None = None,
     federated_asset_sources: Sequence[AcquisitionSource] = (),
@@ -4675,6 +4732,8 @@ def create_app(
 
     The server owns event wiring, so it constructs the engine: pass a factory
     that accepts the server's event listener (mirrors how tests build engines).
+    A library factory binds the engine's actual reference owners before history
+    recovery and queue construction; a concrete library is also accepted.
 
     ``packs``/``node_packs`` carry pack provenance for /api/nodes: the packs
     table (pack id -> PackInfo) and per-node attribution (node type -> pack
@@ -4682,9 +4741,29 @@ def create_app(
     ``memory_headroom_changed`` is an optional composition-owned live-apply
     hook; embedders that do not host armed workers leave it unset.
     """
+    if library is not None and make_library is not None:
+        raise ValueError("supply a library or its factory, not both")
+    has_library = library is not None or make_library is not None
+
+    async def publish_image_documents(
+        node_id: str, claims: Sequence[ImageDocumentArtifact]
+    ) -> tuple[SavedArtifact, ...]:
+        assert library is not None
+        return await library.publish_image_documents(node_id, claims)
+
+    def retain_output_files(outputs: Mapping[str, Value]) -> None:
+        from dinkster_assets.scratch import retain_produced_asset_path
+
+        assert library is not None
+        for digest in value_asset_references(outputs):
+            path = library.stored_assets.resolve(digest)
+            if path is not None:
+                retain_produced_asset_path(path)
 
     async def publish_outputs(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
         assert library is not None
+        with contextlib.suppress(AssetError):
+            retain_output_files(outputs)
         job = state.queue.job_for_run(run_id)
         if job is None:
             raise AssetError("result publication has no admitted job")
@@ -4721,6 +4800,18 @@ def create_app(
 
         job.result_offers[node_id] = await run_owned_thread(persist)
 
+    def cache_hit_valid(outputs: Mapping[str, Value]) -> bool:
+        if library is None:
+            return True
+        try:
+            references = value_asset_references(outputs)
+            if not all(library.asset_available(digest) for digest in references):
+                return False
+            retain_output_files(outputs)
+            return True
+        except AssetError:
+            return False
+
     async def complete_result(job: Job, result: RunResult) -> RunResult:
         for node_id, outputs in result.outputs.items():
             if node_id not in job.result_offers:
@@ -4730,6 +4821,14 @@ def create_app(
         if result.artifacts:
             record_outputs = library.record_saved_outputs
             result = await run_media_publication(library, lambda: record_outputs(job, result))
+            announce_asset_kinds(
+                app,
+                {
+                    kind
+                    for artifact in result.artifacts
+                    for kind in recorded_asset_kinds("asset/file", artifact.media_type)
+                },
+            )
 
             def persist_artifacts() -> list[dict[str, object]]:
                 offers: list[dict[str, object]] = []
@@ -4761,6 +4860,19 @@ def create_app(
         from .library import run_owned_thread
         from .projects import record_project_run
 
+        if terminal_state == "completed" and lookup_marks is not None:
+            changed = lookups_changed(graph_node_types(job.graph), lookup_marks, after_run=True)
+            if changed:
+                state.hub.publish(
+                    {"type": "lookups_changed", "functions": changed},
+                    client_id=None,
+                    droppable=False,
+                )
+        if finish_remote_run is not None:
+            try:
+                await finish_remote_run(job.run_id)
+            except (ValueError, OSError):
+                _log.warning("could not remove remote credentials for completed run")
         if job.execution_started_at is not None:
             try:
                 await record_project_run(app, job.project, job.execution_started_at)
@@ -4796,14 +4908,18 @@ def create_app(
             if library.scratch_root is not None:
                 scratch = library.scratch_root
                 vault = library.vault
-                store = library.store
+                recovery_store = (
+                    library.store
+                    if library.cleanup_policy is None and library.engine_references is None
+                    else None
+                )
                 preview_vaults = library.preview_vaults
                 recovery = await run_owned_thread(
                     lambda: recover_produced_publications(
                         vault,
                         scratch,
                         job=job.run_id,
-                        store=store,
+                        store=recovery_store,
                         preview_vaults=preview_vaults,
                     )
                 )
@@ -4816,31 +4932,55 @@ def create_app(
 
     @contextlib.contextmanager
     def job_context(job: Job) -> Generator[None]:
-        from dinkster_assets.scratch import hold_produced_vault
+        from dinkster_assets.scratch import (
+            hold_produced_asset_read,
+            use_produced_asset_path_owner,
+        )
 
-        assert library is not None
-        with contextlib.closing(hold_produced_vault(library.vault.root)):
-            yield
+        held: set[Path] = set()
+        with contextlib.ExitStack() as resources:
+
+            def retain(path: Path) -> None:
+                if path not in held:
+                    lease = hold_produced_asset_read(path)
+                    if lease is not None:
+                        resources.callback(lease.close)
+                    held.add(path)
+
+            with use_produced_asset_path_owner(retain):
+                yield
 
     async def prepare_job(job: Job) -> None:
         from .projects import project_for_run
 
-        await project_for_run(app, job.project)
-
-    # Recover before constructing the queue, with access to sealed results
-    # when publication committed before the dead engine's history write.
-    if history is not None:
-        interrupted = history.recover_interrupted(
-            library=library.store if library is not None else None
-        )
-        if interrupted:
-            _log.warning(
-                "previous server process left %d unfinished job(s);"
-                " recorded as interrupted history, none re-run",
-                len(interrupted),
+        project = await project_for_run(app, job.project)
+        if prepare_remote_run is not None:
+            link = (
+                cast("Mapping[str, object] | None", project["accountProject"]) if project else None
             )
+            await prepare_remote_run(job.run_id, link)
+
+    def prepare_engine(on_event: EventListener) -> Engine:
+        nonlocal library
+        engine = make_engine(on_event)
+        if make_library is not None:
+            library = make_library(engine)
+        # Bind helper references before recovery, but recover before the queue
+        # can accept new work or publish results for this engine.
+        if history is not None:
+            interrupted = history.recover_interrupted(
+                library=library.store if library is not None else None
+            )
+            if interrupted:
+                _log.warning(
+                    "previous server process left %d unfinished job(s);"
+                    " recorded as interrupted history, none re-run",
+                    len(interrupted),
+                )
+        return engine
+
     state = ServerState(
-        make_engine,
+        prepare_engine,
         schemas,
         max_running_jobs=max_running_jobs,
         governor=governor,
@@ -4870,15 +5010,17 @@ def create_app(
         execution_journal=execution_journal,
         full_free=full_free,
         prepare_job=prepare_job,
-        complete_result=complete_result if library is not None else None,
+        complete_result=complete_result if has_library else None,
         settle_job=settle_job,
-        job_context=job_context if library is not None else None,
-        publish_outputs=publish_outputs if library is not None else None,
-        publish_image_documents=library.publish_image_documents if library is not None else None,
+        job_context=job_context if has_library else None,
+        publish_outputs=publish_outputs if has_library else None,
+        publish_image_documents=publish_image_documents if has_library else None,
+        cache_hit_valid=cache_hit_valid if has_library else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
     app[PACK_SETTINGS_KEY] = PackSettingsStore(pack_settings_root)
+    app[CALL_BUDGETS_KEY] = call_budgets()
     permission_store = principal_permissions or PrincipalPermissionStore()
     install_browser_request_security(
         app,
@@ -4891,6 +5033,18 @@ def create_app(
         install_response_compression(app)
     route_capabilities = install_pack_surfaces(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
+    )
+    route_capabilities.update(
+        install_lookups(
+            app,
+            schemas=lambda: state.schemas,
+            node_pack=lambda node_type: state.node_packs.get(node_type, CORE_PACK_ID),
+            epoch=lambda: state.schema_epoch,
+            dispatch=lookup_dispatch,
+            budgets=app[CALL_BUDGETS_KEY],
+            marks=lookup_marks,
+            publish=lambda event: state.hub.publish(dict(event), client_id=None, droppable=False),
+        )
     )
     federated_paths = frozenset[str]()
     if federated_asset_paths is not None:
@@ -5012,6 +5166,10 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler_task
         await state.queue.close()
+        if library is not None and not library.keep_temporary_files:
+            from .cleanup import inspect_engine_temporary
+
+            inspect_engine_temporary(app, collect=True, clear_staging=True)
         if history is not None:
             # Queue close just wrote its terminal transitions inline
             # through the store; nothing writes after this point.

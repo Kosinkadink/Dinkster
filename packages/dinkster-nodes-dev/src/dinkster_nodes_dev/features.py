@@ -3,25 +3,36 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from typing import cast
 
 import numpy as np
 from dinkster_api.v1 import (
+    COLOR_TYPE,
     CORE_BOOLEAN,
     CORE_COMBO,
     CORE_FLOAT,
     CORE_INT,
     CORE_STRING,
+    CURVE_TYPE,
+    HISTOGRAM_TYPE,
     IMAGE_TYPE,
     PNG_CONTAINER_VERSION,
     BooleanWidget,
+    Choice,
+    ColorWidget,
+    ComboWidget,
     Count,
+    Curve,
+    CurveWidget,
     CustomWidgetDescriptor,
     Described,
     Formula,
     Group,
     Input,
+    InputFamilyMapping,
     Item,
+    MappingSource,
     Members,
     MirrorSpec,
     MirrorTolerance,
@@ -30,7 +41,13 @@ from dinkster_api.v1 import (
     NodeSchema,
     Numbered,
     NumberWidget,
+    Option,
     Output,
+    Record,
+    ReplacementCase,
+    ReplacementMigration,
+    ReplacementRule,
+    Section,
     SlotValue,
     StringWidget,
     TypeChoice,
@@ -52,12 +69,18 @@ STRING = TypeExpr.concrete(CORE_STRING)
 INT = TypeExpr.concrete(CORE_INT)
 BOOLEAN = TypeExpr.concrete(CORE_BOOLEAN)
 STRINGS = TypeExpr.list_of(STRING)
+COLOR = TypeExpr.concrete(COLOR_TYPE)
 IMAGE = TypeExpr.concrete(IMAGE_TYPE)
 FLOAT = TypeExpr.concrete(CORE_FLOAT)
+CURVE = TypeExpr.concrete(CURVE_TYPE)
+HISTOGRAM = TypeExpr.concrete(HISTOGRAM_TYPE)
 
 
 def register_feature_types(registry: TypeRegistry) -> None:
-    """Use the shared portable IMAGE contract without requiring inference."""
+    """Use the shared portable IMAGE contract without requiring inference, and
+    the shared COLOR type the palette's members carry."""
+    if COLOR_TYPE not in registry:
+        registry.register(COLOR_TYPE)
     if IMAGE_TYPE not in registry:
         registry.register(
             IMAGE_TYPE,
@@ -118,6 +141,7 @@ class FeatureOutputCount(Node):
                     "numbers",
                     value=Output("number", INT),
                     keys=Numbered(""),
+                    member_label=Formula('"number " + str(index() + 1)'),
                     grows=Count(Formula("count")),
                     min_members=1,
                     max_members=8,
@@ -170,6 +194,7 @@ class FeatureWidgetKinds(Node):
             display_name="Feature: Widget Kinds",
             category="dev/features",
             output_node=True,
+            version=2,
             description="Edit selections, Markdown, colors and a list; open help with a button.",
             body=(
                 Input(
@@ -184,11 +209,13 @@ class FeatureWidgetKinds(Node):
                     default="# Try Markdown\n\n**Edit me.**",
                     widget=CustomWidgetDescriptor("MARKDOWN"),
                 ),
-                Input(
+                Group(
                     "colors",
-                    STRINGS,
-                    default=["#ff6600", "#2255aa"],
-                    widget=CustomWidgetDescriptor("COLORS"),
+                    value=Input("color", COLOR, default="#ffffff", widget=ColorWidget()),
+                    keys=Numbered("color", start=0),
+                    grows="filled",
+                    reorderable=True,
+                    label="Colors",
                 ),
                 Input(
                     "button",
@@ -201,6 +228,25 @@ class FeatureWidgetKinds(Node):
                 Input("items", STRINGS, default=["first", "second"], widget=StringWidget()),
                 Output("text", STRING),
             ),
+            # Version 1 stored the colors as one list in a "colors" input; it
+            # opens with one member per stored color, in order.
+            replacements=(
+                ReplacementRule(
+                    from_type="dev.features.widget_kinds",
+                    migration=ReplacementMigration(historical_inputs=("colors",)),
+                    cases=(
+                        ReplacementCase.build(
+                            "dev.features.widget_kinds",
+                            inputs={
+                                name: MappingSource.copy(name)
+                                for name in ("selections", "markdown", "button", "items")
+                            },
+                            outputs={"text": "text"},
+                            input_families={"colors": InputFamilyMapping.spread("colors")},
+                        ),
+                    ),
+                ),
+            ),
         )
 
     @classmethod
@@ -209,7 +255,7 @@ class FeatureWidgetKinds(Node):
         *,
         selections: Sequence[str],
         markdown: str,
-        colors: Sequence[str],
+        colors: Members[Item],
         button: str,
         items: Sequence[str],
     ) -> Mapping[str, object]:
@@ -218,7 +264,7 @@ class FeatureWidgetKinds(Node):
                 {
                     "selections": list(selections),
                     "markdown": markdown,
-                    "colors": list(colors),
+                    "colors": [member.value for member in colors],
                     "button": button,
                     "items": list(items),
                 },
@@ -347,6 +393,234 @@ void main() {
         return cls.outputs(image=result)
 
 
+class FeatureLayers(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.layers",
+            display_name="Feature: Layers",
+            category="dev/features",
+            output_node=True,
+            description=(
+                "Add, reorder and remove layers inside a section that closes; each layer "
+                "has a name and a strength."
+            ),
+            body=(
+                Input("title", STRING, default="Layers", widget=StringWidget(multiline=False)),
+                Section(
+                    "layers_section",
+                    label="Layers",
+                    rows=(
+                        Group(
+                            "layers",
+                            member=(
+                                Input(
+                                    "name",
+                                    STRING,
+                                    default="layer",
+                                    widget=StringWidget(multiline=False),
+                                ),
+                                Input(
+                                    "strength",
+                                    FLOAT,
+                                    default=1.0,
+                                    widget=NumberWidget(min=0.0, max=2.0, step=0.05),
+                                ),
+                            ),
+                            keys=Numbered(""),
+                            member_label=Formula('"layer " + str(index() + 1)'),
+                            grows="button",
+                            max_members=8,
+                            reorderable=True,
+                            add_label="Add layer",
+                            label="Layers",
+                        ),
+                    ),
+                ),
+                Output("text", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, title: str, layers: Members[Record]) -> Mapping[str, object]:
+        parts = [f"{layer['name']} {_number(layer['strength']):.2f}" for layer in layers]
+        return cls.outputs(text=f"{title}: " + ", ".join(parts))
+
+
+class FeatureOptionFields(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.option_fields",
+            display_name="Feature: Fields Under an Option",
+            category="dev/features",
+            output_node=True,
+            description=(
+                "A field under a choice's option and a field under a type-led variant; "
+                "each field's output gives nothing while its option or variant is not chosen."
+            ),
+            body=(
+                Choice(
+                    "mode",
+                    label="Mode",
+                    options=(
+                        Option(
+                            "fixed",
+                            label="Fixed amount",
+                            rows=(
+                                Input(
+                                    "amount",
+                                    FLOAT,
+                                    default=0.8,
+                                    widget=NumberWidget(min=0.0, max=1.0, step=0.05),
+                                ),
+                            ),
+                        ),
+                        Option("none", label="No amount"),
+                    ),
+                    default="fixed",
+                ),
+                TypeChoice(
+                    "source",
+                    variants=(
+                        Variant(
+                            "number",
+                            FLOAT,
+                            rows=(
+                                Input(
+                                    "scale",
+                                    FLOAT,
+                                    default=1.5,
+                                    widget=NumberWidget(min=0.0, max=4.0, step=0.25),
+                                ),
+                            ),
+                        ),
+                        Variant("text", STRING),
+                    ),
+                    required=False,
+                ),
+                Output("text", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, mode: Record, source: SlotValue | None) -> Mapping[str, object]:
+        parts = [f"mode={mode.key}"]
+        if "amount" in mode:
+            parts.append(f"amount={_number(mode['amount']):.2f}")
+        if source is None:
+            parts.append("source=none")
+        else:
+            parts.append(f"source={source.variant}:{source.value}")
+            if "scale" in source.options:
+                parts.append(f"scale={_number(source.options['scale']):.2f}")
+        return cls.outputs(text="; ".join(parts))
+
+
+class FeatureRequiredValue(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.required_value",
+            display_name="Feature: Required Value",
+            category="dev/features",
+            output_node=True,
+            description=(
+                "One required number with no default; the node is skipped when its wire "
+                "gives nothing."
+            ),
+            body=(Input("value", FLOAT), Output("text", STRING)),
+        )
+
+    @classmethod
+    def execute(cls, *, value: float) -> Mapping[str, object]:
+        return cls.outputs(text=f"value={value:.2f}")
+
+
+_HISTOGRAM_SHAPES: dict[str, Callable[[int], int]] = {
+    "rising": lambda index: index * 4,
+    "falling": lambda index: (255 - index) * 4,
+    "middle": lambda index: max(0, 1024 - abs(index - 128) * 12),
+}
+
+
+class FeatureHistogramShape(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.histogram_shape",
+            display_name="Feature: Histogram Shape",
+            category="dev/features",
+            description="A 256-bin histogram of a chosen shape, to feed a curve's histogram.",
+            body=(
+                Input(
+                    "shape",
+                    TypeExpr.concrete(CORE_COMBO),
+                    default="rising",
+                    widget=ComboWidget(options=tuple(_HISTOGRAM_SHAPES)),
+                ),
+                Output("histogram", HISTOGRAM),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, shape: str) -> Mapping[str, object]:
+        return cls.outputs(histogram=[_HISTOGRAM_SHAPES[shape](index) for index in range(256)])
+
+
+class FeatureCurveHistograms(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            "dev.features.curve_histograms",
+            display_name="Feature: Curves With Histograms",
+            category="dev/features",
+            output_node=True,
+            description="A group of curves; each curve has its own histogram input.",
+            body=(
+                Group(
+                    "curves",
+                    member=(
+                        Input(
+                            "curve",
+                            CURVE,
+                            default={
+                                "points": [[0.0, 0.0], [1.0, 1.0]],
+                                "interpolation": "monotone_cubic",
+                            },
+                            widget=CurveWidget(histogram="histogram"),
+                        ),
+                        Input("histogram", HISTOGRAM, required=False),
+                    ),
+                    keys=Numbered(""),
+                    member_label=Formula('"curve " + str(index() + 1)'),
+                    grows="button",
+                    min_members=2,
+                    max_members=4,
+                    add_label="Add curve",
+                    label="Curves",
+                ),
+                Output("text", STRING),
+            ),
+        )
+
+    @classmethod
+    def execute(cls, *, curves: Members[Record]) -> Mapping[str, object]:
+        parts: list[str] = []
+        for member in curves:
+            curve = cast("Curve", member["curve"])
+            histogram = cast("Sequence[int] | None", member.get("histogram"))
+            bins = "no histogram" if histogram is None else f"{len(histogram)} bins"
+            parts.append(f"{member.key}: {len(curve.points)} points, {bins}")
+        return cls.outputs(text="; ".join(parts))
+
+
+def _number(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"expected a number, got {value!r}")
+    return float(value)
+
+
 FEATURE_NODES = [
     FeatureSlot,
     FeatureOutputCount,
@@ -356,4 +630,9 @@ FEATURE_NODES = [
     FeatureOutputDescriptors,
     FeatureImageSource,
     FeatureMirror,
+    FeatureLayers,
+    FeatureOptionFields,
+    FeatureRequiredValue,
+    FeatureHistogramShape,
+    FeatureCurveHistograms,
 ]

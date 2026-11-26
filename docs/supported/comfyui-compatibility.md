@@ -157,8 +157,8 @@
   zero, and set area or timestep metadata under their exact ComfyUI interfaces.
 - Native hook conditioning preserves paired ordering, default records, mask and
   timestep metadata, and CLIP hook clone scheduling under exact core interfaces.
-- Hook keyframes from floats preserve the forced FLOATS socket and its numeric
-  default, minimum, and step under the exact core interface.
+- Hook keyframes from floats take one FLOAT or a list<FLOAT> on their strengths
+  input, keeping its numeric default, minimum, and step.
 - Native VAE inpainting encoding and model conditioning preserve crop, mask,
   latent, and conditioning metadata behavior under exact ComfyUI interfaces.
 - Fifteen native mask and composite nodes convert, create, invert, crop, combine,
@@ -222,10 +222,8 @@
   sampling implementation.
 - Pre-split Dinkster documents and draft node identities have no compatibility
   path. ComfyUI conversion uses the first-party pack replacement declarations.
-- The 602-workflow translation census, source-parity baseline, registry source
-  snapshot, and pre-retirement capability evidence remain committed as
-  historical evidence. The old capability selectors are inactive and make no
-  current support claim.
+- The source-parity baseline, registry source snapshot, and inactive capability
+  source data are retained as source evidence, not current support claims.
 - Pack HTTP routes, web assets, and executor hooks are diagnosed rather than
   emulated.
 - Reference file-input metadata includes manually enumerated file choices whose
