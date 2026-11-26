@@ -35,7 +35,11 @@ def validate_virtual_path(path: str) -> str:
 @dataclass(frozen=True)
 class AssetEntry:
     """One reference: a virtual path bound to a content identity. Many
-    entries may share one digest (duplicate files, aliases)."""
+    entries may share one digest (duplicate files, aliases).
+
+    ``modified_at`` is filesystem modification time in Unix seconds, or zero
+    for entries without a filesystem timestamp.
+    """
 
     virtual_path: str
     digest: str
@@ -43,6 +47,7 @@ class AssetEntry:
     media_type: str = "application/octet-stream"
     tags: tuple[str, ...] = ()
     metadata: Mapping[str, object] = field(default_factory=dict[str, object])
+    modified_at: float = 0.0
 
     def __post_init__(self) -> None:
         validate_virtual_path(self.virtual_path)
