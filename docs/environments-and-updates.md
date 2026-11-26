@@ -573,19 +573,21 @@ driver branch is NVIDIA's last to support GPUs older than Turing and is
 supported until mid-2028, so a machine on a current driver can run either
 variant.
 
-Detection runs `nvidia-smi --query-gpu=index,name,driver_version,compute_cap,memory.total --format=csv,noheader`
+The environment tools' `catalog --hardware` and the always-on setup planner
+share detection and selection. Detection runs
+`nvidia-smi --query-gpu=index,name,driver_version,compute_cap,memory.total --format=csv,noheader`
 and, on Windows when `nvidia-smi` is absent, reads `Win32_VideoController`
-to tell an NVIDIA GPU without a driver from no NVIDIA GPU. Selection looks
-at the driver first and then at the GPUs the user assigned to the engine,
-applying the rule to the lowest compute capability among them, not to every
-GPU in the machine: a system with an old driver kept for a GTX 10 series
-display card and an RTX card for compute gets cu126 for the RTX card
-without a refusal, and the same system after a driver update is offered
-cu132. The choice is shown at plan time with the reason and the user can
-override it. When no NVIDIA variant fits the assigned GPUs (driver too old
-for cu126, or no NVIDIA GPU at all), the plan says what driver or hardware
-would be needed and offers the CPU variant as an explicit choice; the client
-never falls back to CPU silently. Each base manifest carries the minimum
+to tell an NVIDIA GPU without a driver from no NVIDIA GPU. Linux also uses
+WSL's fixed driver-tool path when it is outside PATH; without a driver tool,
+PCI display-card facts distinguish no NVIDIA card from unknown driver facts.
+A failed check remains unknown rather than selecting CPU. Selection checks
+each card's driver and compute capability against the published manifests,
+prefers the newest compatible NVIDIA build and assigns its supported cards.
+Explicit catalog `--gpu` selections require every assigned card to support
+the selected build. The choice and supported alternatives carry their reasons.
+CPU is offered only when no supported NVIDIA card is found; it cannot override
+a supported NVIDIA build in the process planner. The command line's explicit
+setup variant remains available independently. Each base manifest carries the minimum
 driver and the minimum compute capability its torch build supports, so the
 rule is data in the base manifest rather than code in the client.
 

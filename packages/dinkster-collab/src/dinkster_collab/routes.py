@@ -581,6 +581,8 @@ async def handle_append_op(request: web.Request) -> web.Response:
         return _error(409, {"error": "stale-base", "revision": exc.revision})
     except WriteRefusedError as exc:
         return _error(422, dict(exc.refusal))
+    except InvalidSnapshotError as exc:
+        return _error(400, {"error": "document-invalid", "message": str(exc)})
     except SnapshotRequiredError as exc:
         return _error(
             409,

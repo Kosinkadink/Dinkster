@@ -88,10 +88,9 @@ from dinkster_workers import ManifestError, load_manifest
 from dinkster_workers.pack_lock import LockedDistribution, LockedWheel, PackLock
 from dinkster_workers.pack_wheel import pack_manifest_path
 from dinkster_workers.provision import ProvisionError
-from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.tags import sys_tags
-from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.utils import parse_wheel_filename
 from packaging.version import Version
 
 from dinkster.installer import RegistryFetcher, http_registry_fetcher, read_registry_response
@@ -853,32 +852,12 @@ def _release_requirement_conflicts(
         not isinstance(item, str) for item in requirements
     ):
         raise InstallError("registry release must declare its Python requirements")
-    conflicts: list[str] = []
-    for text in requirements:
-        try:
-            requirement = Requirement(text)
-        except ValueError as exc:
-            raise InstallError(f"registry release has invalid Python requirement {text!r}") from exc
-        if requirement.marker:
-            if markers is None:
-                raise InstallError(
-                    "target interpreter markers are required for conditional requirements"
-                )
-            if not requirement.marker.evaluate(dict(markers)):
-                continue
-        name = canonicalize_name(requirement.name)
-        # Private pack dependencies are resolved by their published lock. Inference
-        # is engine-owned even when it is absent from an older generation.
-        if name not in engine_packages and name != "dinkster-inference":
-            continue
-        installed = engine_packages.get(name)
-        if (
-            installed is None
-            or requirement.url is not None
-            or not requirement.specifier.contains(installed, prereleases=True)
-        ):
-            conflicts.append(f"requires {text}; engine provides {name}=={installed or 'absent'}")
-    return conflicts
+    from dinkster_supervisor.environment_pack_metadata import requirement_conflicts
+
+    try:
+        return requirement_conflicts(cast("list[str]", requirements), engine_packages, markers)
+    except ValueError as exc:
+        raise InstallError(str(exc)) from exc
 
 
 def resolve_compatible_release(
