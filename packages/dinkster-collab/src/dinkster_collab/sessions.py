@@ -16,7 +16,10 @@ ordered. An op that does not apply to the current document cannot be
 judged; it is ordered as before, and no client can apply it either. The
 service also remembers every value each path the check names has held in
 the session, starting with the document the session opened with, so the
-check can accept a value being put back, such as by an undo.
+check can accept a value being put back, such as by an undo. An optional
+per-operation admission check judges the materialized document before
+creation, append, or checkpoint changes state. With admission enabled,
+an op that cannot materialize is refused rather than ordered unchecked.
 
 Concurrency contract (v1, protocolVersion 1): an op names the revision
 it was built on (baseRevision). If that is no longer the head, the
@@ -360,6 +363,7 @@ class SessionService:
         snapshot: object,
         document_kind: str = "workflow",
         principal_id: str = "local",
+        admission_check: Callable[[str, str, object], None] | None = None,
     ) -> DocumentSession:
         if document_kind not in DOCUMENT_KINDS:
             raise ValueError(f"document_kind must be one of {list(DOCUMENT_KINDS)}")
@@ -371,6 +375,8 @@ class SessionService:
             document_kind=document_kind,
             acl={principal_id: "owner"},
         )
+        if admission_check is not None:
+            admission_check(scope, document_kind, session.snapshot)
         self._remember(session, session.snapshot, [()])
         self._sessions[session.session_id] = session
         if self._store is not None:
@@ -520,6 +526,7 @@ class SessionService:
         patch: Sequence[Mapping[str, Any]],
         principal_id: str = "local",
         actor_kind: str = "human",
+        admission_check: Callable[[str, str, object], None] | None = None,
     ) -> tuple[SessionOp, bool]:
         """Order one op. Returns (op, replayed): replayed=True means the
         opId was already retained and the recorded envelope is returned
@@ -550,12 +557,16 @@ class SessionService:
         if session.document_kind == "board":
             if problem := validate_patch(list(normalized_patch)):
                 raise InvalidSnapshotError(problem)
-        if self._write_check is not None or session.document_kind == "board":
+        if (
+            admission_check is not None
+            or self._write_check is not None
+            or session.document_kind == "board"
+        ):
             document = self._document(session)
             try:
                 after = apply_patch(document, normalized_patch)
             except PatchConflictError as exc:
-                if session.document_kind == "board":
+                if admission_check is not None or session.document_kind == "board":
                     raise InvalidSnapshotError(str(exc)) from exc
             else:
                 if session.document_kind == "board":
@@ -568,6 +579,8 @@ class SessionService:
                     )
                     if refusal is not None:
                         raise WriteRefusedError(refusal)
+                if admission_check is not None:
+                    admission_check(session.scope, session.document_kind, after)
                 document = after
                 self._remember(session, after, [tuple(entry["path"]) for entry in normalized_patch])
         op = SessionOp(
@@ -585,7 +598,11 @@ class SessionService:
         session.ops.append(op)
         session.ops_by_id[op_id] = op
         session.actor_bindings.setdefault(actor_id, principal_id)
-        if self._write_check is not None or session.document_kind == "board":
+        if (
+            admission_check is not None
+            or self._write_check is not None
+            or session.document_kind == "board"
+        ):
             self._documents[session_id] = (op.revision, document)
         return deepcopy(op), False
 
@@ -633,6 +650,7 @@ class SessionService:
         revision: int,
         document: object,
         principal_id: str = "local",
+        admission_check: Callable[[str, str, object], None] | None = None,
     ) -> DocumentSession:
         """Install a client-materialized snapshot at ``revision`` and
         prune the ops it covers. The revision must name a state the
@@ -651,6 +669,8 @@ class SessionService:
         snapshot = self._validated_snapshot(session.document_kind, session.document_id, document)
         if session.document_kind == "board" and snapshot != self._document(session, revision):
             raise InvalidSnapshotError("Board checkpoint must match its accepted revision")
+        if admission_check is not None:
+            admission_check(session.scope, session.document_kind, snapshot)
         # Remember the values of the ops about to be pruned before they are gone.
         self._document(session)
         session.snapshot = snapshot

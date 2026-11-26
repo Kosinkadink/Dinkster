@@ -674,6 +674,7 @@ async def _media_client(
     upload_limits: Mapping[str, int] | None = None,
     authenticator: _Tokens | None = None,
     mounts: MountTable | None = None,
+    collaboration: bool = False,
 ) -> tuple[TestClient, ServerLibrary]:
     library = ServerLibrary(
         vault=AssetVault(tmp_path / "vault"),
@@ -704,6 +705,10 @@ async def _media_client(
         asset_export=library.vault,
         authenticator=authenticator,
     )
+    if collaboration:
+        from dinkster.serve import _add_collaboration_routes
+
+        assert _add_collaboration_routes(app, tmp_path / "sessions.sqlite")
     client = TestClient(TestServer(app))
     await client.start_server()
     return client, library
@@ -1344,6 +1349,139 @@ def test_digest_reads_require_a_grant_in_the_authorized_scope(tmp_path: Path) ->
                         headers={**headers, "If-None-Match": f'"{validator}"'},
                     )
                     assert absent.status == 404
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("document_kind", ("board", "image", "workflow"))
+def test_shared_documents_admit_only_exact_scope_asset_grants(
+    tmp_path: Path, document_kind: str
+) -> None:
+    from copy import deepcopy
+
+    from tests.test_collab import board_snapshot
+    from tests.test_image_document_adoption import _document
+
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write", "sessions:read", "sessions:write"})
+        auth = _Tokens(
+            {
+                "a": Principal("alice", {"a": capabilities}),
+                "b": Principal("bob", {"b": capabilities}),
+                "both": Principal("both", {"a": capabilities, "b": capabilities}),
+                "writer": Principal("writer", {"a": frozenset({"sessions:write"})}),
+            }
+        )
+        client, _library = await _media_client(tmp_path, authenticator=auth, collaboration=True)
+        image = BytesIO()
+        Image.new("RGBA", (2, 1), (11, 57, 133, 255)).save(image, "PNG")
+        data = image.getvalue()
+        digest = digest_bytes(data)
+        media = {"picture": data, "video": _mp4(), "sound": _wav()}
+        board = board_snapshot()
+        for item in board["items"].values():
+            if "asset" in item:
+                item["asset"]["digest"] = digest_bytes(media[item["kind"]])
+        image_document = _document(data, digest)
+        empty_image = {**image_document, "layers": {}, "rootLayerIds": [], "resources": {}}
+        cases = (
+            ("board", "board-one", board, {**board, "items": {}, "order": []}),
+            ("image", "lineage-1", image_document, empty_image),
+            ("workflow", "workflow-one", {"nodes": {"source": {"digest": digest}}}, {}),
+        )
+
+        def headers(token: str) -> dict[str, str]:
+            return {"Authorization": f"Bearer {token}"}
+
+        try:
+            for payload in media.values():
+                upload = await client.post(
+                    "/api/assets?scope=a", data=payload, headers=headers("a")
+                )
+                assert upload.status == 201
+            if document_kind == "board":
+                for payload in (data, media["video"]):
+                    upload = await client.post(
+                        "/api/assets?scope=b", data=payload, headers=headers("b")
+                    )
+                    assert upload.status == 201
+            for kind, identity, document, empty in cases:
+                if kind != document_kind:
+                    continue
+                body = {
+                    "scope": "b",
+                    "documentKind": kind,
+                    "documentId": identity,
+                    "snapshot": document,
+                }
+                denied = await client.post(
+                    "/api/sessions?scope=a", json=body, headers=headers("both")
+                )
+                assert denied.status == 404, await denied.text()
+                assert await denied.json() == {"error": "asset not held here"}
+                listed = await client.get("/api/sessions?scope=b", headers=headers("b"))
+                assert await listed.json() == {"sessions": []}
+                no_read = await client.post(
+                    "/api/sessions", json={**body, "scope": "a"}, headers=headers("writer")
+                )
+                assert no_read.status == 403
+                accepted = await client.post(
+                    "/api/sessions", json={**body, "scope": "a"}, headers=headers("a")
+                )
+                assert accepted.status == 201, await accepted.text()
+                created = await client.post(
+                    "/api/sessions", json={**body, "snapshot": empty}, headers=headers("b")
+                )
+                assert created.status == 201, await created.text()
+                session_id = (await created.json())["sessionId"]
+                path = f"/api/sessions/{session_id}"
+                op = {
+                    "protocolVersion": 1,
+                    "opId": "media",
+                    "actorId": "actor",
+                    "baseRevision": 0,
+                    "patch": [{"op": "replace", "path": [], "value": document}],
+                }
+                denied = await client.post(path + "/ops?scope=a", json=op, headers=headers("b"))
+                assert denied.status == 404, await denied.text()
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 0, "document": empty}
+                operations = await client.get(path + "/ops?after=0", headers=headers("b"))
+                assert (await operations.json())["ops"] == []
+                clean_op = deepcopy(op)
+                clean_op["patch"][0]["value"] = empty
+                clean = await client.post(path + "/ops", json=clean_op, headers=headers("b"))
+                assert clean.status == 200, await clean.text()
+                checkpoint = await client.put(
+                    path + "/snapshot",
+                    json={"revision": 1, "document": document},
+                    headers=headers("b"),
+                )
+                assert checkpoint.status == (400 if kind == "board" else 404), (
+                    await checkpoint.text()
+                )
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 0, "document": empty}
+                # Independently supplied bytes authorize the same reference in B, not A's identity.
+                payload = media["sound"] if kind == "board" else data
+                upload = await client.post(
+                    "/api/assets?scope=b", data=payload, headers=headers("b")
+                )
+                assert upload.status == 201
+                op["baseRevision"] = 1
+                op["opId"] = "granted"
+                accepted = await client.post(path + "/ops", json=op, headers=headers("b"))
+                assert accepted.status == 200, await accepted.text()
+                checkpoint = await client.put(
+                    path + "/snapshot",
+                    json={"revision": 2, "document": document},
+                    headers=headers("b"),
+                )
+                assert checkpoint.status == 200, await checkpoint.text()
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 2, "document": document}
         finally:
             await client.close()
 

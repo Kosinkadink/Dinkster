@@ -65,6 +65,7 @@ from dinkster_assets import (
     PublicAcquisitionReceiptStore,
     ResolverIndexError,
     ResolverSubscriptionStore,
+    is_digest,
     load_mounts,
     load_output_mount,
     require_region,
@@ -126,7 +127,7 @@ from dinkster_server import (
 )
 from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
-from dinkster_server.library import run_owned_thread
+from dinkster_server.library import ASSET_GRANTS_KEY, run_owned_thread
 from dinkster_server.workflow_facts import is_node_number, number_write_refusal
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
@@ -227,6 +228,31 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
                 return None
             return number_write_refusal(before, after, app[STATE_KEY].schemas, held)
 
+    def admit_document(request: web.Request, scope: str, _kind: str, document: object) -> None:
+        pending = [document]
+        digests: set[str] = set()
+        while pending:
+            value = pending.pop()
+            if isinstance(value, dict):
+                fields = cast("dict[str, object]", value)
+                digest = fields.get("digest")
+                if isinstance(digest, str) and is_digest(digest):
+                    digests.add(digest)
+                pending.extend(fields.values())
+            elif isinstance(value, list):
+                pending.extend(cast("list[object]", value))
+        if not digests:
+            return
+        resolve_scope(principal_for(request), "assets:read", scope)
+        store = app.get(ASSET_GRANTS_KEY)
+        # Admission and session mutation are synchronous, with no await between them.
+        if store is None or any(not store.has_asset_grant(scope, digest) for digest in digests):
+            raise web.HTTPNotFound(
+                text='{"error": "asset not held here"}',
+                content_type="application/json",
+                headers={"Cache-Control": "no-store"},
+            )
+
     collab.install_session_extension(
         app,
         database=database,
@@ -234,6 +260,7 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
         principal_for=principal_for,
         resolve_scope=resolve_scope,
         write_check=NumberLimits(),
+        document_admission=admit_document,
     )
     return True
 
