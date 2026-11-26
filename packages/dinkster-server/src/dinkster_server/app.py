@@ -356,6 +356,7 @@ from .lookups import (
     lookups_changed,
     recorded_asset_kinds,
 )
+from .pack_functions import PackFunctionDispatch, install_pack_functions
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
@@ -4676,6 +4677,7 @@ def create_app(
     schemas: Mapping[str, NodeSchema],
     *,
     pack_route_dispatch: PackRouteDispatch | None = None,
+    pack_function_dispatch: PackFunctionDispatch | None = None,
     lookup_dispatch: LookupDispatch | None = None,
     lookup_marks: LookupMarks | None = None,
     frontend_module_read: FrontendModuleRead | None = None,
@@ -5034,6 +5036,9 @@ def create_app(
         install_response_compression(app)
     route_capabilities = install_pack_surfaces(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
+    )
+    route_capabilities.update(
+        install_pack_functions(app, pack_function_dispatch, app[CALL_BUDGETS_KEY]["press"])
     )
     route_capabilities.update(
         install_lookups(

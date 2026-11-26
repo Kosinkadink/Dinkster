@@ -2611,6 +2611,7 @@ def _serve(
                 make_engine,
                 composition.schemas,
                 pack_route_dispatch=composer.call_pack_route,
+                pack_function_dispatch=composer.call_pack_function,
                 lookup_dispatch=composer.call_lookup,
                 lookup_marks=composer.lookup_marks,
                 frontend_module_read=composer.read_frontend_module,

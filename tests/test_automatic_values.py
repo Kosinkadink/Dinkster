@@ -499,7 +499,10 @@ def test_a_queued_run_asks_the_packs_lookup_and_records_its_answer(
                         "args": [clip],
                     },
                 )
-                assert await asked.json() == {"answer": 25.0}
+                assert await asked.json() == {
+                    "answer": 25.0,
+                    "typedAnswer": {"$float": 25},
+                }
         finally:
             await composer.close()
 

@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .body import declared_calls
 from .expansion import Expansion
 from .model import NodeSchema
 from .nest import OutputShapeError, flatten_outputs
@@ -79,6 +80,11 @@ class Node:
         cached = cls.__dict__.get("_cached_schema")
         if cached is None:
             cached = cls.define_schema()
+            for call in declared_calls(cached.body, cached.menu):
+                if isinstance(call.function, str):
+                    raise ValueError(
+                        f"{cached.node_type}: Call requires a function object with annotations"
+                    )
             cls._cached_schema = cached
         return cached
 
