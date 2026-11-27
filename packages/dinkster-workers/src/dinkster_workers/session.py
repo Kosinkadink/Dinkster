@@ -458,8 +458,10 @@ class BoundarySession:
         saved_preview_vault: AssetVault | None = None,
         on_schema_reload: SchemaReloadListener | None = None,
         resumable: bool = False,
+        trusted_secret_channel: bool = False,
     ) -> None:
         self._registry = registry
+        self._trusted_secret_channel = trusted_secret_channel
         self._role = role
         self._pack = pack
         self._codec = codec
@@ -527,6 +529,7 @@ class BoundarySession:
         # already landed) are dropped - they are chatter by contract.
         self._event_sinks: dict[str, OnInvocationEvent] = {}
         self._network_invocations: dict[str, Invocation] = {}
+        self._lazy_secret_invocations: dict[str, LazyStatusInvocation] = {}
         self._run_controls: dict[str, Invocation] = {}
         self._run_control_requests: set[tuple[str, str]] = set()
         self._run_control_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
@@ -1607,6 +1610,15 @@ class BoundarySession:
     ) -> InvocationResult:
         if not self._alive:
             return self._dead_result(invocation)
+        if (
+            invocation.invocation_id in self._network_invocations
+            or invocation.invocation_id in self._lazy_pending
+        ):
+            return InvocationResult(
+                error=NodeError(
+                    invocation.node_id, invocation.node_type, "duplicate active invocation identity"
+                )
+            )
         key = InvocationKey(
             invocation.job_ref or invocation.invocation_id,
             invocation.attempt_id,
@@ -1951,7 +1963,10 @@ class BoundarySession:
         future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
             asyncio.get_running_loop().create_future()
         )
-        if invocation.request_id in self._lazy_pending:
+        if (
+            invocation.request_id in self._lazy_pending
+            or invocation.request_id in self._network_invocations
+        ):
             return LazyStatusResult(
                 error=NodeError(
                     invocation.node_id,
@@ -1960,6 +1975,7 @@ class BoundarySession:
                 )
             )
         self._lazy_pending[invocation.request_id] = future
+        self._lazy_secret_invocations[invocation.request_id] = invocation
         try:
             await self._send_invocation(
                 ordinary,
@@ -2007,6 +2023,7 @@ class BoundarySession:
             raise
         finally:
             self._lazy_pending.pop(invocation.request_id, None)
+            self._lazy_secret_invocations.pop(invocation.request_id, None)
 
     async def close(self) -> None:
         """End the conversation and unwind everything session-owned: the
@@ -2337,6 +2354,62 @@ class BoundarySession:
             self._blob_store.pin(owner, digests)
         future.set_result((dict(header), blobs))
 
+    async def _resolve_secret_request(self, header: Mapping[str, object]) -> None:
+        invocation_id = header.get("invocationId")
+        request_id = header.get("requestId")
+        input_id = header.get("inputId")
+        if not all(type(item) is str and item for item in (invocation_id, request_id, input_id)):
+            raise BoundaryError("secret request identity is malformed")
+        reply: dict[str, object] = {
+            "type": "secretResult",
+            "invocationId": invocation_id,
+            "requestId": request_id,
+            "available": False,
+        }
+        value: str | None = None
+        invocation: Invocation | LazyStatusInvocation | None = None
+        pending = self._pending.get(str(invocation_id))
+        if pending is not None and not pending.done():
+            invocation = self._network_invocations.get(str(invocation_id))
+        lazy_pending = self._lazy_pending.get(str(invocation_id))
+        if invocation is None and lazy_pending is not None and not lazy_pending.done():
+            invocation = self._lazy_secret_invocations.get(str(invocation_id))
+        if (
+            self._trusted_secret_channel
+            and not self._rebinding
+            and invocation_id not in self._cancelled_invocations
+            and invocation is not None
+            and invocation.resolve_secret is not None
+            and any(
+                spec.id == input_id and spec.secret for spec in invocation.effective_schema.inputs
+            )
+        ):
+            # The peer names an input, never an arbitrary store entry. Only the
+            # admitted invocation's account-bound authority can resolve its name.
+            inputs = (
+                invocation.inputs
+                if isinstance(invocation, Invocation)
+                else invocation.available_inputs
+            )
+            named = inputs.get(str(input_id))
+            try:
+                name = None if named is None else named.resolve()
+                if type(name) is str:
+                    value = invocation.resolve_secret(name)
+            except Exception:  # noqa: BLE001 - store errors must not disclose credentials
+                value = None
+        payloads: list[bytes] = []
+        if type(value) is str:
+            try:
+                payloads = [value.encode("utf-8")]
+            except UnicodeError:
+                pass
+            else:
+                reply["available"] = True
+        # No ValueCodec, CAS, invocation header or resumable control outbox:
+        # these bytes belong only to this live authenticated conversation.
+        await self.send(reply, payloads)
+
     async def _read_loop(self) -> None:
         assert self._reader is not None
         transport_loss = True
@@ -2348,7 +2421,11 @@ class BoundarySession:
                 self._last_received = time.monotonic()
                 header, blobs = frame
                 kind = header.get("type")
-                if kind == "result":
+                if kind == "resolveSecret":
+                    if blobs:
+                        raise BoundaryError("secret request must not contain blobs")
+                    await self._resolve_secret_request(header)
+                elif kind == "result":
                     if "resultAlgebra" in header and "error" in header:
                         raise BoundaryError("unexpected result algebra frame")
                     invocation_id = str(header.get("invocationId"))

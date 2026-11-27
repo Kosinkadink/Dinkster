@@ -183,6 +183,7 @@ class IsolatedWorker:
             produced_asset_source=resolver_from_env(self._extra_env),
             saved_preview_vault=saved_preview_vault,
             on_schema_reload=on_schema_reload,
+            trusted_secret_channel=True,
         )
         self._proc: asyncio.subprocess.Process | None = None
         self._process_watch: asyncio.Task[None] | None = None
@@ -790,6 +791,7 @@ class GroupIsolatedWorker:
                 produced_asset_source=resolver_from_env(self._extra_env),
                 saved_preview_vault=saved_preview_vault,
                 on_schema_reload=on_schema_reload,
+                trusted_secret_channel=True,
             )
             for m in self._manifests
         )

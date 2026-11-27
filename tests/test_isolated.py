@@ -27,6 +27,7 @@ from dinkster_protocol import (
     AttentionRouteToken,
     DeviceResourceId,
     ExportSnapshot,
+    Invocation,
     LazyStatusInvocation,
     PrepareReplica,
     ReleaseWorkGroup,
@@ -45,11 +46,15 @@ from dinkster_protocol import (
     derive_attention_route_token,
 )
 from dinkster_schema import (
+    Input,
+    NodeSchema,
+    TypeExpr,
     build_node_types,
     build_schemas,
     schema_signature,
+    schema_to_wire,
 )
-from dinkster_values import TypeRegistry, register_core_types
+from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import (
     BoundaryDiagnostic,
     GroupIsolatedWorker,
@@ -64,6 +69,8 @@ from dinkster_workers import host as host_module
 from dinkster_workers.boundary import (
     PROTOCOL_VERSION,
     ValueCodec,
+    read_frame,
+    write_frame,
 )
 from dinkster_workers.doctor import diagnose
 from dinkster_workers.launch import HOST_OWNED_ENVIRONMENT, Launcher, LaunchSpec
@@ -471,6 +478,134 @@ def test_separately_shipped_worker_negotiates_protocol(
             await server.wait_closed()
 
     run_scenario(scenario())
+
+
+@pytest.mark.parametrize("trusted", (False, True))
+def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
+    trusted: bool,
+) -> None:
+    async def scenario() -> None:
+        registry = core_registry()
+        string = TypeExpr.concrete(CORE_STRING)
+        schema = NodeSchema(
+            node_type="test.secret_channel",
+            body=(Input("credential", string, secret=True, pin=False), Input("label", string)),
+        )
+        secret = "synthetic-channel-only-value"
+        peer_done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+
+        async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            try:
+                await write_frame(
+                    writer,
+                    {
+                        "type": "hello",
+                        "protocol": PROTOCOL_VERSION,
+                        "pack": "test",
+                        "schemas": {schema.node_type: schema_to_wire(schema)},
+                    },
+                    [],
+                )
+                frame = await read_frame(reader)
+                assert frame is not None
+                assert secret not in repr(frame)
+                for index, (invocation_id, input_id, permitted) in enumerate(
+                    (
+                        ("unknown", "credential", False),
+                        ("active", "label", False),
+                        ("active", "missing", False),
+                        ("active", "credential", trusted),
+                    )
+                ):
+                    await write_frame(
+                        writer,
+                        {
+                            "type": "resolveSecret",
+                            "invocationId": invocation_id,
+                            "requestId": str(index),
+                            "inputId": input_id,
+                            "name": "not_the_admitted_name",
+                        },
+                        [],
+                    )
+                    reply = await read_frame(reader)
+                    assert reply is not None
+                    header, blobs = reply
+                    assert header["available"] is permitted
+                    assert secret not in repr(header)
+                    assert blobs == ([secret.encode("utf-8")] if permitted else [])
+                await write_frame(
+                    writer,
+                    {
+                        "type": "result",
+                        "invocationId": "active",
+                        "error": {
+                            "nodeId": "active",
+                            "nodeType": schema.node_type,
+                            "message": "finished",
+                        },
+                    },
+                    [],
+                )
+                ack = await read_frame(reader)
+                assert ack is not None and ack[0]["type"] == "resultAck"
+                await write_frame(
+                    writer,
+                    {
+                        "type": "resolveSecret",
+                        "invocationId": "active",
+                        "requestId": "after",
+                        "inputId": "credential",
+                    },
+                    [],
+                )
+                reply = await read_frame(reader)
+                assert reply is not None and reply[0]["available"] is False and not reply[1]
+                peer_done.set_result(None)
+            except BaseException as error:
+                peer_done.set_exception(error)
+            finally:
+                writer.close()
+                await writer.wait_closed()
+
+        server = await asyncio.start_server(accept, "127.0.0.1", 0)
+        address = server.sockets[0].getsockname()
+        reader, writer = await asyncio.open_connection(address[0], address[1])
+        session = BoundarySession(
+            registry,
+            role="test",
+            pack="test",
+            codec=ValueCodec(registry),
+            trusted_secret_channel=trusted,
+        )
+
+        def resolve(name: str) -> str:
+            assert trusted and name == "service_key"
+            return secret
+
+        try:
+            await session.begin(reader, writer, timeout=2)
+            result = await session.invoke(
+                Invocation(
+                    invocation_id="active",
+                    node_id="active",
+                    node_type=schema.node_type,
+                    inputs={
+                        "credential": registry.wrap(CORE_STRING, "service_key"),
+                        "label": registry.wrap(CORE_STRING, "unrelated_entry"),
+                    },
+                    effective_schema=schema,
+                    resolve_secret=resolve,
+                )
+            )
+            assert result.error is not None and result.error.message == "finished"
+            await peer_done
+        finally:
+            await session.close()
+            server.close()
+            await server.wait_closed()
+
+    run_scenario(asyncio.wait_for(scenario(), 10))
 
 
 def image_graph(ratio: float = 0.5) -> Graph:

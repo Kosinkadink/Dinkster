@@ -36,6 +36,7 @@ from dataclasses import replace
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, NamedTuple, TypeAlias, cast
+from uuid import uuid4
 
 from dinkster_assets import (
     AssetError,
@@ -75,6 +76,7 @@ from dinkster_protocol import (
     CompositionMode,
     ContributionSurfaceDescriptor,
     ExtensionScope,
+    Invocation,
     InvocationEvent,
     InvocationResult,
     LazyStatusInvocation,
@@ -1137,6 +1139,7 @@ async def serve_connection(
     # or a denial message. requestId is the invocationId, so the parent can
     # correlate leases with cancellations without extra bookkeeping.
     pending_grants: dict[str, asyncio.Future[str | None]] = {}
+    pending_secrets: dict[tuple[str, str], asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
     # Resource references named by results still in flight to the parent:
     # invocationId -> resource ids. Registered before the result frame is
     # sent, then cleared by the parent's validated resultAck or cancellation.
@@ -1467,6 +1470,46 @@ async def serve_connection(
     if schema_reload_task is not None:
         schema_reload_task.add_done_callback(schema_reload_done)
 
+    async def secret_resolver(invocation: Invocation) -> Callable[[str], str | None] | None:
+        values: dict[str, str] = {}
+        for spec in invocation.effective_schema.inputs:
+            if not spec.secret:
+                continue
+            named = invocation.inputs.get(spec.id)
+            if named is None:
+                continue
+            name = named.resolve()
+            if type(name) is not str:
+                continue
+            request_id = uuid4().hex
+            key = (invocation.invocation_id, request_id)
+            future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+                asyncio.get_running_loop().create_future()
+            )
+            pending_secrets[key] = future
+            try:
+                await send(
+                    {
+                        "type": "resolveSecret",
+                        "invocationId": invocation.invocation_id,
+                        "requestId": request_id,
+                        "inputId": spec.id,
+                    }
+                )
+                reply, payloads = await asyncio.wait_for(future, 30)
+                if reply.get("available") is True:
+                    if len(payloads) != 1:
+                        raise BoundaryError("secret reply is malformed")
+                    try:
+                        values[name] = payloads[0].decode("utf-8")
+                    except UnicodeError:
+                        raise BoundaryError("secret reply is malformed") from None
+                elif reply.get("available") is not False or payloads:
+                    raise BoundaryError("secret reply is malformed")
+            finally:
+                pending_secrets.pop(key, None)
+        return values.get if values else None
+
     async def send_error(invocation_id: str, header: dict[str, Any], message: str) -> None:
         await send(
             {
@@ -1665,7 +1708,11 @@ async def serve_connection(
                 prepare_control_values,
             )
             run_contexts[invocation_id] = run_context
-            invocation = replace(invocation, run_control=run_context)
+            invocation = replace(
+                invocation,
+                run_control=run_context,
+                resolve_secret=await secret_resolver(invocation),
+            )
             started = time.perf_counter()
             workgroup_cancelled = getattr(workgroup_handler, "invocation_cancelled", None)
             with use_execution_context(
@@ -2020,6 +2067,7 @@ async def serve_connection(
                 node_id=ordinary.node_id,
                 node_type=ordinary.node_type,
                 available_inputs=ordinary.inputs,
+                resolve_secret=await secret_resolver(ordinary),
                 connected_undemanded_inputs=tuple(cast("list[str]", raw_hidden)),
                 effective_schema=ordinary.effective_schema,
                 executor=ordinary.executor,
@@ -3041,6 +3089,11 @@ async def serve_connection(
                 tasks[invocation_id] = track_resource_task(
                     asyncio.create_task(run_invocation(header, blobs, cancellation))
                 )
+            elif kind == "secretResult":
+                key = (str(header.get("invocationId")), str(header.get("requestId")))
+                future = pending_secrets.get(key)
+                if future is not None and not future.done():
+                    future.set_result((header, blobs))
             elif kind == "runControlResult":
                 invocation_id = header.get("invocationId")
                 if type(invocation_id) is not str:

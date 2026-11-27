@@ -98,12 +98,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v15: invocation-bound credential requests use a non-retained secret channel;
 v14: device unloading uses the gated release protocol instead of memoryShed;
 v13: original image document attachments and source closure in successful results;
 v12: explicit mounted saved-file attachments in successful invocation results;
