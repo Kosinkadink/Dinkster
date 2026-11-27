@@ -1024,7 +1024,9 @@ def test_secret_accounts_deployment_fallback_and_private_persistence(tmp_path: P
     alice = Principal("alice", {"local": frozenset({"secrets:use"})})
     bob = Principal("bob", {"local": frozenset()})
     administrator = Principal("administrator", {"local": frozenset({"settings:write"})})
-    agent = Principal("alice", {"local": frozenset({"secrets:use"})}, kind="agent")
+    agent = Principal(
+        "alice", {"local": frozenset({"secrets:use", "settings:write"})}, kind="agent"
+    )
     authenticator = MappingAuthenticator(
         {"alice": alice, "bob": bob, "admin": administrator, "agent": agent}
     )
@@ -1049,10 +1051,13 @@ def test_secret_accounts_deployment_fallback_and_private_persistence(tmp_path: P
                 assert bob_value not in text
                 assert response.headers.get("Cache-Control") == "no-store"
                 assert response.status == 200, text
-                return await response.json()
+                body = await response.json()
+                assert body.pop("canManageDeployment") is (who == "admin")
+                return body
 
             assert (await client.get("/api/secrets/service_key")).status == 401
-            assert await call("GET", "bob") == unset
+            for who in ("bob", "agent", "admin"):
+                assert await call("GET", who) == unset
             await call("PUT", "admin", json={"scope": "deployment", "value": deployment_value})
             # Existence is indistinguishable from absence without deployment permission.
             assert await call("GET", "bob") == unset
@@ -1108,6 +1113,7 @@ def test_secret_accounts_deployment_fallback_and_private_persistence(tmp_path: P
                 "set": True,
                 "source": "deployment",
                 "fallback": False,
+                "canManageDeployment": False,
             }
             assert store.resolve(alice, "service_key")[0] == deployment_value
             assert store.resolve(bob, "service_key")[0] == bob_value

@@ -341,6 +341,7 @@ def add_secret_routes(app: web.Application, store: SecretStore) -> None:
                     raise SecretStoreError("Choose Your account or Deployment")
                 await asyncio.to_thread(store.write, principal, name, None, scope=scope)
             status = await asyncio.to_thread(store.status, principal, name)
+            status["canManageDeployment"] = principal.is_operator
         except PermissionError:
             return web.json_response(
                 {"error": "Secret access is not permitted"},
