@@ -1064,8 +1064,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         workflow_catalog_digest, workflow_target = digest, engine
 
     def revalidate() -> None:
-        if args.operation == "setup":
-            preparation_progress("checking-setup")
+        if args.operation in {"setup", "update"}:
+            preparation_progress(f"checking-{args.operation}")
         changed_inputs = [
             path
             for path, identity in supplied_inputs.items()
@@ -1412,7 +1412,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     for path in (object_path(store / "bases", base_id) / "python").rglob("*")
                     if path.is_file()
                 )
-                if args.operation == "setup":
+                if args.operation in {"setup", "update"}:
                     preparation_progress("building-installation")
                 build_generation(
                     root=root,
@@ -1476,7 +1476,7 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     if any(cast("dict[str, object]", applied["plan"]).values()):
                         raise EnvironmentError("workflow execution left unsatisfied requirements")
                     workflow_applied = True
-                if args.operation == "setup":
+                if args.operation in {"setup", "update"}:
                     preparation_progress("starting-engine")
                 activate(root, journal, revalidate=revalidate)
             except Exception as exc:
@@ -2584,9 +2584,6 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     setup.add_argument("--python", type=Path, help="explicit host interpreter override")
     setup.add_argument(
-        "--progress", type=Path, help="observe progress; sibling .cancel requests cancellation"
-    )
-    setup.add_argument(
         "--adopt-from", type=Path, help="standalone pack-only root to leave untouched"
     )
     develop = commands.add_parser(
@@ -2633,6 +2630,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
     update = commands.add_parser("update", help="build and activate a channel's next snapshot")
     for command in (setup, update):
+        command.add_argument(
+            "--progress", type=Path, help="observe progress; sibling .cancel requests cancellation"
+        )
         command.add_argument("--engine-source", help="explicit public Git engine URL and ref")
         command.add_argument("--source-approval", help="require the managed source plan digest")
         command.add_argument("--git-mirror", help="explicit GitHub mirror base URL")
@@ -2891,7 +2891,7 @@ def _run(args: argparse.Namespace) -> int:
             from .environment_runtime import run_generation
 
             return run_generation(args.root, args.command)
-        if args.operation in {"packs-plan", "setup"} or (
+        if args.operation in {"packs-plan", "setup", "update"} or (
             args.operation == "security" and args.security_action in {"fix-one", "fix-all"}
         ):
             sequence = 0
@@ -2903,8 +2903,8 @@ def _run(args: argparse.Namespace) -> int:
                 sequence += 1
                 if args.progress is not None:
                     if args.progress.with_name(args.progress.name + ".cancel").exists():
-                        if args.operation == "setup":
-                            raise PreparationCancelled("setup cancelled")
+                        if args.operation in {"setup", "update"}:
+                            raise PreparationCancelled(f"{args.operation} cancelled")
                         raise EnvironmentError("pack preparation cancelled")
                     now = monotonic()
                     if stage == last_stage and now - last_write < 0.25 and completed != total:
@@ -2921,10 +2921,10 @@ def _run(args: argparse.Namespace) -> int:
                     last_write, last_stage = now, stage
 
             with observe_preparation(progress):
-                if args.operation == "setup":
+                if args.operation in {"setup", "update"}:
                     from .environment_sources import acquired_source_engine
 
-                    preparation_progress("planning-setup")
+                    preparation_progress(f"planning-{args.operation}")
                     with acquired_source_engine(args) as selected:
                         code = _install(selected, result)
                 elif args.operation == "security":
@@ -2964,11 +2964,6 @@ def _run(args: argparse.Namespace) -> int:
             from .environment_development import acquired_development_sources
 
             with acquired_development_sources(args) as selected:
-                code = _install(selected, result)
-        elif args.operation in {"setup", "update"}:
-            from .environment_sources import acquired_source_engine
-
-            with acquired_source_engine(args) as selected:
                 code = _install(selected, result)
         elif args.operation in {"restore-previous", "rollback"}:
             code = _rollback(args, result)

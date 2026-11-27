@@ -2111,11 +2111,13 @@ def test_setup_cancelled_before_planning_leaves_no_registration(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("cancel_stage", ["building-installation", "starting-engine"])
-def test_setup_cancellation_rolls_back_registration_and_candidate(
+@pytest.mark.parametrize("operation", ["setup", "update"])
+def test_installation_cancellation_rolls_back_candidate_and_preserves_previous_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     cancel_stage: str,
+    operation: str,
 ) -> None:
     from dinkster_supervisor import environment
     from dinkster_supervisor.environment_stores import registered_stores, store_projects
@@ -2127,6 +2129,34 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
     progress = tmp_path / "progress.json"
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "library"))
+    before_selection = None
+    if operation == "update":
+        code, installed = _run(
+            root,
+            "setup",
+            "--mirror",
+            fixture["mirror"],
+            "--channel",
+            "nightly",
+            "--variant",
+            "fixture-cpu",
+            "--data",
+            str(store),
+            "--port",
+            str(free_port()),
+            "--yes",
+        )
+        assert code == 0 and installed["current"] == 1, installed
+        assert _run(root, "stop", "--yes")[0] == 0
+        before_selection = (
+            (root / "environment.json").read_bytes(),
+            (root / "builds/1/build.json").read_bytes(),
+            registered_stores(),
+        )
+        (Path(fixture["mirror"]) / "channels/nightly.json").write_bytes(
+            Path(fixture["updatedChannel"]).read_bytes()
+        )
     observe = environment.preparation_progress
 
     def cancel(stage: str, completed: int = 0, total: int = 0) -> None:
@@ -2139,7 +2169,7 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
         [
             "--root",
             str(root),
-            "setup",
+            operation,
             "--mirror",
             fixture["mirror"],
             "--channel",
@@ -2148,8 +2178,7 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
             "fixture-cpu",
             "--data",
             str(store),
-            "--port",
-            str(free_port()),
+            *(("--port", str(free_port())) if operation == "setup" else ()),
             "--progress",
             str(progress),
             "--yes",
@@ -2159,13 +2188,35 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
     assert environment.run(args) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "cancelled", result
-    assert result["error"] == "setup cancelled"
-    assert not (root / "current").exists()
-    assert not (root / "environment.json").exists()
-    assert not (root / "builds/1").exists()
-    assert store_projects(store) == [] and registered_stores() == {}
-    journal = next((root / "journal").glob("*.json"))
+    assert result["error"] == f"{operation} cancelled"
+    if operation == "setup":
+        assert not (root / "current").exists()
+        assert not (root / "environment.json").exists()
+        assert not (root / "builds/1").exists()
+        assert store_projects(store) == [] and registered_stores() == {}
+    else:
+        assert before_selection is not None
+        settings, previous, registration = before_selection
+        assert (root / "current").read_text() == "1\n"
+        assert (root / "environment.json").read_bytes() == settings
+        assert (root / "builds/1/build.json").read_bytes() == previous
+        assert not (root / "builds/2").exists()
+        assert store_projects(store) == [str(root)] and registered_stores() == registration
+    journal = sorted((root / "journal").glob("*.json"))[-1]
     assert Journal.read(journal).stage == "rolled-back"
+    if operation == "update":
+        progress.with_name(progress.name + ".cancel").unlink()
+        progress.unlink()
+        try:
+            code, updated = _run(root, "update", "--progress", str(progress), "--yes")
+            assert code == 0 and updated["current"] == 2, updated
+            assert (
+                json.loads((root / "builds/2/build.json").read_text())["engine"]["version"] == "2.0"
+            )
+            observation = json.loads(progress.read_text())
+            assert observation["sequence"] > 1
+        finally:
+            assert _run(root, "stop", "--yes")[0] == 0
 
 
 def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
