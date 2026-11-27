@@ -329,6 +329,7 @@ class ModelSettings:
                     raise ValueError(
                         "model folder visibility must be always-on, default-on or opt-in"
                     )
+                kind = cast("str", kind)
                 if kind and (not kind.startswith("model/") or not is_asset_kind(kind)):
                     raise ValueError("model location kind must be a valid model kind")
                 locations.append(
