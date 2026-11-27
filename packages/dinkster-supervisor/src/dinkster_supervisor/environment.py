@@ -2573,6 +2573,7 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     doctor_mode.add_argument(
         "--sandbox", action="store_true", help="query the selected engine's pack sandbox readiness"
     )
+    doctor_mode.add_argument("--progress", type=Path, help="atomically publish check observations")
     setup = commands.add_parser("setup", help="build and activate a first offline snapshot")
     setup.add_argument("--offline", action="store_true", help="use cached published inputs only")
     setup.add_argument(
@@ -2904,14 +2905,19 @@ def _run(args: argparse.Namespace) -> int:
             from .environment_runtime import run_generation
 
             return run_generation(args.root, args.command)
-        if args.operation in {
-            "packs-plan",
-            "setup",
-            "update",
-            "restore",
-            "restore-previous",
-            "rollback",
-        } or (args.operation == "security" and args.security_action in {"fix-one", "fix-all"}):
+        if (
+            args.operation
+            in {
+                "packs-plan",
+                "setup",
+                "update",
+                "restore",
+                "restore-previous",
+                "rollback",
+            }
+            or (args.operation == "doctor" and args.progress is not None)
+            or (args.operation == "security" and args.security_action in {"fix-one", "fix-all"})
+        ):
             sequence = 0
             last_write = 0.0
             last_stage = ""
@@ -2954,6 +2960,10 @@ def _run(args: argparse.Namespace) -> int:
                     )
                 elif args.operation == "security":
                     code = _security(args, result)
+                elif args.operation == "doctor":
+                    preparation_progress("planning-doctor")
+                    code = _query(args, result)
+                    preparation_progress("checked-software", 1, 1)
                 else:
                     result.update(
                         plan_pack_install(

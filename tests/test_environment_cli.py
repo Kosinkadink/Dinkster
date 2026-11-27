@@ -3342,9 +3342,10 @@ def test_malformed_existing_project_returns_error_not_empty_status(tmp_path: Pat
     assert "environment channel" in result["error"]
 
 
+@pytest.mark.parametrize("progress_enabled", [False, True])
 @pytest.mark.parametrize("source", ["published", "local"])
 def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
-    tmp_path: Path, source: str
+    tmp_path: Path, source: str, progress_enabled: bool
 ):
     generation = _generation(tmp_path, 1).parent
     metadata = generation / "build.json"
@@ -3352,7 +3353,9 @@ def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
     document["source"] = source
     metadata.write_text(json.dumps(document))
     (tmp_path / "current").write_bytes(b"1\n")
-    code, result = _run(tmp_path, "doctor")
+    progress = tmp_path / "check-progress.json"
+    arguments = ("--progress", str(progress)) if progress_enabled else ()
+    code, result = _run(tmp_path, "doctor", *arguments)
     assert code == 0
     assert result["status"] == "clean"
     if source == "local":
@@ -3360,12 +3363,59 @@ def test_doctor_reports_actual_content_drift_with_nonzero_exit_and_no_repair(
         assert "locally resolved, no base manifest" in result["plan"][0]
     module = generation / "python/module.py"
     module.write_bytes(b"ANSWER = 13\n")
-    code, result = _run(tmp_path, "doctor")
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    code, result = _run(tmp_path, "doctor", *arguments)
     assert code == 1
     assert result["status"] == "drift"
     assert result["changes"] == ["modified: python/module.py"]
     assert module.read_bytes() == b"ANSWER = 13\n"
     assert (tmp_path / "current").read_bytes() == b"1\n"
+    assert {path: path.read_bytes() for path in before if path != progress} == {
+        path: data for path, data in before.items() if path != progress
+    }
+    if progress_enabled:
+        observation = json.loads(progress.read_text())
+        assert observation["stage"] == "checked-software"
+        assert observation["completed"] == observation["total"] == 1
+        assert observation["sequence"] > 3
+
+
+@pytest.mark.parametrize("cancel_stage", ["checking-software", "checking-unexpected-files"])
+def test_doctor_cancelled_during_check_preserves_software_and_can_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    cancel_stage: str,
+) -> None:
+    from dinkster_supervisor import environment, environment_state
+
+    generation = _generation(tmp_path, 1).parent
+    (tmp_path / "current").write_bytes(b"1\n")
+    module = generation / "python/module.py"
+    module.write_bytes(b"ANSWER = 13\n")
+    progress = tmp_path / "check-progress.json"
+    before = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    observe = environment_state.preparation_progress
+
+    def cancel(stage: str, completed: int = 0, total: int = 0) -> None:
+        if stage == cancel_stage and (completed == total if total else True):
+            progress.with_name(progress.name + ".cancel").touch()
+        observe(stage, completed, total)
+
+    monkeypatch.setattr(environment_state, "preparation_progress", cancel)
+    args = environment.argument_parser().parse_args(
+        ["--root", str(tmp_path), "doctor", "--progress", str(progress), "--json"]
+    )
+    assert environment.run(args) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["status"] == "cancelled", result
+    assert result["error"] == "doctor cancelled"
+    assert {path: path.read_bytes() for path in before} == before
+    progress.with_name(progress.name + ".cancel").unlink()
+    code, result = _run(tmp_path, "doctor", "--progress", str(progress))
+    assert code == 1 and result["status"] == "drift", result
+    assert result["changes"] == ["modified: python/module.py"]
+    assert {path: path.read_bytes() for path in before} == before
 
 
 def test_history_marks_migrated_library_by_snapshot_capability(tmp_path: Path) -> None:
