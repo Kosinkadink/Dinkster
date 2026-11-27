@@ -279,6 +279,7 @@ from dinkster_protocol import (
     AssetFolderContext,
     AttentionPolicy,
     AttentionPolicyConfig,
+    CachedResult,
     CompatGateDiagnostic,
     ExportSnapshot,
     PackSettingsSchema,
@@ -1170,7 +1171,7 @@ class ServerState:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
-        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
+        cache_hit_valid: Callable[[str, Mapping[str, Value]], bool] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -4891,14 +4892,22 @@ def create_app(
 
         job.result_offers[node_id] = await run_owned_thread(persist)
 
-    def cache_hit_valid(outputs: Mapping[str, Value]) -> bool:
-        if library is None:
-            return True
+    def cache_hit_valid(scope: str, outputs: Mapping[str, Value]) -> bool:
+        store = library.store if library is not None else export_grants
+        assert store is not None
         try:
-            references = value_asset_references(outputs)
-            if not all(library.asset_available(digest) for digest in references):
+            references = set(value_asset_references(outputs))
+            if isinstance(outputs, CachedResult):
+                for artifact in outputs.artifacts:
+                    references.add(artifact.digest)
+                    if artifact.preview is not None:
+                        references.add(artifact.preview.digest)
+            if not all(store.has_asset_grant(scope, digest) for digest in references):
                 return False
-            retain_output_files(outputs)
+            if library is not None:
+                if not all(library.asset_available(digest) for digest in references):
+                    return False
+                retain_output_files(outputs)
             return True
         except AssetError:
             return False
@@ -5131,7 +5140,7 @@ def create_app(
         job_context=job_context if has_library else None,
         publish_outputs=publish_outputs if has_library else None,
         publish_image_documents=publish_image_documents if has_library else None,
-        cache_hit_valid=cache_hit_valid if has_library else None,
+        cache_hit_valid=cache_hit_valid if has_library or export_grants is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state

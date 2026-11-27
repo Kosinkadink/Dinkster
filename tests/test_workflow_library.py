@@ -389,11 +389,31 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
     monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch / "packs" / "producer"))
     published: list[str] = []
+    productions: list[bytes] = []
+    reads: list[tuple[bool, str]] = []
+    library = ServerLibrary(vault, make_store(tmp_path), scratch_root=scratch)
 
     class RepeatVideo(ProduceVideo):
         @classmethod
         def execute(cls) -> Mapping[str, object]:
+            productions.append(encoded)
             return cls.outputs(video=video_from_source(encoded))
+
+    class ReadVideo(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.read_video",
+                body=(Input("video", TypeExpr.concrete(VIDEO_TYPE)), Output("digest", STRING)),
+            )
+
+        @classmethod
+        def execute(cls, *, video: object) -> Mapping[str, object]:
+            from dinkster_values.video_codec import render_video_original
+
+            digest = digest_bytes(render_video_original(video))
+            reads.append((library.store.has_asset_grant("b", digest), digest))
+            return cls.outputs(digest=digest)
 
     class ReferenceExisting(Node):
         @classmethod
@@ -409,7 +429,7 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
             assert path is not None
             return cls.outputs(asset=AssetRef(published[0], "claimed.mkv", path.stat().st_size))
 
-    nodes = (RepeatVideo, ReferenceExisting)
+    nodes = (RepeatVideo, ReferenceExisting, ReadVideo)
     schemas = build_schemas(nodes)
 
     def engine(on_event: EventListener) -> Engine:
@@ -426,7 +446,6 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
         )
 
     async def scenario() -> None:
-        library = ServerLibrary(vault, make_store(tmp_path), scratch_root=scratch)
         client = TestClient(
             TestServer(
                 create_app(
@@ -449,11 +468,18 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
         try:
             for scope, job_id, node_type, cached in (
                 ("a", "producer", "vproducer.make", True),
+                ("a", "same-scope", "vproducer.make", True),
                 ("b", "claim", "test.reference_existing", True),
                 ("b", "cached", "vproducer.make", True),
                 ("b", "fresh", "vproducer.make", False),
             ):
                 headers = {"Authorization": f"Bearer {scope}"}
+                graph_nodes = {"producer": {"nodeType": node_type, "inputs": {}}}
+                if job_id == "cached":
+                    graph_nodes["reader"] = {
+                        "nodeType": "test.read_video",
+                        "inputs": {"video": {"$link": {"node": "producer", "output": "video"}}},
+                    }
                 response = await client.post(
                     "/api/jobs",
                     headers=headers,
@@ -461,8 +487,8 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
                         "clientId": "client",
                         "jobId": job_id,
                         "cacheEnabled": cached,
-                        "graph": {"nodes": {"producer": {"nodeType": node_type, "inputs": {}}}},
-                        "targets": ["producer"],
+                        "graph": {"nodes": graph_nodes},
+                        "targets": ["reader" if job_id == "cached" else "producer"],
                     },
                 )
                 assert response.status == 202, await response.text()
@@ -475,6 +501,11 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
                             break
                         await asyncio.sleep(0)
                 assert status["state"] == "completed", status
+                if job_id == "cached":
+                    assert reads == [(True, digest_bytes(encoded))]
+                    assert len(productions) == 2
+                elif job_id == "same-scope":
+                    assert len(productions) == 1
                 if job_id != "claim":
                     url = (
                         f"/api/values?clientId=client&jobId={job_id}&nodeId=producer"
@@ -484,14 +515,8 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
                         url,
                         headers=headers,
                     )
-                    assert rendition.status == (404 if job_id == "cached" else 200)
-                    if job_id == "cached":
-                        conditional = await client.get(
-                            url, headers={**headers, "If-None-Match": "*"}
-                        )
-                        assert conditional.status == 404
-                    else:
-                        assert await rendition.read() == encoded
+                    assert rendition.status == 200
+                    assert await rendition.read() == encoded
                 if not published:
                     published.extend(status["resultOffers"]["producer"]["video"]["digests"])
                     assert published == [digest_bytes(encoded)]
@@ -501,7 +526,7 @@ def test_unsaved_publications_grant_only_the_producing_job_scope(
                         f"/api/assets/{digest}",
                         headers={"Authorization": f"Bearer {reader}"},
                     )
-                    allowed = reader == "a" or job_id == "fresh"
+                    allowed = reader == "a" or job_id in {"cached", "fresh"}
                     assert response.status == (200 if allowed else 404), (job_id, reader)
                     assert library.store.has_asset_grant(reader, digest) is allowed
                     if allowed:
@@ -604,6 +629,10 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(
                 writer.write(payload)
                 writer.commit()
         library = ServerLibrary(vault, make_store(tmp_path))
+        for digest in (DIGEST_A, DIGEST_B):
+            path = vault.resolve(digest)
+            assert path is not None
+            library.store.grant_asset("local", digest, path)
         history = HistoryStore(tmp_path / "history.sqlite")
         client = TestClient(
             TestServer(create_app(engine, schemas, library=library, history=history))
