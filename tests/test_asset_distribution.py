@@ -20,13 +20,14 @@ from dinkster_assets import (
     AssetError,
     AssetVault,
     FetchingResolver,
+    LibraryStore,
     LocalAssetLibrary,
     ProvenanceRecord,
     ProvenanceStore,
     digest_bytes,
     fetch_asset,
 )
-from dinkster_server import create_app
+from dinkster_server import ServerLibrary, create_app
 from test_server import SCHEMAS, make_engine
 
 from tests.async_scenarios import run_scenario
@@ -196,7 +197,9 @@ def test_asset_endpoints_and_http_fetch(tmp_path: Path) -> None:
         with vault_a.writer(MODEL_DIGEST) as writer:
             writer.write(MODEL_BYTES)
             writer.commit()
-        server = TestServer(create_app(make_engine, SCHEMAS, asset_export=vault_a))
+        library = ServerLibrary(vault_a, LibraryStore(tmp_path / "a.sqlite"))
+        library.store.grant_asset("local", MODEL_DIGEST, MODEL_BYTES)
+        server = TestServer(create_app(make_engine, SCHEMAS, asset_export=vault_a, library=library))
         await server.start_server()
         try:
             async with aiohttp.ClientSession() as http:

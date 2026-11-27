@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import sqlite3
 import struct
@@ -10,7 +11,7 @@ import threading
 import wave
 import zlib
 from collections.abc import AsyncIterator, Mapping
-from contextlib import closing, suppress
+from contextlib import closing, nullcontext, suppress
 from io import BytesIO
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -18,7 +19,7 @@ from typing import cast
 
 import pytest
 from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 from dinkster_assets import (
     AssetError,
     AssetVault,
@@ -38,7 +39,12 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_schema import Node, NodeSchema, build_node_types, build_schemas
 from dinkster_server import Principal, ServerLibrary, create_app
 from dinkster_server.auth import LOCAL_PRINCIPAL, PRINCIPAL_KEY
-from dinkster_server.library import LIBRARY_KEY, handle_latent_upload, handle_media_upload
+from dinkster_server.library import (
+    LIBRARY_KEY,
+    handle_latent_upload,
+    handle_media_upload,
+    require_asset_read,
+)
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
 from multidict import MultiDict, MultiDictProxy
@@ -568,12 +574,17 @@ def test_media_grant_concurrent_exact_and_conflicting_writes_are_atomic(
     assert errors and all(isinstance(error, AssetError) for error in errors)
 
 
-def test_helper_media_grants_verify_bytes_before_recording_authority(tmp_path: Path) -> None:
+@pytest.mark.parametrize("backend", ("sqlite", "helper"))
+def test_media_grants_verify_bytes_before_recording_authority(tmp_path: Path, backend: str) -> None:
     from dinkster_library import LibraryClient
 
     root = tmp_path / "library"
-    with LibraryClient(root) as helper:
-        store = LibraryStore(helper)
+    with (
+        LibraryClient(root)
+        if backend == "helper"
+        else nullcontext(tmp_path / "catalog.sqlite") as storage
+    ):
+        store = LibraryStore(storage)
         grant = _grant()
         with pytest.raises(AssetError, match="facts do not match"):
             store.grant_media_result(
@@ -586,6 +597,50 @@ def test_helper_media_grants_verify_bytes_before_recording_authority(tmp_path: P
         assert store.grant_media_result(grant, path) == (grant, False)
         assert store.grant_media(grant, _png()) == grant
         assert store.media_grant("other", grant.digest, grant.kind) is None
+        assert store.has_asset_grant("alice", grant.digest)
+        assert not store.has_asset_grant("other", grant.digest)
+        opaque = b'{"workflow":"not classified media"}'
+        opaque_digest = digest_bytes(opaque)
+        with pytest.raises(AssetError, match="digest"):
+            store.grant_asset("alice", opaque_digest, _png())
+        assert store.media_grant("alice", opaque_digest, "asset/file") is None
+        path.write_bytes(_png())
+        with pytest.raises(AssetError):
+            store.grant_asset("alice", opaque_digest, path)
+        path.write_bytes(opaque)
+        assert store.grant_asset("alice", opaque_digest, path)
+        assert not store.grant_asset("alice", opaque_digest, opaque)
+        assert store.media_grant("other", opaque_digest, "asset/file") is None
+        assert store.grant_asset("other", opaque_digest, opaque)
+        assert store.has_asset_grant("alice", opaque_digest)
+        assert store.has_asset_grant("other", opaque_digest)
+        assert not store.has_asset_grant("absent", opaque_digest)
+        stored = store.media_grant("alice", opaque_digest, "asset/file")
+        assert stored == MediaGrant(
+            "alice", opaque_digest, "asset/file", "application/octet-stream", "bin", len(opaque)
+        )
+        assert store.grant_asset("alice", grant.digest, _png())
+        assert store.media_grant("alice", grant.digest, "media/image") == grant
+        assert store.grant_asset("other", grant.digest, _png())
+        assert store.media_grant("other", grant.digest, "media/image") is None
+        assert store.grant_asset("alice", digest_bytes(b""), b"")
+        empty = store.media_grant("alice", digest_bytes(b""), "asset/file")
+        assert empty is not None and empty.byte_size == 0
+        mounts = MountTable(index_root=tmp_path / "grant-indexes")
+        mount_root = tmp_path / "grant-source"
+        mount_root.mkdir()
+        (mount_root / "source.txt").write_bytes(opaque)
+        mounts.add(MountDef("source", mount_root))
+        mounts.scan("source")
+        ref = mounts.ref("mounts/source/source.txt")
+        with pytest.raises(AssetError, match="digest"):
+            store.grant_asset("bound", grant.digest, ref)
+        assert store.grant_asset("bound", opaque_digest, ref)
+        assert not store.grant_asset("bound", opaque_digest, ref)
+        (mount_root / "source.txt").write_bytes(b"changed")
+        with pytest.raises(AssetError):
+            store.grant_asset("changed", opaque_digest, ref)
+        assert not store.has_asset_grant("changed", opaque_digest)
         store.close()
     assert not (root / "library.sqlite").exists()
 
@@ -635,6 +690,7 @@ async def _media_client(
     upload_limits: Mapping[str, int] | None = MappingProxyType({}),
     authenticator: _Tokens | None = None,
     mounts: MountTable | None = None,
+    collaboration: bool = False,
 ) -> tuple[TestClient, ServerLibrary]:
     library = ServerLibrary(
         vault=AssetVault(tmp_path / "vault"),
@@ -662,8 +718,13 @@ async def _media_client(
         _media_engine,
         _MEDIA_SCHEMAS,
         library=library,
+        asset_export=library.vault,
         authenticator=authenticator,
     )
+    if collaboration:
+        from dinkster.serve import _add_collaboration_routes
+
+        assert _add_collaboration_routes(app, tmp_path / "sessions.sqlite")
     client = TestClient(TestServer(app))
     await client.start_server()
     return client, library
@@ -677,6 +738,76 @@ def _large_wav(byte_count: int) -> bytes:
         writer.setframerate(44_100)
         writer.writeframes(bytes(byte_count // 2 * 2))
     return output.getvalue()
+
+
+def test_verified_mount_sources_grant_only_local_bytes(tmp_path: Path) -> None:
+    from dinkster.mounts_api import MountService, add_mount_routes
+
+    root = tmp_path / "mounted"
+    root.mkdir()
+    scanned = b"verified during the folder scan"
+    selected = b"verified through explicit native selection"
+    (root / "scanned.txt").write_bytes(scanned)
+    mounts = MountTable(index_root=tmp_path / "indexes")
+    mounts.add(MountDef("input", root))
+    service = MountService(mounts)
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=LibraryStore(tmp_path / "catalog.sqlite"),
+            resolver=mounts,
+        )
+        app = create_app(_media_engine, _MEDIA_SCHEMAS, library=library)
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            assert (await client.get(f"/api/assets/{digest_bytes(scanned)}")).status == 404
+            await service.scan(app, "input")
+            (root / "selected.txt").write_bytes(selected)
+            response = await client.post(
+                "/api/mounts/resolve-path",
+                json={"path": str(root / "selected.txt"), "project": "default", "scope": "local"},
+            )
+            assert response.status == 200
+            assert (await response.json())["status"] == "resolved"
+            foreign = b"native selection is not remote-scope adoption"
+            (root / "foreign.txt").write_bytes(foreign)
+            response = await client.post(
+                "/api/mounts/resolve-path",
+                json={
+                    "path": str(root / "foreign.txt"),
+                    "project": "default",
+                    "scope": "shared:board:film",
+                },
+            )
+            assert response.status == 200
+            assert (await response.json())["status"] == "resolved"
+            for scope in ("local", "shared:board:film"):
+                response = await client.get(f"/api/assets/{digest_bytes(foreign)}?scope={scope}")
+                assert response.status == 404
+            for data in (scanned, selected):
+                digest = digest_bytes(data)
+                response = await client.get(f"/api/assets/{digest}")
+                assert response.status == 200
+                assert await response.read() == data
+                response = await client.get(f"/api/assets/{digest}?scope=shared:board:film")
+                assert response.status == 404
+            replacement = b"changed bytes require a fresh verified scan"
+            (root / "scanned.txt").write_bytes(replacement)
+            await service.scan(app, "input")
+            response = await client.get(f"/api/assets/{digest_bytes(replacement)}")
+            assert response.status == 200
+            assert await response.read() == replacement
+            assert (await client.get(f"/api/assets/{digest_bytes(scanned)}")).status == 404
+            mounts.remove("input")
+            for data in (replacement, selected):
+                assert (await client.get(f"/api/assets/{digest_bytes(data)}")).status == 404
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_streaming_media_bypasses_aiohttp_buffer_limit_while_buffered_routes_remain_bounded(
@@ -1125,6 +1256,564 @@ def test_media_ingest_auth_scope_idempotence_and_canonical_response(
             assert cross_scope.status == 201
             assert library.store.media_grant("a", digest, "media/image") is not None
             assert library.store.media_grant("b", digest, "media/image") is not None
+
+            opaque = b"unclassified scoped bytes"
+            opaque_digest = digest_bytes(opaque)
+            ambiguous = await client.post(
+                "/api/assets", data=opaque, headers=_media_headers("text/plain", "both")
+            )
+            assert ambiguous.status == 400
+            assert (await ambiguous.json())["error"] == "scope-required"
+            forbidden = await client.post(
+                "/api/assets?scope=b", data=opaque, headers=_media_headers("text/plain", "a")
+            )
+            assert forbidden.status == 403
+            assert library.store.media_grant("b", opaque_digest, "asset/file") is None
+            for scope in ("a", "b"):
+                uploaded = await client.post(
+                    f"/api/assets?scope={scope}",
+                    data=opaque,
+                    headers=_media_headers("image/png", "both"),
+                )
+                assert uploaded.status == 201, await uploaded.text()
+                assert await uploaded.json() == {"digest": opaque_digest}
+                grant = library.store.media_grant(scope, opaque_digest, "asset/file")
+                assert grant is not None and grant.byte_size == len(opaque)
+                assert library.store.media_grant(scope, opaque_digest, "media/image") is None
+                repeated = await client.post(
+                    f"/api/assets?scope={scope}",
+                    data=opaque,
+                    headers=_media_headers("text/plain", "both"),
+                )
+                assert repeated.status == 200
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_digest_reads_require_a_grant_in_the_authorized_scope(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write"})
+        auth = _Tokens(
+            {
+                "a": Principal("alice", {"a": capabilities}),
+                "viewer": Principal("viewer", {"a": frozenset({"assets:read"})}),
+                "b": Principal("bob", {"b": capabilities}),
+                "both": Principal("both", {"a": capabilities, "b": capabilities}),
+            }
+        )
+        client, library = await _media_client(tmp_path, authenticator=auth)
+        image = BytesIO()
+        Image.new("RGB", (2, 3), (47, 91, 133)).save(image, format="PNG")
+        cases = (
+            ("media/image", "image/png", "picture.png", image.getvalue()),
+            ("media/video", "video/mp4", "movie.mp4", _mp4()),
+            ("media/audio", "audio/wav", "sound.wav", _wav()),
+            ("asset/file", "application/octet-stream", "model.bin", b"opaque model bytes"),
+        )
+        try:
+            for kind, media_type, name, data in cases:
+                digest = digest_bytes(data)
+                path = f"/api/assets/{digest}"
+                upload_path = (
+                    "/api/assets?scope=a" if kind == "asset/file" else _media_path("a", kind, name)
+                )
+                uploaded = await client.post(
+                    upload_path, data=data, headers=_media_headers(media_type, "a")
+                )
+                assert uploaded.status == 201, await uploaded.text()
+                headers = {"Authorization": "Bearer viewer"}
+                good = await client.get(path, params={"scope": "a"}, headers=headers)
+                assert good.status == 200
+                assert await good.read() == data
+                metadata = await client.get(path + "/metadata", headers=headers)
+                assert metadata.status == 200
+                await metadata.read()
+                if kind == "media/image":
+                    preview = await client.get(path + "/preview", headers=headers)
+                    assert preview.status == 200
+                    assert (await preview.read())[8:12] == b"WEBP"
+
+                for actor in ("b", "both"):
+                    denied_headers = {"Authorization": f"Bearer {actor}"}
+                    for suffix, extra in (
+                        ("", {}),
+                        ("", {"Range": "bytes=1-7"}),
+                        ("", {"If-None-Match": f'"{digest}"'}),
+                        ("/metadata", {}),
+                        ("/metadata", {"If-None-Match": f'"{digest}"'}),
+                        ("/preview", {}),
+                        ("/preview", {"If-None-Match": f'"{digest}-preview"'}),
+                    ):
+                        denied = await client.get(
+                            path + suffix,
+                            params={"scope": "b"},
+                            headers={**denied_headers, **extra},
+                        )
+                        assert denied.status == 404, (kind, actor, suffix, await denied.read())
+                        assert await denied.json() == {"error": "asset not held here"}
+                        assert "ETag" not in denied.headers
+                    missing = await client.get(
+                        "/api/assets/availability",
+                        params={"scope": "b", "digest": digest},
+                        headers=denied_headers,
+                    )
+                    assert await missing.json() == {
+                        "assets": [{"digest": digest, "status": "missing"}]
+                    }
+                    legacy = await client.get(
+                        f"/assets/{digest}", params={"scope": "b"}, headers=denied_headers
+                    )
+                    assert legacy.status == 404
+                    profile = await client.get(
+                        "/api/output-profiles/model",
+                        params={"scope": "b", "digest": digest, "revision": "1"},
+                        headers=denied_headers,
+                    )
+                    assert profile.status == 404
+                    assert await profile.json() == {"error": "asset not held here"}
+                    listing = await client.get(
+                        "/assets", params={"scope": "b"}, headers=denied_headers
+                    )
+                    assert digest not in (await listing.json())["digests"]
+
+                queue_request = make_mocked_request(
+                    "POST", "/api/jobs?scope=a&scope=a", app=client.app
+                )
+                queue_request[PRINCIPAL_KEY] = Principal(
+                    "both", {"a": capabilities, "b": capabilities}
+                )
+                assert await require_asset_read(queue_request, digest, scope="a") == "a"
+                with pytest.raises(web.HTTPNotFound):
+                    await require_asset_read(queue_request, digest, scope="b")
+                queue_request[PRINCIPAL_KEY] = Principal(
+                    "submitter", {"a": capabilities, "b": frozenset({"jobs:submit"})}
+                )
+                with pytest.raises(web.HTTPForbidden):
+                    await require_asset_read(queue_request, digest, scope="b")
+                with pytest.raises(web.HTTPBadRequest):
+                    await require_asset_read(queue_request, digest, scope="")
+                assert library.store.media_grant("b", digest, kind) is None
+                independent = await client.post(
+                    upload_path.replace("scope=a", "scope=b"),
+                    data=data,
+                    headers=_media_headers(media_type, "b"),
+                )
+                assert independent.status == 201, await independent.text()
+                queue_request[PRINCIPAL_KEY] = Principal(
+                    "both", {"a": capabilities, "b": capabilities}
+                )
+                assert await require_asset_read(queue_request, digest, scope="b") == "b"
+                for actor, scope in (("viewer", "a"), ("b", "b")):
+                    for route in (path, f"/assets/{digest}"):
+                        partial = await client.get(
+                            route,
+                            params={"scope": scope},
+                            headers={"Authorization": f"Bearer {actor}", "Range": "bytes=1-7"},
+                        )
+                        assert partial.status == 206
+                        assert await partial.read() == data[1:8]
+                        assert partial.headers["Content-Range"] == f"bytes 1-7/{len(data)}"
+                ambiguous = await client.get(path, headers={"Authorization": "Bearer both"})
+                assert ambiguous.status == 400
+                assert (await ambiguous.json())["error"] == "scope-required"
+                repeated = await client.get(
+                    path,
+                    params=[("scope", "a"), ("scope", "b")],
+                    headers={"Authorization": "Bearer both"},
+                )
+                assert repeated.status == 400
+                assert library.vault.delete(digest)
+                for suffix, validator in (
+                    ("", digest),
+                    ("/metadata", digest),
+                    ("/preview", f"{digest}-preview"),
+                ):
+                    absent = await client.get(
+                        path + suffix,
+                        headers={**headers, "If-None-Match": f'"{validator}"'},
+                    )
+                    assert absent.status == 404
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_project_facts_require_every_record_scope_and_grant(tmp_path: Path) -> None:
+    from dinkster_library import AsyncLibraryClient
+    from dinkster_library._records import Records
+    from dinkster_server.projects import PROJECTS_KEY, project_request
+
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write"})
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        data = json.dumps(
+            {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {"root": {"nodes": {"one": {"type": "test.media_noop"}}}},
+                "environment": {
+                    "nodes": {"test.media_noop": {"pack": "private-tools"}},
+                    "packs": {"private-tools": {"version": "1.2.3"}},
+                },
+            }
+        ).encode()
+        digest = digest_bytes(data)
+        with library.vault.writer(digest) as writer:
+            writer.write(data)
+            writer.commit()
+        library.store.grant_asset("a", digest, data)
+        media_type = "application/x-dinkster-workflow+json"
+        private = library.store.create("a", "Private A", digest, media_type)
+        record = library.store.create("b", "Legacy B", digest, media_type)
+        records = Records(tmp_path)
+
+        class InProcessProjects:
+            async def call(self, operation: str, **arguments: object) -> dict[str, object]:
+                return records.dispatch(operation, arguments)
+
+        app = create_app(
+            _media_engine,
+            _MEDIA_SCHEMAS,
+            library=library,
+            authenticator=_Tokens(
+                {
+                    "b": Principal("b", {"b": capabilities}),
+                    "both": Principal("both", {"a": capabilities, "b": capabilities}),
+                }
+            ),
+        )
+        app[PROJECTS_KEY] = cast("AsyncLibraryClient", InProcessProjects())
+        app.router.add_get("/api/projects/{project}/needs", project_request)
+        b = {"Authorization": "Bearer b"}
+        both = {"Authorization": "Bearer both"}
+        try:
+            async with TestClient(TestServer(app)) as client:
+                before = records.dispatch("workflows.get", {"scope": "b", "id": record.id})
+                denied = await client.get("/api/projects/default/needs", headers=b)
+                denied_wire = await denied.json()
+                ungranted = await client.get("/api/library/" + record.id + "?scope=b", headers=b)
+                assert denied.status == 403, denied_wire
+                assert "private-tools" not in json.dumps(denied_wire)
+                assert "scope" not in denied_wire and "unknown" not in denied_wire
+                assert ungranted.status == 404, await ungranted.text()
+                refused = await client.patch(
+                    "/api/library/" + record.id,
+                    json={"scope": "b", "revision": record.revision, "name": "Changed"},
+                    headers=b,
+                )
+                assert refused.status == 404, await refused.text()
+                assert library.store.get("b", record.id) == record
+                assert records.dispatch("workflows.get", {"scope": "b", "id": record.id}) == before
+                denied = await client.get("/api/projects/default/needs", headers=both)
+                assert denied.status == 409, await denied.text()
+                assert await denied.json() == denied_wire
+                assert not library.store.has_asset_grant("b", digest)
+                uploaded = await client.post("/api/assets?scope=b", data=data, headers=both)
+                assert uploaded.status == 201, await uploaded.text()
+                authorized = await client.get("/api/projects/default/needs", headers=both)
+                assert authorized.status == 200, await authorized.text()
+                needs = await authorized.json()
+                assert [pack["pack"] for pack in needs["packs"]] == ["private-tools"]
+                assert needs["unknown"] == []
+                assert (
+                    await client.get("/api/library/" + record.id + "?scope=b", headers=b)
+                ).status == 200
+                cached = records.dispatch("workflows.get", {"scope": "b", "id": record.id})
+                assert cached["facts"] is not None
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    connection.execute(
+                        "DELETE FROM media_grants WHERE scope = ? AND digest = ?", ("b", digest)
+                    )
+                refused = await client.get("/api/library/" + record.id + "?scope=b", headers=b)
+                assert refused.status == 404, await refused.text()
+                assert records.dispatch("workflows.get", {"scope": "b", "id": record.id}) == cached
+                assert (
+                    await client.post("/api/assets?scope=b", data=data, headers=b)
+                ).status == 201
+                malformed = b"not a workflow"
+                uploaded = await client.post("/api/assets?scope=b", data=malformed, headers=b)
+                assert uploaded.status == 201
+                malformed_digest = (await uploaded.json())["digest"]
+                invalid = library.store.create("b", "Malformed", malformed_digest, media_type)
+                needs = await (await client.get("/api/projects/default/needs", headers=both)).json()
+                assert [pack["pack"] for pack in needs["packs"]] == ["private-tools"]
+                assert needs["unknown"] == [{"scope": "b", "id": invalid.id}]
+                library.vault.delete(digest)
+                needs = await (await client.get("/api/projects/default/needs", headers=both)).json()
+                assert needs["packs"] == []
+                assert {(entry["scope"], entry["id"]) for entry in needs["unknown"]} == {
+                    ("a", private.id),
+                    ("b", record.id),
+                    ("b", invalid.id),
+                }
+        finally:
+            records.close()
+
+    run_scenario(scenario())
+
+
+def test_library_references_require_independently_granted_bytes(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write"})
+        client, library = await _media_client(
+            tmp_path,
+            authenticator=_Tokens(
+                {scope: Principal(scope, {scope: capabilities}) for scope in ("a", "b")}
+            ),
+        )
+        a = {"Authorization": "Bearer a"}
+        b = {"Authorization": "Bearer b"}
+        try:
+            for media_type in (
+                "application/x-dinkster-board+json",
+                "application/x-dinkster-workflow+json",
+                "application/octet-stream",
+            ):
+                private_bytes = ("private " + media_type).encode()
+                digest = digest_bytes(private_bytes)
+                uploaded = await client.post("/api/assets?scope=a", data=private_bytes, headers=a)
+                assert uploaded.status == 201
+                body = {"scope": "b", "name": "Document", "digest": digest, "mediaType": media_type}
+                before = await (await client.get("/api/library?scope=b", headers=b)).json()
+                refused = await client.post("/api/library", json=body, headers=b)
+                assert refused.status == 404, await refused.text()
+                missing = await client.post(
+                    "/api/library", json=body | {"digest": digest_bytes(b"absent")}, headers=b
+                )
+                assert missing.status == 404
+                assert await missing.json() == await refused.json()
+                assert await (await client.get("/api/library?scope=b", headers=b)).json() == before
+                assert not library.store.has_asset_grant("b", digest)
+
+                own_bytes = ("own " + media_type).encode()
+                own_digest = digest_bytes(own_bytes)
+                uploaded = await client.post("/api/assets?scope=b", data=own_bytes, headers=b)
+                assert uploaded.status == 201
+                created = await client.post(
+                    "/api/library", json=body | {"digest": own_digest}, headers=b
+                )
+                assert created.status == 201, await created.text()
+                record = await created.json()
+                path = "/api/library/" + record["id"]
+                patch = {"scope": "b", "revision": record["revision"], "digest": digest}
+                refused = await client.patch(path, json=patch, headers=b)
+                assert refused.status == 404, await refused.text()
+                assert await (await client.get(path + "?scope=b", headers=b)).json() == record
+                assert not library.store.has_asset_grant("b", digest)
+
+                uploaded = await client.post("/api/assets?scope=b", data=private_bytes, headers=b)
+                assert uploaded.status == 201
+                updated = await client.patch(path, json=patch, headers=b)
+                assert updated.status == 200, await updated.text()
+                updated_record = await updated.json()
+                assert updated_record["digest"] == digest
+                assert updated_record["revision"] == record["revision"] + 1
+                created = await client.post("/api/library", json=body, headers=b)
+                assert created.status == 201
+                for reader in (a, b):
+                    fetched = await client.get("/api/assets/" + digest, headers=reader)
+                    assert fetched.status == 200
+                    assert await fetched.read() == private_bytes
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("document_kind", ("board", "image", "workflow"))
+def test_shared_documents_admit_only_exact_scope_asset_grants(
+    tmp_path: Path, document_kind: str
+) -> None:
+    from copy import deepcopy
+
+    from tests.test_collab import board_snapshot
+    from tests.test_image_document_adoption import _document
+
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write", "sessions:read", "sessions:write"})
+        auth = _Tokens(
+            {
+                "a": Principal("alice", {"a": capabilities}),
+                "b": Principal("bob", {"b": capabilities}),
+                "both": Principal("both", {"a": capabilities, "b": capabilities}),
+                "writer": Principal("writer", {"a": frozenset({"sessions:write"})}),
+            }
+        )
+        client, _library = await _media_client(tmp_path, authenticator=auth, collaboration=True)
+        image = BytesIO()
+        Image.new("RGBA", (2, 1), (11, 57, 133, 255)).save(image, "PNG")
+        data = image.getvalue()
+        digest = digest_bytes(data)
+        media = {"picture": data, "video": _mp4(), "sound": _wav()}
+        board = board_snapshot()
+        for item in board["items"].values():
+            if "asset" in item:
+                item["asset"]["digest"] = digest_bytes(media[item["kind"]])
+        image_document = _document(data, digest)
+        empty_image = {**image_document, "layers": {}, "rootLayerIds": [], "resources": {}}
+        metadata = {"digest": digest_bytes(b"opaque metadata, not an asset reference")}
+        board["items"]["picture"]["asset"]["origin"] = metadata
+        image_document["extensions"] = {"example": metadata}
+        empty_workflow = {
+            "format": "dinkster-workflow",
+            "formatVersion": 1,
+            "metadata": metadata,
+            "environment": {"packs": {"example": metadata}},
+            "graphs": {
+                "main": {
+                    "nodes": {
+                        "source": {
+                            "type": "example",
+                            "metadata": metadata,
+                            "values": {"digest": metadata["digest"]},
+                        }
+                    }
+                }
+            },
+        }
+        workflow = deepcopy(empty_workflow)
+        workflow["graphs"]["main"]["nodes"]["source"]["values"].update(
+            {"images": [{"nested": {"digest": digest, "name": "image.png"}}]}
+        )
+        cases = (
+            ("board", "board-one", board, {**board, "items": {}, "order": []}),
+            ("image", "lineage-1", image_document, empty_image),
+            ("workflow", "workflow-one", workflow, empty_workflow),
+        )
+
+        def headers(token: str) -> dict[str, str]:
+            return {"Authorization": f"Bearer {token}"}
+
+        try:
+            if document_kind == "image":
+                inline = deepcopy(image_document)
+                inline["formatVersion"] = 2
+                resources = cast("dict[str, dict[str, object]]", inline["resources"])
+                resources["r0"]["inline"] = base64.b64encode(data).decode("ascii")
+                created = await client.post(
+                    "/api/sessions",
+                    json={
+                        "scope": "a",
+                        "documentKind": "image",
+                        "documentId": "lineage-1",
+                        "snapshot": inline,
+                    },
+                    headers=headers("writer"),
+                )
+                assert created.status == 201, await created.text()
+            for payload in media.values():
+                upload = await client.post(
+                    "/api/assets?scope=a", data=payload, headers=headers("a")
+                )
+                assert upload.status == 201
+            if document_kind == "board":
+                for payload in (data, media["video"]):
+                    upload = await client.post(
+                        "/api/assets?scope=b", data=payload, headers=headers("b")
+                    )
+                    assert upload.status == 201
+            for kind, identity, document, empty in cases:
+                if kind != document_kind:
+                    continue
+                body = {
+                    "scope": "b",
+                    "documentKind": kind,
+                    "documentId": identity,
+                    "snapshot": document,
+                }
+                denied = await client.post(
+                    "/api/sessions?scope=a", json=body, headers=headers("both")
+                )
+                assert denied.status == 404, await denied.text()
+                assert await denied.json() == {"error": "asset not held here"}
+                listed = await client.get("/api/sessions?scope=b", headers=headers("b"))
+                assert await listed.json() == {"sessions": []}
+                no_read = await client.post(
+                    "/api/sessions", json={**body, "scope": "a"}, headers=headers("writer")
+                )
+                assert no_read.status == 403
+                accepted = await client.post(
+                    "/api/sessions", json={**body, "scope": "a"}, headers=headers("a")
+                )
+                assert accepted.status == 201, await accepted.text()
+                created = await client.post(
+                    "/api/sessions", json={**body, "snapshot": empty}, headers=headers("b")
+                )
+                assert created.status == 201, await created.text()
+                session_id = (await created.json())["sessionId"]
+                path = f"/api/sessions/{session_id}"
+                op = {
+                    "protocolVersion": 1,
+                    "opId": "media",
+                    "actorId": "actor",
+                    "baseRevision": 0,
+                    "patch": [{"op": "replace", "path": [], "value": document}],
+                }
+                denied = await client.post(path + "/ops?scope=a", json=op, headers=headers("b"))
+                assert denied.status == 404, await denied.text()
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 0, "document": empty}
+                operations = await client.get(path + "/ops?after=0", headers=headers("b"))
+                assert (await operations.json())["ops"] == []
+                clean_op = deepcopy(op)
+                clean_op["patch"][0]["value"] = empty
+                clean = await client.post(path + "/ops", json=clean_op, headers=headers("b"))
+                assert clean.status == 200, await clean.text()
+                checkpoint = await client.put(
+                    path + "/snapshot",
+                    json={"revision": 1, "document": document},
+                    headers=headers("b"),
+                )
+                assert checkpoint.status == (400 if kind == "board" else 404), (
+                    await checkpoint.text()
+                )
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 0, "document": empty}
+                # Independently supplied bytes authorize the same reference in B, not A's identity.
+                payload = media["sound"] if kind == "board" else data
+                upload = await client.post(
+                    "/api/assets?scope=b", data=payload, headers=headers("b")
+                )
+                assert upload.status == 201
+                op["baseRevision"] = 1
+                op["opId"] = "granted"
+                accepted = await client.post(path + "/ops", json=op, headers=headers("b"))
+                assert accepted.status == 200, await accepted.text()
+                # Remove authority out of band so even a matching Board checkpoint
+                # must recheck the grant rather than rely on append admission.
+                with sqlite3.connect(tmp_path / "library.sqlite") as connection:
+                    connection.execute(
+                        "DELETE FROM media_grants WHERE scope = ? AND digest = ?",
+                        ("b", digest_bytes(payload)),
+                    )
+                checkpoint = await client.put(
+                    path + "/snapshot",
+                    json={"revision": 2, "document": document},
+                    headers=headers("b"),
+                )
+                assert checkpoint.status == 404, await checkpoint.text()
+                assert await checkpoint.json() == {"error": "asset not held here"}
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 0, "document": empty}
+                operations = await client.get(path + "/ops?after=0", headers=headers("b"))
+                assert [item["revision"] for item in (await operations.json())["ops"]] == [1, 2]
+                upload = await client.post(
+                    "/api/assets?scope=b", data=payload, headers=headers("b")
+                )
+                assert upload.status == 201
+                checkpoint = await client.put(
+                    path + "/snapshot",
+                    json={"revision": 2, "document": document},
+                    headers=headers("b"),
+                )
+                assert checkpoint.status == 200, await checkpoint.text()
+                snapshot = await client.get(path + "/snapshot", headers=headers("b"))
+                assert await snapshot.json() == {"revision": 2, "document": document}
         finally:
             await client.close()
 
@@ -1683,8 +2372,10 @@ def test_media_ingest_interruption_and_store_failure_are_atomic(tmp_path: Path) 
             assert library.vault.resolve(digest) is not None
             assert library.store.media_grant("local", digest, "media/image") is None
             generic = await client.post("/api/assets", data=_png())
-            assert generic.status == 200
+            assert generic.status == 201
             assert await generic.json() == {"digest": digest}
+            assert library.store.media_grant("local", digest, "asset/file") is not None
+            assert library.store.media_grant("local", digest, "media/image") is None
         finally:
             library.store.grant_media_result = original  # type: ignore[method-assign]
             await client.close()

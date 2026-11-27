@@ -154,6 +154,17 @@ _PRINCIPAL_FOR_KEY: web.AppKey[Callable[[web.Request], ScopePrincipal]] = web.Ap
 _RESOLVE_SCOPE_KEY: web.AppKey[Callable[[Any, str, object | None], str]] = web.AppKey(
     "dinkster_collab_resolve_scope"
 )
+_DOCUMENT_ADMISSION_KEY: web.AppKey[Callable[[web.Request, str, str, object], None]] = web.AppKey(
+    "dinkster_collab_document_admission"
+)
+
+
+def _admission_check(request: web.Request) -> Callable[[str, str, object], None] | None:
+    check = request.app.get(_DOCUMENT_ADMISSION_KEY)
+    if check is None:
+        return None
+    return lambda scope, kind, document: check(request, scope, kind, document)
+
 
 _ACTOR_ID_RE = re.compile(r"[A-Za-z0-9_-]+")  # used with fullmatch
 """actorId is ``[A-Za-z0-9_-]+`` and never ``__proto__``.
@@ -443,6 +454,7 @@ async def handle_create_session(request: web.Request) -> web.Response:
             document_kind=document_kind,
             snapshot=body["snapshot"],
             principal_id=_principal(request).principal_id,
+            admission_check=_admission_check(request),
         )
     except ValueError as exc:
         raise _bad_request(str(exc)) from exc
@@ -574,6 +586,7 @@ async def handle_append_op(request: web.Request) -> web.Response:
             patch=cast(list[dict[str, Any]], patch),
             principal_id=_principal(request).principal_id,
             actor_kind=kind,
+            admission_check=_admission_check(request),
         )
     except ActorPrincipalMismatchError:
         return _error(409, {"error": "actor-principal-mismatch"})
@@ -654,6 +667,7 @@ async def handle_put_snapshot(request: web.Request) -> web.Response:
             revision=revision,
             document=body["document"],
             principal_id=_principal(request).principal_id,
+            admission_check=_admission_check(request),
         )
     except InvalidSnapshotError as exc:
         return _error(400, {"error": "document-invalid", "message": str(exc)})
@@ -865,6 +879,7 @@ def add_session_routes(
     *,
     principal_for: Callable[[web.Request], ScopePrincipal] | None = None,
     resolve_scope: Callable[[Any, str, object | None], str] | None = None,
+    document_admission: Callable[[web.Request, str, str, object], None] | None = None,
     op_rate: float = 60.0,
     op_burst: int = 240,
     presence_rate: float = 100.0,
@@ -877,6 +892,8 @@ def add_session_routes(
     app[SESSIONS_KEY] = service
     app[_PRINCIPAL_FOR_KEY] = principal_for or _local_principal_for
     app[_RESOLVE_SCOPE_KEY] = resolve_scope or _local_scope
+    if document_admission is not None:
+        app[_DOCUMENT_ADMISSION_KEY] = document_admission
     app[_SUBSCRIBERS_KEY] = {}
     app[_OPS_LIMITER_KEY] = _TokenBucketLimiter(op_rate, op_burst, monotonic_clock)
     app[_PRESENCE_LIMITER_KEY] = _TokenBucketLimiter(presence_rate, presence_burst, monotonic_clock)
@@ -902,6 +919,7 @@ def install_session_extension(
     principal_for: Callable[[web.Request], ScopePrincipal],
     resolve_scope: Callable[[Any, str, object | None], str],
     write_check: WriteCheck | None = None,
+    document_admission: Callable[[web.Request, str, str, object], None] | None = None,
 ) -> None:
     """Install collaboration state, routes, and persistence cleanup on a host app."""
     store = SessionStore(database) if database is not None else None
@@ -914,6 +932,7 @@ def install_session_extension(
             service,
             principal_for=principal_for,
             resolve_scope=resolve_scope,
+            document_admission=document_admission,
         )
     except BaseException:
         if store is not None:

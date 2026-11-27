@@ -233,6 +233,7 @@ from dinkster_assets import (
     AssetError,
     AssetIntegrityError,
     DeclaredAsset,
+    LibraryStore,
     MountsError,
     asset_selection_options,
     digest_bytes,
@@ -278,6 +279,7 @@ from dinkster_protocol import (
     AssetFolderContext,
     AttentionPolicy,
     AttentionPolicyConfig,
+    CachedResult,
     CompatGateDiagnostic,
     ExportSnapshot,
     PackSettingsSchema,
@@ -306,7 +308,7 @@ from dinkster_schema import (
     validate_remote_choice_authority,
     validate_replacement_references,
 )
-from dinkster_schema.reporting import ImageDocumentArtifact
+from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     ENGINE_EVENT_FRAME_LIMIT_BYTES,
     ENGINE_JOB_SUBMISSION_LIMIT_BYTES,
@@ -345,10 +347,12 @@ from .events import (
 from .execution_journal import ExecutionJournal, add_execution_journal_routes
 from .history import HistoryStore, add_history_routes
 from .library import (
+    ASSET_GRANTS_KEY,
     LIBRARY_KEY,
     ServerLibrary,
     add_library_routes,
     recover_asset_observations,
+    require_asset_read,
     run_media_publication,
     run_owned_thread,
 )
@@ -1167,7 +1171,7 @@ class ServerState:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
-        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
+        cache_hit_valid: Callable[[str, Mapping[str, Value]], bool] | None = None,
     ) -> None:
         # Outbound text (errors, pack failures, node-reported data) is
         # path-redacted through this instance; hosts that know their
@@ -3294,6 +3298,7 @@ async def handle_submit(request: web.Request) -> web.Response:
         "jobs:submit",
         None if principal.local else body.get("scope"),
     )
+    allow_local = scope == "local" and principal.allows_in(scope, "assets:read")
     client_id = body.get("clientId")
     job_id = body.get("jobId")
     if not isinstance(client_id, str) or not client_id:
@@ -3394,6 +3399,32 @@ async def handle_submit(request: web.Request) -> web.Response:
     if isinstance(parsed, str):
         raise _bad_request(parsed)
     consented, hinted_sources = parsed
+
+    async def preflight_assets(referenced: Mapping[str, str]) -> list[dict[str, object]]:
+        if not referenced:
+            return []
+        resolve_scope(principal, "assets:read", scope)
+        if library is None:
+            for digest in referenced:
+                await require_asset_read(request, digest, scope=scope)
+            return []
+        await run_media_publication(
+            library, lambda library=library: recover_asset_observations(library)
+        )
+        acquired_kinds: set[str] = set()
+        plan = await asyncio.to_thread(
+            asset_preflight,
+            library,
+            referenced,
+            consented,
+            hinted_sources,
+            scope=scope,
+            project=project,
+            acquired_kinds=acquired_kinds,
+        )
+        announce_asset_kinds(request.app, acquired_kinds)
+        return plan
+
     fingerprint_payload: dict[str, object] = {
         "graph": body.get("graph"),
         "targets": targets,
@@ -3501,10 +3532,18 @@ async def handle_submit(request: web.Request) -> web.Response:
         graph, automatic = await resolve_automatic(
             graph, targets, execution.schemas, call_lookup=request.app.get(LOOKUP_DISPATCH_KEY)
         )
+        # Binding FILE_3D validates source bytes, so admission must precede it.
+        try:
+            referenced = graph_asset_names(graph, execution.schemas, allow_local=allow_local)
+        except AssetError as error:
+            raise _bad_request(str(error)) from error
+        early_plan = await preflight_assets(referenced)
+        if early_plan:
+            return web.json_response({"error": "assets-missing", "assets": early_plan}, status=409)
         with use_asset_folders(asset_folders):
             try:
                 graph, missing_names = await asyncio.to_thread(
-                    bind_model_names, graph, execution.schemas, library
+                    bind_model_names, graph, execution.schemas, library, allow_local=allow_local
                 )
             except (AssetError, OSError, ValueError) as error:
                 raise _bad_request(str(error)) from error
@@ -3622,8 +3661,13 @@ async def handle_submit(request: web.Request) -> web.Response:
         # optionally supplying its own leads via 'assetSources'. Digest-exact
         # consent is TOCTOU-proof: verified ingest means a consented identity
         # can only ever land the exact bytes it names.
+        try:
+            referenced = graph_asset_names(
+                preflight_graph, execution.schemas, allow_local=allow_local
+            )
+        except AssetError as error:
+            raise _bad_request(str(error)) from error
         if library is not None:
-            referenced = graph_asset_names(preflight_graph)
             # Node-declared requirements ([[pack.assets]] nodes = [...]): a
             # fixed internal model a node type needs joins the preflight set
             # the moment the graph instantiates that type - no widget, no
@@ -3643,20 +3687,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     if digest in remote_provider_digests and digest not in remote_missing:
                         continue
                     referenced.setdefault(digest, need.name)
-            if referenced:
-                await run_media_publication(library, lambda: recover_asset_observations(library))
-                acquired_kinds: set[str] = set()
-                local_plan = await asyncio.to_thread(
-                    asset_preflight,
-                    library,
-                    referenced,
-                    consented,
-                    hinted_sources,
-                    scope=scope,
-                    project=project,
-                    acquired_kinds=acquired_kinds,
-                )
-                announce_asset_kinds(request.app, acquired_kinds)
+        local_plan = await preflight_assets(referenced)
         if (
             execution.preflight_provider_assets is not None
             and remote_provider_plan
@@ -3968,12 +3999,24 @@ async def handle_value(request: web.Request) -> web.Response:
         else "private, no-cache"
     )
     library = request.app.get(LIBRARY_KEY)
+    for digest in value_asset_references({output_id: value}):
+        await require_asset_read(request, digest, scope=job.scope)
+        if library is not None and not await run_owned_thread(
+            lambda digest=digest: library.asset_available(digest)
+        ):
+            return _rendition_problem(
+                404, "rendition_unavailable", "rendition source is unavailable"
+            )
     document_rendition = library is not None and _mime == IMAGE_DOCUMENT_MEDIA_TYPE
     not_modified = any(tag.value in (etag_value, "*") for tag in (request.if_none_match or ()))
     if not_modified and not document_rendition:
         return web.Response(
             status=304,
-            headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
+            headers={
+                "ETag": f'"{etag_value}"',
+                "Cache-Control": cache_control,
+                "Vary": "Authorization",
+            },
         )
     try:
         if library is None:
@@ -4045,7 +4088,11 @@ async def handle_value(request: web.Request) -> web.Response:
     if not_modified:
         return web.Response(
             status=304,
-            headers={"ETag": f'"{etag_value}"', "Cache-Control": cache_control},
+            headers={
+                "ETag": f'"{etag_value}"',
+                "Cache-Control": cache_control,
+                "Vary": "Authorization",
+            },
         )
     return web.Response(
         body=rendition.data,
@@ -4053,6 +4100,7 @@ async def handle_value(request: web.Request) -> web.Response:
         headers={
             "ETag": f'"{etag_value}"',
             "Cache-Control": cache_control,
+            "Vary": "Authorization",
             "X-Dinkster-Type-Id": value.type_id,
             "X-Dinkster-Fingerprint": value.fingerprint,
             "X-Dinkster-Rendition": rendition.kind,
@@ -4634,9 +4682,19 @@ async def handle_cache_blob(request: web.Request) -> web.Response:
 
 
 async def handle_assets_list(request: web.Request) -> web.Response:
+    if len(request.query.getall("scope", [])) > 1:
+        return web.json_response({"error": "at most one scope is allowed"}, status=400)
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
     export = request.app[ASSET_EXPORT_KEY]
-    digests = await asyncio.to_thread(export.digests)
-    return web.json_response({"digests": sorted(digests)})
+    store = request.app.get(ASSET_GRANTS_KEY)
+
+    def available() -> list[str]:
+        if store is None:
+            return []
+        return [digest for digest in export.digests() if store.has_asset_grant(scope, digest)]
+
+    digests = await asyncio.to_thread(available)
+    return web.json_response({"digests": sorted(digests)}, headers={"Cache-Control": "no-store"})
 
 
 async def handle_asset_selections(request: web.Request) -> web.Response:
@@ -4673,6 +4731,7 @@ async def handle_asset_bytes(request: web.Request) -> web.StreamResponse:
         return web.json_response(
             {"error": "malformed digest (expected 'blake3:<64 hex>')"}, status=400
         )
+    await require_asset_read(request, digest)
     export = request.app[ASSET_EXPORT_KEY]
     path = await asyncio.to_thread(export.resolve, digest)
     if path is None:
@@ -4772,6 +4831,9 @@ def create_app(
     if library is not None and make_library is not None:
         raise ValueError("supply a library or its factory, not both")
     has_library = library is not None or make_library is not None
+    export_grants = (
+        LibraryStore(":memory:") if asset_export is not None and not has_library else None
+    )
 
     async def publish_image_documents(
         node_id: str, claims: Sequence[ImageDocumentArtifact]
@@ -4789,6 +4851,8 @@ def create_app(
                 retain_produced_asset_path(path)
 
     async def publish_outputs(run_id: str, node_id: str, outputs: Mapping[str, Value]) -> None:
+        from .cleanup import grant_produced_publications
+
         assert library is not None
         with contextlib.suppress(AssetError):
             retain_output_files(outputs)
@@ -4799,6 +4863,14 @@ def create_app(
         store = library.store
 
         def persist() -> dict[str, dict[str, object]]:
+            if library is not None and library.scratch_root is not None:
+                grant_produced_publications(
+                    library.scratch_root,
+                    store,
+                    job=job.run_id,
+                    attempt=job.attempt,
+                    scope=job.scope,
+                )
             offers: dict[str, dict[str, object]] = {}
             for output_id, value in outputs.items():
                 complete = True
@@ -4828,14 +4900,25 @@ def create_app(
 
         job.result_offers[node_id] = await run_owned_thread(persist)
 
-    def cache_hit_valid(outputs: Mapping[str, Value]) -> bool:
-        if library is None:
-            return True
+    def cache_hit_valid(scope: str, outputs: Mapping[str, Value]) -> bool:
+        store = library.store if library is not None else export_grants
+        assert store is not None
         try:
-            references = value_asset_references(outputs)
-            if not all(library.asset_available(digest) for digest in references):
+            references = set(value_asset_references(outputs))
+            previews: set[str] = set()
+            if isinstance(outputs, CachedResult):
+                for artifact in outputs.artifacts:
+                    references.add(artifact.digest)
+                    if artifact.preview is not None:
+                        previews.add(artifact.preview.digest)
+            if not all(store.has_asset_grant(scope, digest) for digest in references | previews):
                 return False
-            retain_output_files(outputs)
+            if library is not None:
+                # Missing optional previews are stripped on replay, not regenerated by saving
+                # another original. Required output bytes must still be available.
+                if not all(library.asset_available(digest) for digest in references):
+                    return False
+                retain_output_files(outputs)
             return True
         except AssetError:
             return False
@@ -4981,6 +5064,77 @@ def create_app(
     async def prepare_job(job: Job) -> None:
         from .projects import project_for_run
 
+        if export_grants is not None:
+            assert job.execution is not None
+            store = export_grants
+            execution = job.execution
+            publisher = execution.publish_preview_artifacts
+
+            async def publish_previews(
+                node_id: str, claims: Sequence[EncodedPreviewArtifact]
+            ) -> tuple[SavedArtifact, ...]:
+                assert publisher is not None
+                artifacts = await publisher(node_id, claims)
+                for claim in claims:
+                    await run_owned_thread(
+                        lambda claim=claim: store.grant_asset(
+                            job.scope, digest_bytes(claim.data), claim.data
+                        )
+                    )
+                return artifacts
+
+            job.execution = replace(
+                execution,
+                publish_preview_artifacts=publish_previews if publisher is not None else None,
+            )
+        if library is not None:
+            assert job.execution is not None
+            execution = job.execution
+            validate_saved = execution.validate_saved_artifacts
+            publish_saved_previews = execution.publish_saved_file_previews
+
+            async def grant_saved(
+                artifacts: tuple[SavedArtifact, ...],
+            ) -> tuple[SavedArtifact, ...]:
+                assert library is not None
+
+                def persist() -> None:
+                    assert library is not None
+                    for artifact in artifacts:
+                        for ref in (artifact, artifact.preview):
+                            if ref is None:
+                                continue
+                            path = library.locate(ref.digest)
+                            if path is None:
+                                raise AssetError("published saved artifact bytes are unavailable")
+                            library.store.grant_asset(job.scope, ref.digest, path)
+
+                await run_media_publication(library, persist)
+                return artifacts
+
+            async def validate_saved_artifacts(
+                node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+            ) -> tuple[SavedArtifact, ...]:
+                assert validate_saved is not None
+                return await grant_saved(await validate_saved(node_id, claims, started_at_ns))
+
+            async def publish_saved_file_previews(
+                artifacts: Sequence[SavedArtifact], claims: Sequence[Mapping[str, object]]
+            ) -> tuple[SavedArtifact, ...]:
+                assert publish_saved_previews is not None
+                return await grant_saved(await publish_saved_previews(artifacts, claims))
+
+            # Only fresh, host-validated publications reach these callbacks. Grant
+            # them before inflight/cache reuse, not after the whole job completes.
+            job.execution = replace(
+                execution,
+                validate_saved_artifacts=(
+                    validate_saved_artifacts if validate_saved is not None else None
+                ),
+                publish_saved_file_previews=(
+                    publish_saved_file_previews if publish_saved_previews is not None else None
+                ),
+            )
         project = await project_for_run(app, job.project)
         if prepare_project_run is not None:
             await prepare_project_run(job.project)
@@ -5045,7 +5199,7 @@ def create_app(
         job_context=job_context if has_library else None,
         publish_outputs=publish_outputs if has_library else None,
         publish_image_documents=publish_image_documents if has_library else None,
-        cache_hit_valid=cache_hit_valid if has_library else None,
+        cache_hit_valid=cache_hit_valid if has_library or export_grants is not None else None,
     )
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
@@ -5162,6 +5316,8 @@ def create_app(
     app.router.add_get("/api/assets/selections", handle_asset_selections)
     if library is not None:
         add_library_routes(app, library)
+    elif export_grants is not None:
+        app[ASSET_GRANTS_KEY] = export_grants
     if history is not None:
         add_history_routes(app, history)
     if training_sessions is not None:
@@ -5199,6 +5355,8 @@ def create_app(
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler_task
         await state.queue.close()
+        if export_grants is not None:
+            await asyncio.to_thread(export_grants.close)
         if library is not None and not library.keep_temporary_files:
             from .cleanup import inspect_engine_temporary
 

@@ -113,6 +113,7 @@ def test_individual_model_hiding_is_project_scoped_and_revision_bound(
         hidden_model=downloads.hidden_digest,
         model_sources_for_name=lambda *_: ["https://example.org/must-not-download"],
     )
+    store.grant_asset("local", digest_bytes(payload), payload)
     schemas = {
         "loader": NodeSchema(
             "loader",
@@ -1805,6 +1806,30 @@ def test_shared_model_default_is_used_and_published_before_scan(
 
     from dinkster_assets import AssetVault
     from dinkster_assets.acquire import acquire_need
+    from dinkster_server.library import acquire_library_asset
+
+    requests: list[str] = []
+
+    @contextmanager
+    def metadata_only(
+        url: str, *, huggingface_token: str | None = None
+    ) -> Generator[HTTPSResponse]:
+        requests.append(url)
+        if "/api/models/" not in url:
+            raise OSError("source bytes unavailable")
+        yield cast("HTTPSResponse", io.BytesIO(metadata))
+
+    monkeypatch.setattr(huggingface, "open_model_response", metadata_only)
+    refused = acquire_library_asset(library, need, scope="other", project="project")
+    assert not refused.ok
+    assert any("/resolve/" in url for url in requests)
+    assert not library.store.has_asset_grant("other", need.digest)
+    assert expected.read_bytes() == payload
+    monkeypatch.setattr(huggingface, "open_model_response", respond)
+    acquired = acquire_library_asset(library, need, scope="other", project="project")
+    assert acquired.ok
+    assert library.store.has_asset_grant("other", need.digest)
+    assert expected.read_bytes() == payload
 
     def no_network(_url: str, *, huggingface_token: str | None = None) -> None:
         pytest.fail("already-held bytes must not reach a provider")
@@ -2058,6 +2083,7 @@ def test_explicit_digest_requires_enabled_folder_before_consent(
         local_resolver=table,
         disabled_model_locations=downloads.disabled_locations,
     )
+    store.grant_asset("local", digest, payload)
     try:
         expected = [
             {

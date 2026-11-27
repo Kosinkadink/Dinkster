@@ -123,9 +123,10 @@ async def workflow_record_wire(
     if client is None or record.media_type != "application/x-dinkster-workflow+json":
         return wire
     from .app import STATE_KEY
-    from .library import LIBRARY_KEY
+    from .library import LIBRARY_KEY, require_asset_read
     from .workflow_facts import workflow_facts
 
+    await require_asset_read(request, record.digest, scope=record.scope)
     library = request.app[LIBRARY_KEY]
 
     def read_facts() -> dict[str, object] | None:
@@ -171,12 +172,29 @@ async def workflow_record_wire(
 
 async def project_needs(request: web.Request, identifier: str) -> dict[str, object]:
     from .app import STATE_KEY
-    from .library import LIBRARY_KEY
+    from .auth import principal_for, resolve_scope
+    from .library import LIBRARY_KEY, require_asset_read
     from .workflow_facts import workflow_facts
 
     selected = await request.app[PROJECTS_KEY].call(
         "projects.needs", id=identifier, includeWorkflows=True
     )
+    workflows = cast("list[dict[str, str]]", selected["workflows"])
+    # Scope refusal must not reveal whether another record has a byte grant.
+    try:
+        for record in workflows:
+            resolve_scope(principal_for(request), "assets:read", record["scope"])
+    except web.HTTPForbidden as error:
+        raise web.HTTPForbidden(
+            text='{"error": "project needs are unavailable"}', content_type="application/json"
+        ) from error
+    for record in workflows:
+        try:
+            await require_asset_read(request, record["digest"], scope=record["scope"])
+        except web.HTTPNotFound as error:
+            raise web.HTTPConflict(
+                text='{"error": "project needs are unavailable"}', content_type="application/json"
+            ) from error
     state = request.app[STATE_KEY]
     library = request.app[LIBRARY_KEY]
     schemas, node_packs = state.schemas, state.node_packs
@@ -188,7 +206,7 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
     def compute() -> dict[str, object]:
         packs: dict[str, dict[str, object]] = {}
         unknown: list[dict[str, object]] = []
-        for record in cast("list[dict[str, str]]", selected["workflows"]):
+        for record in workflows:
             try:
                 data = AssetRef(
                     record["digest"], record["name"], 0, resolver=library.vault

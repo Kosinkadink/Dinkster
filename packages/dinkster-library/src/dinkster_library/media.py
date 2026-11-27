@@ -38,6 +38,15 @@ def grants(records: Records, operation: str, arguments: dict[str, object]) -> di
 
     if legacy_store_exists(records.root):
         raise LibraryError("migration", "Finish the complete library migration first")
+    if operation == "grants.has":
+        if set(arguments) != {"scope", "digest"}:
+            raise LibraryError("invalid", "invalid byte grant fields")
+        scope = text(arguments["scope"], "grant scope")
+        digest = asset_digest(arguments["digest"])
+        row = records.db.execute(
+            "SELECT 1 FROM media_grants WHERE scope=? AND digest=? LIMIT 1", (scope, digest)
+        ).fetchone()
+        return {"granted": row is not None}
     writing = operation == "grants.put"
     allowed = {"scope", "grant"} if writing else {"scope", "digest", "kind"}
     if set(arguments) != allowed:
@@ -58,15 +67,17 @@ def grants(records: Records, operation: str, arguments: dict[str, object]) -> di
         raise LibraryError("invalid", "grant scope does not match its owner")
     document["scope"] = scope
     facts = (kind, document.get("mediaType"), document.get("extension"))
-    if facts not in MEDIA_FORMATS and facts != (
-        "data/latent",
-        "application/x-comfy-latent",
-        "latent",
+    if facts not in MEDIA_FORMATS and facts not in (
+        ("data/latent", "application/x-comfy-latent", "latent"),
+        ("asset/file", "application/octet-stream", "bin"),
     ):
         raise LibraryError("invalid", "media grant facts are not canonical")
     size = document.get("byteSize")
-    if type(size) is not int or not 0 < size <= 9223372036854775807:
-        raise LibraryError("invalid", "media grant byte size must be a positive SQLite integer")
+    minimum = 0 if kind == "asset/file" else 1
+    if type(size) is not int or not minimum <= size <= 9223372036854775807:
+        raise LibraryError(
+            "invalid", f"media grant byte size must be a SQLite integer >= {minimum}"
+        )
     encoded = json.dumps(document, sort_keys=True, separators=(",", ":"), allow_nan=False)
     with records.db:
         records.db.execute("BEGIN IMMEDIATE")

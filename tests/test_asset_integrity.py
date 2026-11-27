@@ -269,7 +269,9 @@ def test_asset_endpoint_serves_verified_bytes_and_refuses_stale(
         with vault.writer(digest) as writer:
             writer.write(data)
             writer.commit()
-        server = TestServer(create_app(make_engine, SCHEMAS, asset_export=vault))
+        library = ServerLibrary(vault, LibraryStore(tmp_path / "library.sqlite"))
+        library.store.grant_asset("local", digest, data)
+        server = TestServer(create_app(make_engine, SCHEMAS, asset_export=vault, library=library))
         await server.start_server()
         try:
             async with aiohttp.ClientSession() as http:
@@ -278,12 +280,20 @@ def test_asset_endpoint_serves_verified_bytes_and_refuses_stale(
                 assert good.headers["Content-Length"] == str(len(data))
                 assert await good.read() == data
 
+                partial = await http.get(
+                    server.make_url(f"/assets/{digest}"), headers={"Range": "bytes=17-29"}
+                )
+                assert partial.status == 206
+                assert await partial.read() == data[17:30]
+
                 # Corrupt the stored file in place; resolve still finds it,
                 # but the endpoint must refuse rather than mirror garbage.
                 stored = vault.resolve(digest)
                 assert stored is not None
                 stored.write_bytes(b"Z" * len(data))
-                stale = await http.get(server.make_url(f"/assets/{digest}"))
+                stale = await http.get(
+                    server.make_url(f"/assets/{digest}"), headers={"Range": "bytes=17-29"}
+                )
                 assert stale.status == 409
                 assert stale.headers["Cache-Control"] == "no-store"
                 body = await stale.json()
@@ -312,6 +322,47 @@ def test_api_asset_get_and_metadata_refuse_stale_vault_content(tmp_path: Path) -
             assert good.status == 200
             assert await good.read() == data
             assert good.headers["ETag"] == f'"{digest}"'
+
+            for range_header, start, stop in (
+                ("bytes=19-31", 19, 32),
+                ("bytes=-5", len(data) - 5, len(data)),
+                (f"bytes={len(data) - 3}-", len(data) - 3, len(data)),
+                (f"bytes={len(data) - 7}-{len(data) + 20}", len(data) - 7, len(data)),
+            ):
+                partial = await client.get(f"/api/assets/{digest}", headers={"Range": range_header})
+                assert partial.status == 206
+                assert await partial.read() == data[start:stop]
+                assert partial.headers["Content-Length"] == str(stop - start)
+                assert partial.headers["Content-Range"] == f"bytes {start}-{stop - 1}/{len(data)}"
+                assert partial.headers["Accept-Ranges"] == "bytes"
+                assert partial.headers["ETag"] == f'"{digest}"'
+
+            for range_header in (f"bytes={len(data)}-", "bytes=31-19", "bytes=-0"):
+                refused = await client.get(f"/api/assets/{digest}", headers={"Range": range_header})
+                assert refused.status == 416
+                assert refused.headers["Content-Range"] == f"bytes */{len(data)}"
+                assert await refused.read() == b""
+
+            for validator, expected_status, expected_body in (
+                (f'"{digest}"', 206, data[19:32]),
+                ('"another-version"', 200, data),
+                (f'W/"{digest}"', 200, data),
+            ):
+                conditional = await client.get(
+                    f"/api/assets/{digest}",
+                    headers={"Range": "bytes=19-31", "If-Range": validator},
+                )
+                assert conditional.status == expected_status
+                assert await conditional.read() == expected_body
+
+            for range_header in ("items=1-3", "bytes=1-3,7-9"):
+                full = await client.get(f"/api/assets/{digest}", headers={"Range": range_header})
+                assert full.status == 200
+                assert await full.read() == data
+            head = await client.head(f"/api/assets/{digest}", headers={"Range": "bytes=19-31"})
+            assert head.status == 200
+            assert head.headers["Content-Length"] == str(len(data))
+            assert await head.read() == b""
 
             stored = vault.resolve(digest)
             assert stored is not None

@@ -199,7 +199,7 @@ class JobQueue:
             Callable[[str, Sequence[ImageDocumentArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
             | None
         ) = None,
-        cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None,
+        cache_hit_valid: Callable[[str, Mapping[str, Value]], bool] | None = None,
     ) -> None:
         if max_running_jobs < 1:
             raise ValueError("max_running_jobs must be >= 1")
@@ -296,8 +296,12 @@ class JobQueue:
         if self._closed:
             raise RuntimeError("queue is closed")
         execution = execution or self._engine.pin_execution()
-        if self._cache_hit_valid is not None:
-            execution = replace(execution, cache_hit_valid=self._cache_hit_valid)
+        if (validate_cached := self._cache_hit_valid) is not None:
+
+            def cache_hit_valid(outputs: Mapping[str, Value]) -> bool:
+                return validate_cached(scope, outputs)
+
+            execution = replace(execution, cache_hit_valid=cache_hit_valid)
         if self._publish_outputs is not None:
             execution = replace(execution, publish_outputs=self._publish_outputs)
         execution = replace(

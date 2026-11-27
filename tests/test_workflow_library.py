@@ -370,6 +370,183 @@ def test_catalog_asset_roots_include_other_scopes_and_reachable_dependencies(
         store.close()
 
 
+def test_unsaved_publications_grant_only_the_producing_job_scope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_api.v1 import VIDEO_TYPE
+    from dinkster_assets import register_video_value_type, resolver_from_env
+    from dinkster_assets.value import ASSET_TYPE, register_asset_type
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+    from dinkster_values import video_from_source
+    from produced_video_nodes import ProduceVideo
+
+    video = ProduceVideo.execute()["video"]
+    assert isinstance(video, dict)
+    encoded = video["source"]
+    assert isinstance(encoded, bytes)
+    vault = AssetVault(tmp_path / "vault")
+    scratch = tmp_path / "scratch"
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch / "packs" / "producer"))
+    published: list[str] = []
+    productions: list[bytes] = []
+    reads: list[tuple[bool, str]] = []
+    library = ServerLibrary(vault, make_store(tmp_path), scratch_root=scratch)
+
+    class RepeatVideo(ProduceVideo):
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            productions.append(encoded)
+            return cls.outputs(video=video_from_source(encoded))
+
+    class ReadVideo(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.read_video",
+                body=(Input("video", TypeExpr.concrete(VIDEO_TYPE)), Output("digest", STRING)),
+            )
+
+        @classmethod
+        def execute(cls, *, video: object) -> Mapping[str, object]:
+            from dinkster_values.video_codec import render_video_original
+
+            digest = digest_bytes(render_video_original(video))
+            reads.append((library.store.has_asset_grant("b", digest), digest))
+            return cls.outputs(digest=digest)
+
+    class ReferenceExisting(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.reference_existing",
+                body=(Output("asset", TypeExpr.concrete(ASSET_TYPE)),),
+            )
+
+        @classmethod
+        def execute(cls) -> Mapping[str, object]:
+            path = vault.resolve(published[0])
+            assert path is not None
+            return cls.outputs(asset=AssetRef(published[0], "claimed.mkv", path.stat().st_size))
+
+    nodes = (RepeatVideo, ReferenceExisting, ReadVideo)
+    schemas = build_schemas(nodes)
+
+    def engine(on_event: EventListener) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        register_asset_type(registry)
+        register_video_value_type(registry, VIDEO_TYPE, resolver_from_env())
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry, saved_preview_vault=vault),
+            cache=MemoryLRUCache(),
+            on_event=on_event,
+        )
+
+    async def scenario() -> None:
+        client = TestClient(
+            TestServer(
+                create_app(
+                    engine,
+                    schemas,
+                    library=library,
+                    authenticator=StaticBearerAuthenticator(
+                        {
+                            scope: Principal(
+                                scope,
+                                {scope: frozenset({"jobs:submit", "jobs:read", "assets:read"})},
+                            )
+                            for scope in ("a", "b")
+                        }
+                    ),
+                )
+            )
+        )
+        await client.start_server()
+        try:
+            for scope, job_id, node_type, cached in (
+                ("a", "producer", "vproducer.make", True),
+                ("a", "same-scope", "vproducer.make", True),
+                ("b", "claim", "test.reference_existing", True),
+                ("b", "cached", "vproducer.make", True),
+                ("b", "fresh", "vproducer.make", False),
+            ):
+                headers = {"Authorization": f"Bearer {scope}"}
+                graph_nodes = {"producer": {"nodeType": node_type, "inputs": {}}}
+                if job_id == "cached":
+                    graph_nodes["reader"] = {
+                        "nodeType": "test.read_video",
+                        "inputs": {"video": {"$link": {"node": "producer", "output": "video"}}},
+                    }
+                response = await client.post(
+                    "/api/jobs",
+                    headers=headers,
+                    json={
+                        "clientId": "client",
+                        "jobId": job_id,
+                        "cacheEnabled": cached,
+                        "graph": {"nodes": graph_nodes},
+                        "targets": ["reader" if job_id == "cached" else "producer"],
+                    },
+                )
+                assert response.status == 202, await response.text()
+                async with asyncio.timeout(10):
+                    while True:
+                        status = await (
+                            await client.get(f"/api/jobs/client/{job_id}", headers=headers)
+                        ).json()
+                        if status["state"] in {"completed", "failed", "cancelled"}:
+                            break
+                        await asyncio.sleep(0)
+                assert status["state"] == "completed", status
+                if job_id == "cached":
+                    assert reads == [(True, digest_bytes(encoded))]
+                    assert len(productions) == 2
+                elif job_id == "same-scope":
+                    assert len(productions) == 1
+                if job_id != "claim":
+                    url = (
+                        f"/api/values?clientId=client&jobId={job_id}&nodeId=producer"
+                        "&outputId=video&rendition=default"
+                    )
+                    rendition = await client.get(
+                        url,
+                        headers=headers,
+                    )
+                    assert rendition.status == 200
+                    assert await rendition.read() == encoded
+                if not published:
+                    published.extend(status["resultOffers"]["producer"]["video"]["digests"])
+                    assert published == [digest_bytes(encoded)]
+                digest = published[0]
+                for reader in ("a", "b"):
+                    response = await client.get(
+                        f"/api/assets/{digest}",
+                        headers={"Authorization": f"Bearer {reader}"},
+                    )
+                    allowed = reader == "a" or job_id in {"cached", "fresh"}
+                    assert response.status == (200 if allowed else 404), (job_id, reader)
+                    assert library.store.has_asset_grant(reader, digest) is allowed
+                    if allowed:
+                        assert await response.read() == encoded
+                assert status["artifacts"] == []
+            path = vault.resolve(published[0])
+            assert path is not None
+            path.unlink()
+            response = await client.get(
+                "/api/values?clientId=client&jobId=producer&nodeId=producer"
+                "&outputId=video&rendition=default",
+                headers={"Authorization": "Bearer a", "If-None-Match": "*"},
+            )
+            assert response.status == 404
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("nested", (False, True))
 def test_job_result_offers_bind_persisted_roots_before_event_replay(
     tmp_path: Path, nested: bool
@@ -452,6 +629,10 @@ def test_job_result_offers_bind_persisted_roots_before_event_replay(
                 writer.write(payload)
                 writer.commit()
         library = ServerLibrary(vault, make_store(tmp_path))
+        for digest in (DIGEST_A, DIGEST_B):
+            path = vault.resolve(digest)
+            assert path is not None
+            library.store.grant_asset("local", digest, path)
         history = HistoryStore(tmp_path / "history.sqlite")
         client = TestClient(
             TestServer(create_app(engine, schemas, library=library, history=history))
@@ -726,6 +907,10 @@ def test_completed_artifacts_are_cataloged_in_the_submitted_project(
             assert library.store.query_assets("local") == []
             assert library.store.query_assets("other", project="film") == []
             assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
+            if not failure:
+                grant = library.store.media_grant("local", digest_bytes(data), "asset/file")
+                assert grant is not None and grant.byte_size == len(data)
+                assert library.store.media_grant("other", digest_bytes(data), "asset/file") is None
             assert library.vault.digests() == ([preview_digest] if with_preview else [])
             assert (root / "result_00001.txt").read_bytes() == data
             terminal_url = f"/api/library/terminal-results/{submitted['jobRef']}?scope=local"
@@ -1161,6 +1346,8 @@ def test_named_model_upload_streams_to_folder_without_redirecting_workflows(tmp_
                 assert await response.read() == data
             library = client.app[LIBRARY_KEY]
             assert library.vault.digests() == []
+            grant = library.store.media_grant("local", digest_bytes(data), "asset/file")
+            assert grant is not None and grant.byte_size == len(data)
             assert library.store.media_grant("local", digest_bytes(data), "media/image") is None
             assert library.store.media_grant("local", digest_bytes(data), "media/video") is None
             assert not list(library.vault.root.glob(".media-upload-*"))
@@ -1316,6 +1503,7 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
         missing_body = b"same name is not identity"
         digests = [digest_bytes(body) for body in (mounted_body, missing_body, vault_body)]
         try:
+            client.app[LIBRARY_KEY].store.grant_asset("local", digests[0], mounted)
             upload = await client.post("/api/assets", data=vault_body)
             assert upload.status == 201
             vault = client.app[LIBRARY_KEY].vault
@@ -1332,6 +1520,7 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
                     before = sorted(
                         path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
                     )
+                    catalog_before = client.app[LIBRARY_KEY].store.query_assets("local")
                     response = await client.get(
                         "/api/assets/availability",
                         params=[
@@ -1350,6 +1539,7 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
                         ]
                     }
                     assert str(tmp_path) not in json.dumps(result)
+                    assert client.app[LIBRARY_KEY].store.query_assets("local") == catalog_before
                     assert (
                         sorted(
                             path.relative_to(tmp_path).as_posix() for path in tmp_path.rglob("*")
@@ -1381,9 +1571,6 @@ def test_asset_availability_is_read_only_and_checks_local_identity(tmp_path: Pat
             ):
                 response = await client.get("/api/assets/availability", params=query)
                 assert response.status == 400
-            assert await (await client.get("/api/assets/catalog?scope=local")).json() == {
-                "assets": []
-            }
             assert not list(vault.root.glob(".ingest-*"))
             assert not (vault.root / ".upload-observations").exists()
         finally:
@@ -1571,6 +1758,7 @@ def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
     async def scenario() -> None:
         client = await make_client(tmp_path, resolver=OneFileResolver())
         try:
+            client.app[LIBRARY_KEY].store.grant_asset("local", digest, mounted)
             resp = await client.get(f"/api/assets/{digest}")
             assert resp.status == 200
             assert await resp.read() == payload
@@ -2710,7 +2898,7 @@ def test_library_crud_over_http(tmp_path: Path) -> None:
                     "mediaType": WORKFLOW_MEDIA_TYPE,
                 },
             )
-            assert resp.status == 409
+            assert resp.status == 404
 
             resp = await client.post(
                 "/api/library",
@@ -2747,7 +2935,7 @@ def test_library_crud_over_http(tmp_path: Path) -> None:
             resp = await client.patch(
                 path, json={"scope": "local", "revision": 2, "digest": DIGEST_B}
             )
-            assert resp.status == 409  # bytes not held
+            assert resp.status == 404  # no scoped grant
 
             # DELETE removes the record, never the bytes.
             assert (await client.delete(path + "?scope=other")).status == 404

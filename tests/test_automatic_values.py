@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
+from dinkster_assets import AssetVault, LibraryStore
 from dinkster_assets.model import AssetRef
 from dinkster_assets.value import ASSET_TYPE
 from dinkster_caches import MemoryLRUCache
@@ -28,7 +29,7 @@ from dinkster_schema import (
 )
 from dinkster_schema.body import Formula, Lookup, State, lookup
 from dinkster_schema.model import AssetWidget
-from dinkster_server import STATE_KEY, create_app
+from dinkster_server import STATE_KEY, ServerLibrary, create_app
 from dinkster_server.history import HistoryStore, record_from_job
 from dinkster_values import TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker
@@ -415,6 +416,7 @@ def test_the_lookups_of_a_run_are_called_side_by_side_within_the_limit() -> None
 
 def test_a_queued_run_asks_the_packs_lookup_and_records_its_answer(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
     monkeypatch.setattr(dinkster.compose, "LOOKUP_TIME_LIMIT", 1.0)
@@ -435,11 +437,21 @@ def test_a_queued_run_asks_the_packs_lookup_and_records_its_answer(
                 choice_owners=composition.choice_owners,
                 lookup_dispatch=composer.call_lookup,
                 lookup_marks=composer.lookup_marks,
+                library=ServerLibrary(
+                    AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+                ),
             )
             async with TestClient(TestServer(app)) as client:
                 rate = "dev.automatic.lookup_rate"
                 video_rate = "dev.automatic.video_rate"
-                clip = {**VIDEO, "name": "clip_25fps.mp4"}
+                uploaded = await client.post("/api/assets", data=b"video lookup input")
+                assert uploaded.status == 201, await uploaded.text()
+                clip = {
+                    **VIDEO,
+                    "digest": (await uploaded.json())["digest"],
+                    "name": "clip_25fps.mp4",
+                    "size": len(b"video lookup input"),
+                }
                 graph = Graph(
                     {
                         "answered": GraphNode(rate, {"rate": 100.0, "delay": 0.0}),

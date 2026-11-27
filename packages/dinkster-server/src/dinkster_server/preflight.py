@@ -45,7 +45,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.model import LocalAssetResolver, NamedAssetResolver, model_ref_is_hidden
 from dinkster_assets.vault import AssetPublicationError
-from dinkster_graph import Graph, Link, RegionNode, TypedLiteral
+from dinkster_graph import Graph, Link, RegionNode, TypedLiteral, elaborate_graph
 from dinkster_schema import AssetWidget, NodeSchema, WidgetRepresentations
 from dinkster_values import TypeRegistry
 from dinkster_values.builtin_types import CORE_STRING, FILE_3D_TYPE
@@ -63,19 +63,26 @@ __all__ = [
 
 
 def bind_model_names(
-    graph: Graph, schemas: Mapping[str, NodeSchema], library: ServerLibrary | None
+    graph: Graph,
+    schemas: Mapping[str, NodeSchema],
+    library: ServerLibrary | None,
+    *,
+    allow_local: bool = True,
 ) -> tuple[Graph, list[dict[str, object]]]:
-    """Resolve filename-only model inputs without manufacturing content identity."""
+    """Resolve local filename inputs only when allowed, without inventing a digest."""
     resolver = library.resolver if library else None
     missing: list[dict[str, object]] = []
     nodes = dict(graph.nodes)
+    effective, _ = elaborate_graph(graph, schemas)
     for node_id, node in graph.nodes.items():
         if isinstance(node, RegionNode):
-            body, nested_missing = bind_model_names(node.body, schemas, library)
+            body, nested_missing = bind_model_names(
+                node.body, schemas, library, allow_local=allow_local
+            )
             nodes[node_id] = replace(node, body=body)
             missing.extend(nested_missing)
             continue
-        schema = schemas.get(node.node_type)
+        schema = effective.get(node_id)
         if schema is None:
             continue
         inputs = dict(node.inputs)
@@ -93,7 +100,7 @@ def bind_model_names(
             ) or file3d_union
             if file3d and spec.id not in inputs and spec.required and spec.default is None:
                 continue
-            raw = inputs.get(spec.id, spec.default if file3d else None)
+            raw = inputs.get(spec.id, spec.default)
             value = raw.value if isinstance(raw, TypedLiteral) else raw
             if file3d and (value is None or isinstance(value, str) and value in {"", "none"}):
                 inputs[spec.id] = TypedLiteral(FILE_3D_TYPE, None)
@@ -154,7 +161,7 @@ def bind_model_names(
                     and isinstance(resolver, LocalAssetResolver)
                     else AssetRef.from_wire(wire, resolver)
                 )
-                load_file3d(source)
+                load_file3d(source, resources=None if allow_local else {})
                 continue
             if (
                 not isinstance(value, str)
@@ -173,18 +180,21 @@ def bind_model_names(
                 continue
             ref = (
                 resolver.bind_name(value, kind)
-                if not selection and isinstance(resolver, NamedAssetResolver)
+                if allow_local and not selection and isinstance(resolver, NamedAssetResolver)
                 else None
             )
             if ref is None:
                 hidden = (
-                    library is not None
+                    allow_local
+                    and library is not None
                     and library.hidden_model_name is not None
                     and library.hidden_model_name(value, kind)
                 )
                 disabled = (
                     library.disabled_model_name_locations(value, kind)
-                    if library is not None and library.disabled_model_name_locations is not None
+                    if allow_local
+                    and library is not None
+                    and library.disabled_model_name_locations is not None
                     else ()
                 )
                 missing.append(
@@ -197,6 +207,7 @@ def bind_model_names(
                             list(library.model_sources_for_name(value, kind))
                             if not disabled
                             and not hidden
+                            and allow_local
                             and library is not None
                             and library.model_sources_for_name is not None
                             else []
@@ -249,21 +260,33 @@ def bind_model_names(
     return Graph(nodes), missing
 
 
-def graph_asset_names(graph: Graph) -> dict[str, str]:
+def graph_asset_names(
+    graph: Graph, schemas: Mapping[str, NodeSchema] | None = None, *, allow_local: bool = True
+) -> dict[str, str]:
     """Every asset identity a graph references, with a display name:
     digest -> name. Scans literal inputs at every nesting level (region
-    inputs and bodies included); an asset literal is a mapping carrying a
-    canonical digest, matching the ``dinkster.asset`` wire shape."""
+    inputs and bodies included), including omitted schema defaults. An asset
+    literal carries a canonical digest. Local bindings are refused when
+    ``allow_local`` is false, including inside other asset descriptors."""
     found: dict[str, str] = {}
-    _scan_graph(graph, found)
+    _scan_graph(graph, found, allow_local, schemas or {})
     return found
 
 
-def _scan_graph(graph: Graph, found: dict[str, str]) -> None:
-    for node in graph.nodes.values():
-        _scan_inputs(node.inputs, found)
+def _scan_graph(
+    graph: Graph, found: dict[str, str], allow_local: bool, schemas: Mapping[str, NodeSchema]
+) -> None:
+    effective, _ = elaborate_graph(graph, schemas)
+    for node_id, node in graph.nodes.items():
+        _scan_inputs(node.inputs, found, allow_local)
         if isinstance(node, RegionNode):
-            _scan_graph(node.body, found)
+            _scan_graph(node.body, found, allow_local, schemas)
+        elif (schema := effective.get(node_id)) is not None:
+            _scan_inputs(
+                {spec.id: spec.default for spec in schema.inputs if spec.id not in node.inputs},
+                found,
+                allow_local,
+            )
 
 
 def graph_node_types(graph: Graph) -> set[str]:
@@ -317,7 +340,9 @@ def graph_provider_selections(graph: Graph) -> tuple[set[tuple[str, str]], set[s
     return selected, linked
 
 
-def _scan_inputs(inputs: Mapping[str, Link | object], found: dict[str, str]) -> None:
+def _scan_inputs(
+    inputs: Mapping[str, Link | object], found: dict[str, str], allow_local: bool
+) -> None:
     for value in inputs.values():
         if isinstance(value, Link):
             continue
@@ -325,23 +350,26 @@ def _scan_inputs(inputs: Mapping[str, Link | object], found: dict[str, str]) -> 
         # any) lives in its value, so preflight sees through the stamp.
         if isinstance(value, TypedLiteral):
             value = value.value
-        _scan_literal(value, found)
+        _scan_literal(value, found, allow_local)
 
 
-def _scan_literal(value: object, found: dict[str, str]) -> None:
+def _scan_literal(value: object, found: dict[str, str], allow_local: bool) -> None:
     if isinstance(value, Mapping):
         mapping = cast("Mapping[str, object]", value)
+        if not allow_local and (
+            "localBinding" in mapping or mapping.get("verification") == "unverified"
+        ):
+            raise AssetError("unverified local assets cannot be used outside local scope")
         digest = mapping.get("digest")
         if isinstance(digest, str) and is_digest(digest):
             name = mapping.get("name")
             found[digest] = name if isinstance(name, str) and name else digest[:15] + "..."
-        else:
-            for child in mapping.values():
-                _scan_literal(child, found)
+        for child in mapping.values():
+            _scan_literal(child, found, allow_local)
         return
     if isinstance(value, list):
         for element in cast("list[object]", value):
-            _scan_literal(element, found)
+            _scan_literal(element, found, allow_local)
 
 
 def parse_asset_consent(
@@ -383,10 +411,11 @@ def asset_preflight(
     project: str = "default",
     acquired_kinds: set[str] | None = None,
 ) -> list[dict[str, object]]:
-    """Resolve every referenced identity or say exactly why not.
+    """Require scoped authority and live bytes for every referenced identity.
 
     Returns the acquisition plan for identities that are still missing
-    after consented acquisitions - empty means the job may run. Runs in a
+    after consented acquisitions - empty means the job may run. Only a
+    granted parent exposes its dependencies. Runs in a
     worker thread: consented acquisitions may download for a while.
 
     Pack declarations ([[pack.assets]]) join here: when the composed
@@ -396,21 +425,28 @@ def asset_preflight(
     the catalog's pack roots. Every path stays verified and consented.
     ``acquired_kinds`` collects the declared kinds of what was acquired."""
     required = dict(referenced)
-    pending = list(required)
-    while pending:
-        parent = pending.pop()
+    pending = list(sorted(required, reverse=True))
+
+    def include_dependencies(parent: str) -> None:
         dependencies = library.store.get_dependencies(parent)
         if dependencies is None:
-            continue
+            return
         for dependency in dependencies:
             digest = cast(str, dependency["digest"])
             if digest in required:
                 continue
             required[digest] = cast(str, dependency["resourceId"])
             pending.append(digest)
+
     plan: list[dict[str, object]] = []
-    for digest in sorted(required):
-        if library.hidden_model is not None and library.hidden_model(digest, project):
+    while pending:
+        digest = pending.pop()
+        granted = library.store.has_asset_grant(scope, digest)
+        if (
+            (granted or scope == "local")
+            and library.hidden_model is not None
+            and library.hidden_model(digest, project)
+        ):
             plan.append(
                 {
                     "digest": digest,
@@ -425,7 +461,7 @@ def asset_preflight(
             continue
         disabled = (
             library.disabled_model_locations(digest, project)
-            if library.disabled_model_locations is not None
+            if (granted or scope == "local") and library.disabled_model_locations is not None
             else ()
         )
         if disabled:
@@ -447,7 +483,8 @@ def asset_preflight(
                 }
             )
             continue
-        if library.asset_available(digest):
+        if granted and library.asset_available(digest):
+            include_dependencies(digest)
             continue
         name = required[digest]
         declared = library.asset_need(digest)
@@ -478,14 +515,15 @@ def asset_preflight(
                 detail = str(exc)
             else:
                 detail = result.detail
-            if result is not None and result.ok:
+            if result is not None and result.ok and library.store.has_asset_grant(scope, digest):
                 if acquired_kinds is not None and need.kind:
                     acquired_kinds.add(need.kind)
+                include_dependencies(digest)
                 continue
-            plan.append(_plan_entry(library, digest, name, need, "failed", detail, project))
+            plan.append(_plan_entry(library, digest, name, need, "failed", detail, project, scope))
             continue
-        plan.append(_plan_entry(library, digest, name, need, "missing", "", project))
-    return plan
+        plan.append(_plan_entry(library, digest, name, need, "missing", "", project, scope))
+    return sorted(plan, key=lambda entry: str(entry["digest"]))
 
 
 def _plan_entry(
@@ -496,9 +534,12 @@ def _plan_entry(
     status: str,
     detail: str,
     project: str,
+    scope: str,
 ) -> dict[str, object]:
     urls = [source.url for source in need.sources if isinstance(source, RemoteSource)]
-    if library.provenance is not None:
+    if library.provenance is not None and (
+        scope == "local" or library.store.has_asset_grant(scope, digest)
+    ):
         urls.extend(url for url in library.provenance.sources(digest) if url not in urls)
     packaged = sorted(
         {source.pack for source in need.sources if isinstance(source, PackagedSource)}

@@ -89,6 +89,7 @@ def acquire_need(
     timeout: float = DEFAULT_FETCH_TIMEOUT,
     before_publish: Callable[[AssetSource, int], None] | None = None,
     remote_acquire: Callable[[AssetNeed], AcquisitionResult] | None = None,
+    reuse_existing: bool = True,
 ) -> AcquisitionResult:
     """Materialize one need, verified, in cost order.
 
@@ -100,7 +101,10 @@ def acquire_need(
 
     Success from a non-local source records the winning provenance.
     ``before_publish`` observes only a source whose bytes verified; a
-    metadata failure aborts publication rather than trying another source."""
+    metadata failure aborts publication rather than trying another source.
+    Disable ``reuse_existing`` when the destination scope needs independent
+    verified source bytes rather than another scope's locally held content
+    or private provenance leads."""
     if not need.digest:
         return AcquisitionResult(
             need,
@@ -112,7 +116,7 @@ def acquire_need(
             ),
         )
 
-    for local in (vault, resolver):
+    for local in (vault, resolver) if reuse_existing else ():
         if local is None:
             continue
         try:
@@ -145,7 +149,7 @@ def acquire_need(
         return AcquisitionResult(need, "acquired", path=path)
 
     urls = [source.url for source in need.sources if isinstance(source, RemoteSource)]
-    if provenance is not None:
+    if provenance is not None and reuse_existing:
         urls.extend(url for url in provenance.sources(need.digest) if url not in urls)
     if urls:
         if remote_acquire is not None:
@@ -195,6 +199,7 @@ def acquire_need(
             urls,
             vault,
             timeout=timeout,
+            reuse_existing=reuse_existing,
             before_publish=(
                 (lambda url, size: before_publish(RemoteSource(url), size))
                 if before_publish is not None

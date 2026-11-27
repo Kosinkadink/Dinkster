@@ -73,12 +73,47 @@ async def stream_verified(
     completes, never concurrently with it)."""
     handed_off = False
     try:
-        response = web.StreamResponse(headers=headers or {})
+        response_headers = {**(headers or {}), "Accept-Ranges": "bytes"}
+        start, stop = 0, size
+        status = 200
+        range_header = request.headers.get("Range", "")
+        validator = request.headers.get("If-Range")
+        # These responses have no Last-Modified date. Only an exact strong
+        # ETag can establish that an If-Range validator still names these bytes.
+        if (
+            request.method == "GET"
+            and range_header.startswith("bytes=")
+            and "," not in range_header
+            and (
+                validator is None
+                or (not validator.startswith("W/") and validator == response_headers.get("ETag"))
+            )
+        ):
+            try:
+                requested = request.http_range
+                start = requested.start if requested.start is not None else 0
+                if range_header.startswith("bytes=-") and start == 0:
+                    raise ValueError("empty suffix range")
+                if start < 0:
+                    start = max(0, size + start)
+                stop = min(size, requested.stop if requested.stop is not None else size)
+                if start >= stop:
+                    raise ValueError("unsatisfiable range")
+            except ValueError:
+                return web.Response(
+                    status=416,
+                    headers={**response_headers, "Content-Range": f"bytes */{size}"},
+                )
+            status = 206
+            response_headers["Content-Range"] = f"bytes {start}-{stop - 1}/{size}"
+        response = web.StreamResponse(status=status, headers=response_headers)
         response.content_type = "application/octet-stream"
-        response.content_length = size
+        response.content_length = stop - start
+        handle.seek(start)
         await response.prepare(request)
-        while True:
-            read_task = asyncio.ensure_future(asyncio.to_thread(handle.read, CHUNK))
+        remaining = 0 if request.method == "HEAD" else stop - start
+        while remaining:
+            read_task = asyncio.ensure_future(asyncio.to_thread(handle.read, min(CHUNK, remaining)))
             try:
                 chunk = await asyncio.shield(read_task)
             except asyncio.CancelledError:
@@ -88,6 +123,7 @@ async def stream_verified(
             if not chunk:
                 break
             await response.write(chunk)
+            remaining -= len(chunk)
         await response.write_eof()
         return response
     finally:

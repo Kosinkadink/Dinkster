@@ -210,6 +210,9 @@ def test_adoption_round_trip_is_idempotent_and_persistent(
             await client.close()
         with closing(LibraryStore(tmp_path / "library.sqlite")) as reopened:
             assert reopened.get_dependencies(parent_digest) == adopted["dependencies"]
+            grant = reopened.media_grant("local", parent_digest, "asset/file")
+            assert grant is not None and grant.byte_size == len(body)
+            assert reopened.media_grant("other", parent_digest, "asset/file") is None
 
     run_scenario(scenario())
 

@@ -2218,7 +2218,14 @@ def test_values_endpoint_element_traversal() -> None:
 def test_values_endpoint_file3d_manifest_preserves_named_asset_authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from dinkster_assets import AssetRef, AssetVault, digest_bytes, register_file3d_types
+    from dinkster_assets import (
+        AssetRef,
+        AssetVault,
+        LibraryStore,
+        digest_bytes,
+        register_file3d_types,
+    )
+    from dinkster_server import ServerLibrary
 
     vault = AssetVault(tmp_path / "vault")
     monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
@@ -2262,7 +2269,10 @@ def test_values_endpoint_file3d_manifest_preserves_named_asset_authority(
         )
 
     async def scenario() -> None:
-        client = TestClient(TestServer(create_app(factory, schemas)))
+        library = ServerLibrary(vault, LibraryStore(tmp_path / "library"))
+        for ref in refs:
+            library.store.grant_asset("local", ref.digest, ref.local_path())
+        client = TestClient(TestServer(create_app(factory, schemas, library=library)))
         await client.start_server()
         try:
             await finish_job(client, Graph(nodes={"model": GraphNode("test.model", {})}), ["model"])

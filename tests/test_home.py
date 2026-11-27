@@ -1260,15 +1260,18 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
     }
 
     async def scenario() -> None:
+        held = {digest: library / "vault" / digest[7:9] / digest[7:] for digest in sizes}
+        engine_library = ServerLibrary(
+            AssetVault(library / "vault"), LibraryStore(tmp_path / "engine-library.sqlite")
+        )
+        for digest, path in held.items():
+            engine_library.store.grant_asset("local", digest, path)
         engine_app = create_app(
             make_execution_engine,
             SCHEMAS,
-            library=ServerLibrary(
-                AssetVault(library / "vault"), LibraryStore(tmp_path / "engine-library.sqlite")
-            ),
+            library=engine_library,
         )
         add_project_routes(engine_app, library, engine_version="0.0.18")
-        held = {digest: library / "vault" / digest[7:9] / digest[7:] for digest in sizes}
         home_app = create_home_app(Home(installations=frozenset), frontend=None, library=library)
         async with (
             TestClient(TestServer(engine_app)) as engine,

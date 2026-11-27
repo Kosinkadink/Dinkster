@@ -157,6 +157,7 @@ class ModelDownloads:
         before_publish: Callable[[AssetRef, str], None],
         *,
         digest: str | None = None,
+        reuse_existing: bool = True,
         progress: Callable[[str, int], None] | None = None,
         expected_root: Path | None = None,
         expected_credential_revision: str | None = None,
@@ -257,20 +258,21 @@ class ModelDownloads:
             require_target()
 
         destination = SaveTarget(target.id, Path(selected.file).name)
-        with use_asset_folders(self.mounts.project_context(project)):
-            ref = writer.reuse_model(
-                destination,
-                sha256=selected.sha256,
-                size=selected.size,
-                digest=digest,
-                before_publish=publish,
-                progress=checked_progress,
-                search_root=search_root,
-                kind=target.kind,
-                admit_file=admit_file,
-            )
-        if ref is not None:
-            return ref
+        if reuse_existing:
+            with use_asset_folders(self.mounts.project_context(project)):
+                ref = writer.reuse_model(
+                    destination,
+                    sha256=selected.sha256,
+                    size=selected.size,
+                    digest=digest,
+                    before_publish=publish,
+                    progress=checked_progress,
+                    search_root=search_root,
+                    kind=target.kind,
+                    admit_file=admit_file,
+                )
+            if ref is not None:
+                return ref
         require_target()
         with use_asset_folders(self.mounts.project_context(project)):
             ref = selected.download(
@@ -288,6 +290,7 @@ class ModelDownloads:
         need: AssetNeed,
         project: str,
         before_publish: Callable[[AssetRef, str], None],
+        reuse_existing: bool = True,
     ) -> AcquisitionResult:
         table = self.mounts.table
         target = self.target(need.kind, project)
@@ -299,7 +302,12 @@ class ModelDownloads:
             try:
                 selection = select_huggingface_file(source.url, token=self.credentials.token())
                 ref = self.download_selected(
-                    selection, target, project, before_publish, digest=need.digest
+                    selection,
+                    target,
+                    project,
+                    before_publish,
+                    digest=need.digest,
+                    reuse_existing=reuse_existing,
                 )
             except (AssetError, OSError, HTTPException):
                 continue

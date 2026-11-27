@@ -15,12 +15,12 @@ Two layers with a hard boundary between them:
 
 Surface (present only when create_app got a ServerLibrary):
 
-- POST   /api/assets                     upload raw bytes; Content-Type is
+- POST   /api/assets?scope=              upload raw bytes; Content-Type is
                                          recorded nowhere (records carry
                                          mediaType); optional X-Dinkster-Digest
                                          header verified against the bytes;
                                          413 over the limit; -> {"digest"}
-                                         (201 new, 200 already-held)
+                                         (201 new scoped grant, 200 already-granted)
 - POST   /api/assets?scope=&name=        named file import through a granted
                                          project folder; optional project,
                                          mount and relative folder;
@@ -138,7 +138,13 @@ if TYPE_CHECKING:
     from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
-__all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes", "import_file"]
+__all__ = [
+    "LIBRARY_KEY",
+    "ServerLibrary",
+    "add_library_routes",
+    "import_file",
+    "require_asset_read",
+]
 
 DIGEST_HEADER = "X-Dinkster-Digest"
 IMAGE_DOCUMENT_MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
@@ -229,7 +235,7 @@ class ServerLibrary:
     #: Current trusted declarations, kept separate from advisory provenance.
     public_sources_for: Callable[[str], Sequence[PublicAcquisitionSourceV1]] | None = None
     acquire_model: (
-        Callable[[AssetNeed, str, Callable[[AssetRef, str], None]], AcquisitionResult] | None
+        Callable[[AssetNeed, str, Callable[[AssetRef, str], None], bool], AcquisitionResult] | None
     ) = None
     model_destination: Callable[[AssetNeed, str], str | None] | None = None
     model_sources_for_name: Callable[[str, str], Sequence[str]] | None = None
@@ -482,6 +488,7 @@ class ServerLibrary:
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
+ASSET_GRANTS_KEY: web.AppKey[LibraryStore] = web.AppKey("asset_grants")
 
 
 def _json_error(status: int, message: str) -> web.Response:
@@ -589,15 +596,19 @@ async def handle_upload_limits(request: web.Request) -> web.Response:
 async def handle_upload(request: web.Request) -> web.Response:
     """Named project import or anonymous idempotent digest transfer.
 
-    Both verify declared digests. Anonymous uploads deduplicate in the vault;
-    named imports preserve filenames and never overwrite an existing file.
+    Both verify declared digests and grant bytes in the authorized scope.
+    Anonymous uploads deduplicate in the vault; named imports preserve
+    filenames and never overwrite an existing file.
     """
-    if request.query:
+    if set(request.query) - {"scope"}:
         query = _file_upload_query(request, classified=False)
         if isinstance(query, web.Response):
             return query
         scope, _kind, name = query
         return await _ingest_file_upload(request, scope, None, name)
+    if len(request.query.getall("scope", [])) > 1:
+        return _json_error(400, "upload accepts at most one scope")
+    scope = resolve_scope(principal_for(request), "assets:write", request.query.get("scope"))
     library = request.app[LIBRARY_KEY]
     limit = library.upload_limits["generic"] if library.upload_limits is not None else None
     if limit is not None and request.content_length is not None and request.content_length > limit:
@@ -632,13 +643,17 @@ async def handle_upload(request: web.Request) -> web.Response:
 
         def ingest() -> bool:
             try:
-                if library.vault.has(digest):
-                    return False
-                with library.vault.writer(digest) as writer, temporary_path.open("rb") as source:
-                    while chunk := source.read(_MEDIA_UPLOAD_CHUNK_SIZE):
-                        writer.write(chunk)
-                    _path, created = writer.commit_with_result()
-                return created
+                bytes_created = False
+                if not library.vault.has(digest):
+                    with (
+                        library.vault.writer(digest) as writer,
+                        temporary_path.open("rb") as source,
+                    ):
+                        while chunk := source.read(_MEDIA_UPLOAD_CHUNK_SIZE):
+                            writer.write(chunk)
+                        _path, bytes_created = writer.commit_with_result()
+                grant_created = library.store.grant_asset(scope, digest, temporary_path)
+                return bytes_created or grant_created
             finally:
                 temporary_path.unlink(missing_ok=True)
 
@@ -1106,6 +1121,8 @@ async def _ingest_file_upload(
                         )
                     if grant is not None:
                         library.store.grant_media_result(grant, temporary_path)
+                    else:
+                        library.store.grant_asset(scope, ref.digest, temporary_path)
                     library.store.record_asset(
                         scope,
                         ref,
@@ -1127,6 +1144,8 @@ async def _ingest_file_upload(
                 grant_created = False
                 if grant is not None:
                     _stored, grant_created = library.store.grant_media_result(grant, temporary_path)
+                else:
+                    grant_created = library.store.grant_asset(scope, digest, temporary_path)
                 library.store.record_asset(
                     scope,
                     ref,
@@ -1255,6 +1274,7 @@ def acquire_library_asset(
         )
 
     model_acquire = library.acquire_model
+    reuse_existing = library.store.has_asset_grant(scope, need.digest)
     result = acquire_need(
         need,
         library.vault,
@@ -1268,9 +1288,13 @@ def acquire_library_asset(
         ),
         receipts=library.receipts,
         before_publish=prepare,
+        reuse_existing=reuse_existing,
         remote_acquire=(
             lambda remote_need: model_acquire(
-                remote_need, project, lambda ref, url: prepare(RemoteSource(url), ref.size, ref)
+                remote_need,
+                project,
+                lambda ref, url: prepare(RemoteSource(url), ref.size, ref),
+                reuse_existing,
             )
         )
         if model_acquire is not None and need.kind.startswith("model/")
@@ -1342,6 +1366,20 @@ def recover_asset_observations(
                         with open_verified(resource, digest) as source:
                             if os.fstat(source.fileno()).st_size != dependency["byteSize"]:
                                 raise AssetError("saved document resource byte size changed")
+                        classification = classify_media_file(resource)
+                        if classification.kind != "media/image":
+                            raise AssetError("saved document resource is not a raster image")
+                        library.store.grant_media_result(
+                            MediaGrant(
+                                payload["scope"],
+                                digest,
+                                classification.kind,
+                                classification.media_type,
+                                classification.extension,
+                                cast(int, dependency["byteSize"]),
+                            ),
+                            resource,
+                        )
                     library.store.put_dependencies(ref.digest, dependencies)
                 try:
                     classification = classify_media_file(path)
@@ -1363,6 +1401,8 @@ def recover_asset_observations(
                     ),
                     path,
                 )
+            else:
+                library.store.grant_asset(payload["scope"], ref.digest, path)
             library.store.record_asset(
                 payload["scope"],
                 ref,
@@ -1382,7 +1422,7 @@ def recover_asset_observations(
 
 
 async def handle_asset_availability(request: web.Request) -> web.Response:
-    resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
+    scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
     if (
         set(request.query) - {"scope", "digest"}
         or len(request.query.getall("scope", [])) > 1
@@ -1398,7 +1438,9 @@ async def handle_asset_availability(request: web.Request) -> web.Response:
         return [
             {
                 "digest": digest,
-                "status": "available" if library.asset_available(digest) else "missing",
+                "status": "available"
+                if library.store.has_asset_grant(scope, digest) and library.asset_available(digest)
+                else "missing",
             }
             for digest in digests
         ]
@@ -1545,6 +1587,29 @@ async def handle_local_asset_get(request: web.Request) -> web.StreamResponse:
     return await stream_verified(request, handle, size, headers={"Cache-Control": "no-store"})
 
 
+async def require_asset_read(request: web.Request, digest: str, *, scope: str | None = None) -> str:
+    """Require byte authority in a selected resource scope, or the read query's scope.
+
+    A caller passing its resolved resource scope ignores query scope selection,
+    but still requires assets:read and a byte grant in that same resource scope.
+    """
+    if scope is None:
+        if len(request.query.getall("scope", [])) > 1:
+            raise web.HTTPBadRequest(
+                text='{"error": "at most one scope is allowed"}', content_type="application/json"
+            )
+        scope = request.query.get("scope")
+    scope = resolve_scope(principal_for(request), "assets:read", scope)
+    store = request.app.get(ASSET_GRANTS_KEY)
+    if store is None or not await asyncio.to_thread(store.has_asset_grant, scope, digest):
+        raise web.HTTPNotFound(
+            text='{"error": "asset not held here"}',
+            content_type="application/json",
+            headers={"Cache-Control": "no-store"},
+        )
+    return scope
+
+
 async def handle_asset_get(request: web.Request) -> web.StreamResponse:
     """Bytes for a digest, with the immutable-cache contract every other
     digest-addressed endpoint honors. Vault or mount, the body streams
@@ -1554,13 +1619,14 @@ async def handle_asset_get(request: web.Request) -> web.StreamResponse:
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _json_error(400, "malformed digest (expected 'blake3:<64 hex>')")
+    await require_asset_read(request, digest)
     library = request.app[LIBRARY_KEY]
     etag = f'"{digest}"'
     path = await asyncio.to_thread(library.locate, digest)
     if path is None:
         return _json_error(404, "asset not held here")
     if any(tag.value in (digest, "*") for tag in (request.if_none_match or ())):
-        return web.Response(status=304, headers={"ETag": etag})
+        return web.Response(status=304, headers={"ETag": etag, "Vary": "Authorization"})
     try:
         handle, size = await open_verified_sized(path, digest)
     except AssetIntegrityError:
@@ -1581,6 +1647,7 @@ async def handle_asset_get(request: web.Request) -> web.StreamResponse:
         headers={
             "ETag": etag,
             "Cache-Control": "private, max-age=31536000, immutable",
+            "Vary": "Authorization",
         },
     )
 
@@ -1594,13 +1661,20 @@ async def handle_asset_preview(request: web.Request) -> web.Response:
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _json_error(400, "malformed digest (expected 'blake3:<64 hex>')")
+    await require_asset_read(request, digest)
+    path = await asyncio.to_thread(request.app[LIBRARY_KEY].locate, digest)
+    if path is None:
+        return _json_error(404, "asset not held here or has no preview")
     etag = f'"{digest}-preview"'
-    headers = {"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"}
+    headers = {
+        "ETag": etag,
+        "Cache-Control": "private, max-age=31536000, immutable",
+        "Vary": "Authorization",
+    }
     if any(tag.value in (f"{digest}-preview", "*") for tag in (request.if_none_match or ())):
         return web.Response(status=304, headers=headers)
-    path = await asyncio.to_thread(request.app[LIBRARY_KEY].locate, digest)
     try:
-        preview = None if path is None else await asyncio.to_thread(file_preview, path, digest)
+        preview = await asyncio.to_thread(file_preview, path, digest)
     except OSError:
         preview = None
     except ContentMismatch:
@@ -1625,12 +1699,13 @@ async def handle_asset_metadata(request: web.Request) -> web.Response:
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _json_error(400, "malformed digest (expected 'blake3:<64 hex>')")
+    await require_asset_read(request, digest)
     library = request.app[LIBRARY_KEY]
+    path = await asyncio.to_thread(library.locate, digest)
+    if path is None:
+        return _json_error(404, "asset not held here")
     metadata = library.probe_cache.get(digest)
     if metadata is None:
-        path = await asyncio.to_thread(library.locate, digest)
-        if path is None:
-            return _json_error(404, "asset not held here")
 
         def probe_verified() -> dict[str, object]:
             # Facts come from the PROVEN bytes: probing a reopened path
@@ -1672,12 +1747,13 @@ async def handle_asset_metadata(request: web.Request) -> web.Response:
         library.probe_cache[digest] = metadata
     etag = f'"{digest}"'
     if any(tag.value in (digest, "*") for tag in (request.if_none_match or ())):
-        return web.Response(status=304, headers={"ETag": etag})
+        return web.Response(status=304, headers={"ETag": etag, "Vary": "Authorization"})
     return web.json_response(
         {"digest": digest, "metadata": metadata},
         headers={
             "ETag": etag,
             "Cache-Control": "private, max-age=31536000, immutable",
+            "Vary": "Authorization",
         },
     )
 
@@ -1694,6 +1770,7 @@ async def handle_model_output_profile(request: web.Request) -> web.Response:
         return respond_error(400, "digest must be a canonical blake3 asset digest")
     if revision != "1":
         return respond_error(400, "revision must be '1'")
+    await require_asset_read(request, digest)
     library = request.app[LIBRARY_KEY]
     callback = library.model_output_profile
     if callback is None:
@@ -1806,6 +1883,7 @@ async def handle_library_create(request: web.Request) -> web.Response:
     digest = body.get("digest")
     if not isinstance(digest, str) or not is_digest(digest):
         return _json_error(400, "digest must be 'blake3:<64 hex>'")
+    await require_asset_read(request, digest, scope=scope)
     if not await asyncio.to_thread(library.vault.has, digest):
         # Membership is scoped but presence is not fabricated: a record
         # must point at bytes this instance actually holds - upload first.
@@ -1914,6 +1992,7 @@ async def handle_library_update(request: web.Request) -> web.Response:
     if digest is not None:
         if not isinstance(digest, str) or not is_digest(digest):
             return _json_error(400, "digest must be 'blake3:<64 hex>'")
+        await require_asset_read(request, digest, scope=scope)
         if not await asyncio.to_thread(library.vault.has, digest):
             return _json_error(409, "digest not held here: upload the bytes first")
     name = body.get("name")
@@ -1936,8 +2015,17 @@ async def handle_library_update(request: web.Request) -> web.Response:
             and await asyncio.to_thread(library.store.get_dependencies, target_digest) is None
         ):
             return _json_error(409, "image document must be adopted before it enters the library")
-    from .projects import validate_project, workflow_project, workflow_record_wire
+    from .projects import PROJECTS_KEY, validate_project, workflow_project, workflow_record_wire
 
+    if (
+        current is not None
+        and PROJECTS_KEY in request.app
+        and (media_type if media_type is not None else current.media_type)
+        == "application/x-dinkster-workflow+json"
+    ):
+        await require_asset_read(
+            request, digest if digest is not None else current.digest, scope=scope
+        )
     project = (
         await workflow_project(
             request, body | {"scope": scope}, record_id=request.match_info["record_id"]
@@ -2106,6 +2194,7 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
             (library.vault, *library.preview_vaults),
         )
     app[LIBRARY_KEY] = library
+    app[ASSET_GRANTS_KEY] = library.store
     app[POLICY_KEY] = {}
     app[POLICY_WAKE_KEY] = asyncio.Event()
     app.cleanup_ctx.append(cleanup_policy)
