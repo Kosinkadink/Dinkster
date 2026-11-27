@@ -22,6 +22,7 @@ from typing import cast
 
 from dinkster_assets import AssetError, AssetVault, resolver_from_env
 from dinkster_assets.declared import VAULT_ENV, use_produced_output_job
+from dinkster_assets.privacy import check_secret_data
 from dinkster_memory import FullReleaseConsumer, Shedder
 from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
@@ -1073,6 +1074,9 @@ class InProcessWorker:
         raw: object,
         media_inputs: Mapping[str, Value],
     ) -> InvocationResult:
+        # Check before wrapping can fingerprint or encode a credential-bearing return.
+        check_secret_data(raw)
+
         def contract_error(message: str) -> InvocationResult:
             return InvocationResult(
                 error=NodeError(

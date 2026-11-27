@@ -272,6 +272,52 @@ def test_secret_names_cannot_be_wired_or_executed_without_a_trusted_resolver() -
     run_scenario(scenario())
 
 
+def test_private_node_returns_refuse_literal_secrets_before_wrapping() -> None:
+    from dinkster_assets.privacy import protect_secret_outputs
+
+    class PrivateReturn(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.private_return",
+                body=(
+                    Input("text", TypeExpr.concrete(CORE_STRING)),
+                    Output("text", TypeExpr.concrete(CORE_STRING)),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, text: str) -> Mapping[str, object]:
+            return cls.outputs(text=text)
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        worker = InProcessWorker(build_node_types((PrivateReturn,)), registry)
+        secret = "synthetic-private-return-credential"
+        for text in ("safe response", f"prefix {secret} suffix"):
+            invocation = Invocation(
+                invocation_id="private-return",
+                node_id="consumer",
+                node_type=PrivateReturn.schema().node_type,
+                inputs={"text": registry.wrap(CORE_STRING, text)},
+                effective_schema=PrivateReturn.schema(),
+            )
+            with protect_secret_outputs((secret,)):
+                result = await worker.invoke(invocation)
+            if secret in text:
+                assert result.outputs is None
+                assert result.error is not None
+                assert result.error.message == "Secret-bearing content cannot be saved"
+                assert not result.error.traceback
+            else:
+                assert result.error is None
+                assert result.outputs is not None
+                assert result.outputs["text"].resolve() == text
+
+    run_scenario(scenario())
+
+
 def test_async_lazy_hooks_await_in_pack_and_execution_contexts() -> None:
     pack_active = False
 
