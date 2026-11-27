@@ -805,8 +805,9 @@ class TestDetection:
 )
 class TestLiveJail:
     def test_refused_https_origins_are_reported_once_per_run(self, tmp_path: Path) -> None:
-        from dinkster.compose import PackSpec, ServingComposer
         from dinkster_engine import ExecutionError
+
+        from dinkster.compose import PackSpec, ServingComposer
 
         pack = tmp_path / "network-probe"
         pack.mkdir()
@@ -850,16 +851,21 @@ class TestLiveJail:
                     with pytest.raises(ExecutionError) as refused:
                         await engine.run(graph, ["probe"])
                     error = refused.value.error
-                    reports = [hint for hint in error.hints if hint.code == "sandbox-network-denied"]
+                    reports = [
+                        hint for hint in error.hints if hint.code == "sandbox-network-denied"
+                    ]
                     assert len(reports) == 2, error
                     for origin in (
                         "https://downloads.example.test",
                         "https://mirror.example.test",
                     ):
-                        assert sum(
-                            "networkprobe" in hint.message and origin in hint.message
-                            for hint in reports
-                        ) == 1, error
+                        assert (
+                            sum(
+                                "networkprobe" in hint.message and origin in hint.message
+                                for hint in reports
+                            )
+                            == 1
+                        ), error
             finally:
                 await composer.close()
 
