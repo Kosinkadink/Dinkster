@@ -1496,7 +1496,11 @@ class BoundarySession:
         return tuple(invocation.node_id for invocation in self._network_invocations.values())
 
     def report_network_denied(
-        self, origin: str, *, candidates: tuple[str, ...] | None = None
+        self,
+        origin: str,
+        *,
+        candidates: tuple[str, ...] | None = None,
+        packs: tuple[str, ...] | None = None,
     ) -> None:
         nodes = candidates if candidates is not None else self.active_network_nodes
         for invocation_id in tuple(self._network_invocations):
@@ -1509,6 +1513,7 @@ class BoundarySession:
                             "pack": self.pack,
                             "origin": origin,
                             "nodeIds": nodes,
+                            "candidatePacks": packs or (self.pack,),
                         },
                     )
                 )
@@ -2255,6 +2260,9 @@ class BoundarySession:
                     if future is not None and not future.done():
                         future.set_result((header, blobs))
                 elif kind == "invocationEvent":
+                    # Only the host's egress endpoint can attest a policy refusal.
+                    if header.get("name") == "sandbox-network-denied":
+                        continue
                     invocation_id = str(header.get("invocationId"))
                     if self._resumable:
                         key = InvocationKey.from_header(header)

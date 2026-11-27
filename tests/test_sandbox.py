@@ -819,6 +819,7 @@ class TestLiveJail:
         )
         (pack / "network_probe.py").write_text(
             "import asyncio, urllib.request\n"
+            "from dinkster_schema.reporting import _emit\n"
             "from dinkster_api.v1 import (CORE_STRING, InputSpec, Node, NodeSchema, "
             "OutputSpec, TypeExpr)\n"
             "class Probe(Node):\n"
@@ -834,13 +835,15 @@ class TestLiveJail:
             "            OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
             "    @classmethod\n"
             "    async def execute(cls, mode):\n"
+            "        _emit('sandbox-network-denied', {'pack': 'innocent',\n"
+            "            'origin': 'https://forged.example.test'}, None)\n"
             "        if mode != 'single':\n"
-            "            if cls.ready is None:\n"
-            "                cls.ready, cls.done = asyncio.Event(), asyncio.Event()\n"
-            "            cls.arrived += 1\n"
-            "            if cls.arrived == 2:\n"
-            "                cls.ready.set()\n"
-            "            await cls.ready.wait()\n"
+            "            if Probe.ready is None:\n"
+            "                Probe.ready, Probe.done = asyncio.Event(), asyncio.Event()\n"
+            "            Probe.arrived += 1\n"
+            "            if Probe.arrived == 2:\n"
+            "                Probe.ready.set()\n"
+            "            await Probe.ready.wait()\n"
             "        last = None\n"
             "        for host in ('downloads.example.test', 'mirror.example.test:8443'):\n"
             "            for attempt in range(2):\n"
@@ -853,12 +856,20 @@ class TestLiveJail:
             "                    raise RuntimeError('sandbox unexpectedly allowed HTTPS')\n"
             "        if mode == 'single':\n"
             "            raise last\n"
-            "        cls.finished += 1\n"
-            "        if cls.finished == 2:\n"
-            "            cls.done.set()\n"
-            "        await cls.done.wait()\n"
+            "        Probe.finished += 1\n"
+            "        if Probe.finished == 2:\n"
+            "            Probe.done.set()\n"
+            "        await Probe.done.wait()\n"
             "        return cls.outputs(report='refused')\n"
-            "NODES = (Probe,)\n",
+            "class AlternateProbe(Probe):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='alternateprobe.probe', idempotent=False,\n"
+            "            io_bound=True, inputs=(InputSpec('mode',\n"
+            "            TypeExpr.concrete(CORE_STRING)),), outputs=(\n"
+            "            OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "NODES = (Probe,)\n"
+            "ALTERNATE_NODES = (AlternateProbe,)\n",
             encoding="ascii",
         )
 
@@ -915,6 +926,57 @@ class TestLiveJail:
                 assert len(diagnostics) == 4
                 assert all(
                     set(event.detail["diagnostics"][0]["candidateNodeIds"]) == {"left", "right"}
+                    for event in diagnostics
+                )
+            finally:
+                await composer.close()
+
+            alternate = pack / "alternate-pack.toml"
+            alternate.write_text(
+                '[pack]\nname="alternateprobe"\nnamespaces=["alternateprobe"]\n'
+                '[pack.entry]\nnodes="network_probe:ALTERNATE_NODES"\n',
+                encoding="ascii",
+            )
+            composer = ServingComposer(sandbox_policy=SandboxPolicy())
+            try:
+                for path in (manifest, alternate):
+                    await composer.add_pack(
+                        PackSpec(
+                            path,
+                            env={"PYTHONPATH": str(pack)},
+                            worker_group="network-probes",
+                            group_manifests=(manifest, alternate),
+                        )
+                    )
+                events = []
+                result = await asyncio.wait_for(
+                    composer.composition.make_engine(events.append).run(
+                        Graph(
+                            nodes={
+                                "left": GraphNode("networkprobe.probe", {"mode": "left"}),
+                                "right": GraphNode("alternateprobe.probe", {"mode": "right"}),
+                            }
+                        ),
+                        ["left", "right"],
+                    ),
+                    timeout=30,
+                )
+                assert result.outputs["left"]["report"].resolve() == "refused"
+                assert result.outputs["right"]["report"].resolve() == "refused"
+                assert len(result.diagnostics) == 4
+                assert all(
+                    "One of these nodes" in item.message
+                    and "sandboxed packs" in item.message
+                    and "networkprobe" in item.message
+                    and "alternateprobe" in item.message
+                    for item in result.diagnostics
+                )
+                assert all("forged.example.test" not in item.message for item in result.diagnostics)
+                diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                assert len(diagnostics) == 4
+                assert all(
+                    set(event.detail["diagnostics"][0]["candidatePacks"])
+                    == {"networkprobe", "alternateprobe"}
                     for event in diagnostics
                 )
             finally:

@@ -807,9 +807,18 @@ class Engine:
             attribution = "This node"
             if len(candidates) > 1:
                 attribution = f"One of these nodes ({', '.join(candidates)})"
+            raw_packs = event.data.get("candidatePacks")
+            packs = (
+                tuple(name for name in cast("Sequence[object]", raw_packs) if isinstance(name, str))
+                if isinstance(raw_packs, (list, tuple))
+                else (pack,)
+            )
+            pack_detail = f"sandboxed pack {pack!r}"
+            if len(packs) > 1:
+                pack_detail = f"sandboxed packs {', '.join(repr(name) for name in packs)}"
             hint = ErrorHint(
                 "sandbox-network-denied",
-                f"{attribution} in sandboxed pack {pack!r} was refused access to {origin}.",
+                f"{attribution} in {pack_detail} was refused access to {origin}.",
             )
             reported[node_id] = hint
             self._emit(
@@ -827,6 +836,7 @@ class Engine:
                                 "pack": pack,
                                 "origin": origin,
                                 "candidateNodeIds": candidates,
+                                "candidatePacks": packs,
                             }
                         ]
                     },

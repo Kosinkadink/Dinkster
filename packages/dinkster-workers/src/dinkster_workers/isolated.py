@@ -792,8 +792,9 @@ class GroupIsolatedWorker:
         candidates = tuple(
             node for session in self._sessions for node in session.active_network_nodes
         )
+        packs = tuple(session.pack for session in self._sessions if session.active_network_nodes)
         for session in self._sessions:
-            session.report_network_denied(origin, candidates=candidates)
+            session.report_network_denied(origin, candidates=candidates, packs=packs)
 
     async def start(self) -> None:
         if self._proc is not None:
