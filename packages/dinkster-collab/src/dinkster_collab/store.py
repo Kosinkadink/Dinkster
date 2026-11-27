@@ -42,6 +42,8 @@ class SessionStore:
                 self._conn.execute(
                     "ALTER TABLE sessions ADD COLUMN document_kind TEXT NOT NULL DEFAULT 'workflow'"
                 )
+            if "title" not in columns:
+                self._conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ops (
@@ -109,8 +111,8 @@ class SessionStore:
             self._conn.execute(
                 "INSERT INTO sessions"
                 " (session_id, scope, document_id, document_kind, snapshot,"
-                " snapshot_revision, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                " snapshot_revision, created_at, title)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.session_id,
                     session.scope,
@@ -119,6 +121,7 @@ class SessionStore:
                     json.dumps(session.snapshot),
                     session.snapshot_revision,
                     session.created_at,
+                    session.title,
                 ),
             )
             self._conn.execute(
@@ -131,6 +134,12 @@ class SessionStore:
                     (session.session_id, principal_id, role)
                     for principal_id, role in session.acl.items()
                 ],
+            )
+
+    def rename(self, session_id: str, title: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET title = ? WHERE session_id = ?", (title, session_id)
             )
 
     def replace_acl(self, session_id: str, default_role: str, entries: dict[str, str]) -> None:
@@ -208,6 +217,7 @@ class SessionStore:
                     sessions.snapshot,
                     sessions.snapshot_revision,
                     sessions.created_at,
+                    sessions.title,
                     ops.revision,
                     ops.op_id,
                     ops.actor_id,
@@ -244,6 +254,7 @@ class SessionStore:
                     document_kind=cast(str, row["document_kind"]),
                     snapshot_revision=cast(int, row["snapshot_revision"]),
                     created_at=cast(float, row["created_at"]),
+                    title=cast(str | None, row["title"]),
                 )
                 sessions[session_id] = session
             if row["revision"] is None:
