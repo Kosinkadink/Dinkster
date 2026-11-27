@@ -24,6 +24,7 @@ from dinkster_values import (
     COST_META_KEY,
     RESOURCES_META_KEY,
     ListPayload,
+    RecordPayload,
     TuplePayload,
     Value,
     ValueMeta,
@@ -120,7 +121,7 @@ class DeviceMap:
             if all(m is c for m, c in zip(mapped, children, strict=True)):
                 return value
             payload = value.payload
-            assert isinstance(payload, ListPayload | TuplePayload)
+            assert isinstance(payload, ListPayload | TuplePayload | RecordPayload)
             return Value(
                 type_id=value.type_id,
                 fingerprint=value.fingerprint,

@@ -65,6 +65,7 @@ from dinkster_values import (
     BufferEncoding,
     EncodedPayload,
     ListPayload,
+    RecordPayload,
     TuplePayload,
     TypeRegistry,
     Value,
@@ -76,6 +77,7 @@ from dinkster_values import (
     stable_hash,
     value_children,
 )
+from dinkster_values.records import record_fields
 from dinkster_values.storage import encoded_storage_meta
 
 #: Windows and macOS report shared-memory mappings rounded up to a page
@@ -474,6 +476,8 @@ class ValueCodec:
                 "metaBlob": len(blobs),
                 "elements": element_wires,
             }
+            if isinstance(value.payload, RecordPayload):
+                wire["recordFields"] = [list(field) for field in value.payload.fields]
             blobs.append(default_encode(dict(value.meta.entries)))
             return wire, TransferStat(
                 value.payload.transport, total_size, total_ms, all_declared, all_reused
@@ -625,7 +629,12 @@ class ValueCodec:
             # and their positional or homogeneous parent. Identity crosses
             # verbatim like every fingerprint does (hazard H4).
             positions = parse_tuple_type_id(type_id)
-            if parse_list_type_id(type_id) is None and positions is None:
+            fields = record_fields(wire["recordFields"]) if "recordFields" in wire else None
+            if fields is not None and (
+                parse_list_type_id(type_id) is not None or positions is not None
+            ):
+                raise BoundaryError("record fields on a list or tuple envelope")
+            if parse_list_type_id(type_id) is None and positions is None and fields is None:
                 raise BoundaryError(f"elements on a non-container type id: {type_id!r}")
             child_values: list[Value] = []
             total_size = 0
@@ -643,7 +652,9 @@ class ValueCodec:
             ):
                 raise BoundaryError("tuple child types do not match their envelope positions")
             payload = (
-                ListPayload(tuple(child_values))
+                RecordPayload(fields, tuple(child_values))
+                if fields is not None
+                else ListPayload(tuple(child_values))
                 if positions is None
                 else TuplePayload(tuple(child_values))
             )
@@ -1517,7 +1528,10 @@ def _preflight_value_tree(root: Value, budget: list[int]) -> None:
         children = value_children(value)
         element_type = parse_list_type_id(value.type_id)
         positions = parse_tuple_type_id(value.type_id)
-        if (children is None) != (element_type is None and positions is None):
+        record = isinstance(value.payload, RecordPayload)
+        if record and (element_type is not None or positions is not None):
+            raise BoundaryError("result algebra record has a list or tuple type")
+        if (children is None) != (element_type is None and positions is None and not record):
             raise BoundaryError("result algebra value has a noncanonical container envelope")
         if children is not None:
             if positions is not None:
@@ -1525,8 +1539,9 @@ def _preflight_value_tree(root: Value, budget: list[int]) -> None:
                     child.type_id for child in children
                 ):
                     raise BoundaryError("result algebra tuple child types do not match positions")
-            elif not isinstance(value.payload, ListPayload) or any(
-                element_type != "*" and child.type_id != element_type for child in children
+            elif not record and (
+                not isinstance(value.payload, ListPayload)
+                or any(element_type != "*" and child.type_id != element_type for child in children)
             ):
                 raise BoundaryError("result algebra list child type does not match its envelope")
             pending.extend((child, depth + 1) for child in children)
@@ -1735,16 +1750,31 @@ def _validate_value_descriptor(
     element_type = parse_list_type_id(wire["typeId"])
     positions = parse_tuple_type_id(wire["typeId"])
     if "elements" in wire:
-        if (element_type is None and positions is None) or set(wire) != {
+        fields = None
+        if "recordFields" in wire:
+            try:
+                fields = record_fields(wire["recordFields"])
+            except ValueError as exc:
+                raise BoundaryError(str(exc)) from exc
+            if element_type is not None or positions is not None:
+                raise BoundaryError("record fields on a list or tuple envelope")
+        expected_keys = {
             "typeId",
             "fingerprint",
             "metaBlob",
             "elements",
-        }:
+        }
+        if fields is not None:
+            expected_keys.add("recordFields")
+        if (element_type is None and positions is None and fields is None) or set(
+            wire
+        ) != expected_keys:
             raise BoundaryError("invalid list value descriptor fields")
         elements = wire["elements"]
         if type(elements) is not list or len(elements) > RESULT_ALGEBRA_MAX_COUNT:
             raise BoundaryError("invalid list value descriptor elements")
+        if fields is not None and len(fields) != len(elements):
+            raise BoundaryError("record fields and children must have equal lengths")
         if positions is not None and len(elements) != len(positions):
             raise BoundaryError("tuple value descriptor arity does not match its envelope")
         for index, child in enumerate(elements):

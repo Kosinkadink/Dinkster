@@ -34,6 +34,7 @@ from dinkster_values import (
     SAVED_ARTIFACT_CLAIM_LIMIT,
     EncodedPayload,
     ListPayload,
+    RecordPayload,
     TuplePayload,
     TypeRegistry,
     Value,
@@ -45,6 +46,7 @@ from dinkster_values import (
     value_children,
     value_resource_ids,
 )
+from dinkster_values.records import record_fields
 from dinkster_values.storage import encoded_storage_meta
 
 ENTRY_WIRE_VERSION = 3
@@ -164,6 +166,8 @@ def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, An
     }
     if encoded.data is None:
         wire["elements"] = [_value_to_wire(child, store_blob) for child in encoded.children]
+        if isinstance(encoded.value.payload, RecordPayload):
+            wire["recordFields"] = [list(field) for field in encoded.value.payload.fields]
     else:
         wire["digest"] = store_blob(encoded.data)
         wire["size"] = len(encoded.data)
@@ -302,7 +306,15 @@ async def _value_from_wire(
     elements = out_map.get("elements")
     if elements is not None:
         positions = parse_tuple_type_id(type_id)
-        if parse_list_type_id(type_id) is None and positions is None:
+        try:
+            fields = record_fields(out_map["recordFields"]) if "recordFields" in out_map else None
+        except ValueError:
+            return None
+        if fields is not None and (
+            parse_list_type_id(type_id) is not None or positions is not None
+        ):
+            return None
+        if parse_list_type_id(type_id) is None and positions is None and fields is None:
             return None
         if not isinstance(elements, Sequence) or isinstance(elements, str | bytes):
             return None
@@ -316,11 +328,15 @@ async def _value_from_wire(
             children.append(child)
         if positions is not None and positions != tuple(child.type_id for child in children):
             return None
+        if fields is not None and len(fields) != len(children):
+            return None
         return Value(
             type_id=type_id,
             fingerprint=fingerprint,
             meta=meta,
-            payload=ListPayload(tuple(children))
+            payload=RecordPayload(fields, tuple(children))
+            if fields is not None
+            else ListPayload(tuple(children))
             if positions is None
             else TuplePayload(tuple(children)),
         )

@@ -106,6 +106,13 @@ from dinkster_schema import (
 )
 from dinkster_schema.body import input_group_view
 from dinkster_schema.media import media_diagnostics
+from dinkster_schema.records import (
+    contains_records,
+    project_record_value,
+    record_value_problem,
+    refresh_record_names,
+    wrap_declared_value,
+)
 from dinkster_schema.reporting import LOG_EVENT, EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
@@ -1182,6 +1189,14 @@ class Engine:
             # stamps) differently, so it must never share a cache entry.
             parts.append(value.type_id.encode("utf-8"))
             parts.append(value.fingerprint.encode("utf-8"))
+            spec = schema.input(input_id)
+            if spec is not None and contains_records(spec.type) and not is_absent(value):
+                parts.extend(
+                    (
+                        b"record-field-binding",
+                        project_record_value(spec.type, value).fingerprint.encode("utf-8"),
+                    )
+                )
             if schema.input_values:
                 # Envelope observers can distinguish metadata even when payload
                 # fingerprints match, including facts on nested list children.
@@ -1207,6 +1222,8 @@ class Engine:
         with its own providers at kwargs time. A plan whose providers this
         registry lacks fails before invocation, mirroring the worker's own
         refusal."""
+        if (problem := record_value_problem(spec.type, value)) is not None:
+            raise ExecutionError(NodeError(node_id, node_type, f"input '{spec.id}': {problem}"))
         if is_absent(value) or spec.type.accepts_concrete(value.type_id):
             return value
         equivalent = plan_type_equivalence(value.type_id, spec.type, self._registry)
@@ -1306,7 +1323,7 @@ class Engine:
                     raise ValueError(
                         f"{node_id}: literal on non-runtime-resolvable input {spec.id}"
                     )
-                resolved[spec.id] = self._registry.wrap(runtime, raw)
+                resolved[spec.id] = wrap_declared_value(spec.type, raw, self._registry)
             resolved[spec.id] = self._fit_color(spec, resolved[spec.id])
         return resolved
 
@@ -1368,7 +1385,7 @@ class Engine:
                             f"{node_id}: default on non-runtime-resolvable input {spec.id}"
                         )
                     inputs[spec.id] = self._fit_color(
-                        spec, self._registry.wrap(runtime, spec.default)
+                        spec, wrap_declared_value(spec.type, spec.default, self._registry)
                     )
                 else:
                     del inputs[spec.id]
@@ -1392,6 +1409,7 @@ class Engine:
             if expression.element is not None:
                 pending.append(expression.element)
             pending.extend(expression.elements)
+            pending.extend(field.type for field in expression.fields)
         for value in values:
             candidates = iter_value_tree(value) if isinstance(value, Value) else (value,)
             for candidate in candidates:
@@ -1473,6 +1491,10 @@ class Engine:
         for out in schema.outputs:
             if out.id not in hit:
                 continue
+            if record_value_problem(out.type, hit[out.id]) is not None:
+                return False
+            if contains_records(out.type):
+                continue
             expected = out.type.runtime_type_id()
             if expected is not None and hit[out.id].type_id != expected:
                 # Blocking can make even a required output absent. The worker
@@ -1496,6 +1518,9 @@ class Engine:
         if schema.selector is not None:
             return CachedResult(outputs)
         rebound = dict(outputs)
+        for output in schema.outputs:
+            if output.id in rebound and contains_records(output.type):
+                rebound[output.id] = refresh_record_names(output.type, rebound[output.id])
         for output_id, value in outputs.items():
             if is_absent(value) and not value.meta.get("absent.forwarded", False):
                 current = make_absent_value(
@@ -2828,7 +2853,7 @@ class Engine:
                 runtime = expected.runtime_type_id()
                 if runtime is None:  # pragma: no cover - validation rejects this
                     raise ValueError(f"{label}: literal on non-runtime-resolvable port {input_id}")
-                inputs[input_id] = self._registry.wrap(runtime, raw)
+                inputs[input_id] = wrap_declared_value(expected, raw, self._registry)
 
         interface = region_interface(region, self._schemas_for(run_id))
 

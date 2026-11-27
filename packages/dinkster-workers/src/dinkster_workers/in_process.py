@@ -87,6 +87,12 @@ from dinkster_schema.flatten import described_ids, flatten_body
 from dinkster_schema.media import media_diagnostics
 from dinkster_schema.model import Output
 from dinkster_schema.nest import OutputShapeError, flatten_outputs, nest_inputs
+from dinkster_schema.records import (
+    contains_records,
+    project_record_value,
+    record_value_problem,
+    wrap_declared_value,
+)
 from dinkster_schema.reporting import (
     capture_image_documents,
     capture_preview_artifacts,
@@ -973,6 +979,17 @@ class InProcessWorker:
         if spec is None or is_absent(value):
             return value.resolve()
 
+        if contains_records(spec.type):
+            try:
+                projected = project_record_value(spec.type, value)
+                return (
+                    projected.resolve()
+                    if spec.accepts_storage
+                    else self._registry.input_object(projected.type_id, projected)
+                )
+            except TypeError as exc:
+                raise InputCoercionError(f"input '{input_id}': {exc}") from exc
+
         def input_object(type_id: str, obj: object) -> object:
             if spec.accepts_storage:
                 return obj.resolve() if isinstance(obj, Value) else obj
@@ -1170,7 +1187,11 @@ class InProcessWorker:
                     )
                     continue
                 resolved = resolved_type_expr(out.type, bindings or {}) or out.type
-                if not resolved.accepts_concrete(returned_value.type_id):
+                if (problem := record_value_problem(resolved, returned_value)) is not None:
+                    return contract_error(f"output '{out.id}': {problem}")
+                if not contains_records(resolved) and not resolved.accepts_concrete(
+                    returned_value.type_id
+                ):
                     return contract_error(f"output '{out.id}' rejects {returned_value.type_id}")
                 outputs[out.id] = returned_value
                 continue
@@ -1182,7 +1203,12 @@ class InProcessWorker:
                 )
             try:
                 output = prepare_media_output(raw[out.id], expected, out, schema, media_inputs)
-                outputs[out.id] = self._registry.wrap(expected, output)
+                resolved = resolved_type_expr(out.type, bindings or {}) or out.type
+                outputs[out.id] = (
+                    wrap_declared_value(resolved, output, self._registry)
+                    if contains_records(resolved)
+                    else self._registry.wrap(expected, output)
+                )
             except (TypeError, ValueError) as exc:
                 # Shape violations (a list<T> output returning a non-sequence)
                 # are contract errors at this boundary, not engine crashes.

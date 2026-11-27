@@ -45,6 +45,7 @@ from dinkster_values import (
     RESOURCE_OWNER_META_KEY,
     RESOURCE_PRODUCER_ARM_META_KEY,
     ListPayload,
+    RecordPayload,
     TuplePayload,
     Value,
     ValueMeta,
@@ -109,7 +110,7 @@ def _qualify_producer_arm(value: Value, owner: str, arm: str) -> Value:
         qualified = tuple(_qualify_producer_arm(child, owner, arm) for child in children)
         if qualified != children:
             payload = value.payload
-            assert isinstance(payload, ListPayload | TuplePayload)
+            assert isinstance(payload, ListPayload | TuplePayload | RecordPayload)
             value = replace(value, payload=replace(payload, children=qualified))
     if (
         isinstance(value.meta.get(RESOURCE_ID_META_KEY), str)
