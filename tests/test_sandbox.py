@@ -804,6 +804,67 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    def test_refused_https_origins_are_reported_once_per_run(self, tmp_path: Path) -> None:
+        from dinkster.compose import PackSpec, ServingComposer
+        from dinkster_engine import ExecutionError
+
+        pack = tmp_path / "network-probe"
+        pack.mkdir()
+        manifest = pack / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname="networkprobe"\nnamespaces=["networkprobe"]\n'
+            '[pack.entry]\nnodes="network_probe:NODES"\n',
+            encoding="ascii",
+        )
+        (pack / "network_probe.py").write_text(
+            "import urllib.request\n"
+            "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "class Probe(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='networkprobe.probe', outputs=(\n"
+            "            OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "    @classmethod\n"
+            "    def execute(cls):\n"
+            "        last = None\n"
+            "        for host in ('downloads.example.test', 'mirror.example.test'):\n"
+            "            for attempt in range(2):\n"
+            "                try:\n"
+            "                    urllib.request.urlopen('https://' + host + '/model', timeout=1)\n"
+            "                except OSError as error:\n"
+            "                    last = error\n"
+            "                else:\n"
+            "                    raise RuntimeError('sandbox unexpectedly allowed HTTPS')\n"
+            "        raise last\n"
+            "NODES = (Probe,)\n",
+            encoding="ascii",
+        )
+
+        async def scenario() -> None:
+            composer = ServingComposer(sandbox_policy=SandboxPolicy())
+            try:
+                await composer.add_pack(PackSpec(manifest, env={"PYTHONPATH": str(pack)}))
+                engine = composer.composition.make_engine(lambda _event: None)
+                graph = Graph(nodes={"probe": GraphNode("networkprobe.probe", {})})
+                for _run in range(2):
+                    with pytest.raises(ExecutionError) as refused:
+                        await engine.run(graph, ["probe"])
+                    error = refused.value.error
+                    reports = [hint for hint in error.hints if hint.code == "sandbox-network-denied"]
+                    assert len(reports) == 2, error
+                    for origin in (
+                        "https://downloads.example.test",
+                        "https://mirror.example.test",
+                    ):
+                        assert sum(
+                            "networkprobe" in hint.message and origin in hint.message
+                            for hint in reports
+                        ) == 1, error
+            finally:
+                await composer.close()
+
+        run_scenario(scenario())
+
     def test_helper_published_indexes_resolve_with_only_snapshot_and_folder_grants(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
