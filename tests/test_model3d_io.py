@@ -644,7 +644,10 @@ def test_file3d_sources_and_sidecars_survive_workers_and_persistent_cache(
             if empty:
                 assert value.type_id == FILE_3D_GLTF_TYPE
                 assert value.resolve() is None
-                assert value.meta.entries == {"asset_refs": []}
+                assert value.meta.entries == {
+                    "asset_refs": [],
+                    "producer.pack": "file3d-consumer",
+                }
                 continue
             restored = cast(dict[str, object], value.resolve())
             source = cast(AssetRef, restored["source"])
