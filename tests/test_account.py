@@ -1059,7 +1059,12 @@ async def _browser_account_native_flow(identity, tmp_path):
         assert not session.token_path.exists()
         if not legacy:
             identity["profile_denied"] = False
-            for subject in ("other-account", "account-id"):
+            for subject, invalidation in (
+                ("other-account", "sign-out"),
+                ("account-id", "sign-out"),
+                ("account-id", "expiry"),
+                ("account-id", "replacement"),
+            ):
                 identity["subject"] = subject
                 start = await client.post("/api/account/sign-in", json={})
                 fields = parse_qs(urlsplit((await start.json())["authorizationUrl"]).query)
@@ -1085,6 +1090,22 @@ async def _browser_account_native_flow(identity, tmp_path):
                 assert (await (await client.get("/who")).json())["principal"] == subject
                 assert status["principalRevision"] not in {"local", revision}
                 revision = status["principalRevision"]
+                if invalidation != "sign-out":
+                    state = json.loads(session.state_path.read_text())
+                    invalid = dict(state)
+                    if invalidation == "expiry":
+                        invalid["expires_at"] = time.time() - 1
+                    else:
+                        invalid["session_id"] = "replacement-native-session"
+                    session.state_path.write_text(json.dumps(invalid))
+                    refused = await client.get("/who")
+                    assert refused.status == 401
+                    assert await refused.json() == {"error": "account-session-ended"}
+                    # A later valid native state cannot revive a revoked browser binding.
+                    session.state_path.write_text(json.dumps(state))
+                    status = await (await client.get("/api/account")).json()
+                    assert status["principalRevision"] == "local"
+                    assert (await (await client.get("/who")).json())["principal"] == "local"
                 await client.post("/api/account/sign-out", json={})
 
 
