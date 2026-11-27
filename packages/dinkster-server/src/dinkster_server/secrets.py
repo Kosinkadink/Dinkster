@@ -6,7 +6,6 @@ import asyncio
 import base64
 import json
 import os
-import re
 import sqlite3
 import stat
 import subprocess
@@ -17,10 +16,10 @@ from typing import Literal, cast
 
 from aiohttp import web
 from cryptography.fernet import Fernet, InvalidToken
+from dinkster_schema.model import SECRET_NAME_PATTERN
 
 from .auth import Principal, principal_for
 
-_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}\Z")
 SECRETS_KEY: web.AppKey[SecretStore] = web.AppKey("secrets")
 
 
@@ -43,7 +42,7 @@ class SecretStore:
 
     @staticmethod
     def check_name(name: str) -> None:
-        if _NAME.fullmatch(name) is None:
+        if SECRET_NAME_PATTERN.fullmatch(name) is None:
             raise SecretStoreError(
                 "Secret names use letters, digits, underscores, dots and hyphens"
             )

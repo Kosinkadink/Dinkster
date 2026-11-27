@@ -88,6 +88,7 @@ _COMBO_CHOICE_MAX_ENTRIES = 10_000
 _COMBO_CHOICE_MAX_VALUE_BYTES = 4_096
 _COMBO_CHOICE_MAX_RESPONSE_BYTES = 2_097_152
 _REMOTE_CHOICE_ROUTE_PREFIX = "/api/choices/"
+SECRET_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,127}\Z")
 
 
 def _remote_choice_id(route: str) -> str:
@@ -1429,7 +1430,12 @@ class Input:
     disabled_reason: TextOrFormula = ""
     automatic: Formula | Lookup | None = None
     sent: bool = True
-    """``label`` is presentation only, text or a formula; empty means "derive
+    secret: bool = False
+    """``secret=True`` stores only a credential name, never a credential value.
+    It requires a STRING input with pin=False and no ordinary widget. The
+    execution boundary must resolve the name before calling node code.
+
+    ``label`` is presentation only, text or a formula; empty means "derive
     from the id". Like
     ``tooltip`` and ``widget`` it never
     joins schema signatures or execution identity (hazard H15: presentation
@@ -1495,6 +1501,29 @@ class Input:
     None means "use the default for this input's required-ness"."""
 
     def __post_init__(self) -> None:
+        if type(self.secret) is not bool:
+            raise ValueError(f"input {self.id}: secret must be a bool")
+        if self.secret:
+            if (
+                self.type != TypeExpr.concrete(CORE_STRING)
+                or self.pin
+                or self.widget is not None
+                or not self.sent
+                or self.lazy
+                or self.accepts_list
+                or self.automatic is not None
+                or self.on_edit
+                or self.after_run is not None
+            ):
+                raise ValueError(
+                    f"input {self.id}: a secret requires an unwireable STRING name "
+                    "without a widget, formula, steps or lazy/list behavior"
+                )
+            if self.default is not None and (
+                not isinstance(self.default, str)
+                or SECRET_NAME_PATTERN.fullmatch(self.default) is None
+            ):
+                raise ValueError(f"input {self.id}: secret default must be a credential name")
         if type(self.pin) is not bool:
             raise ValueError(f"input {self.id}: pin must be a bool")
         if not self.pin and self.pin_first:

@@ -1035,6 +1035,10 @@ class InProcessWorker:
     ) -> dict[str, object]:
         """Plain values for execute(), boundary-obliviously (hazard H9): the
         body's tree of values, as ``_build_body_kwargs`` builds it."""
+        if any(spec.secret for spec in invocation.effective_schema.inputs):
+            # Names are document data, not credentials. A worker without a
+            # trusted resolution channel must never call a pack with names.
+            raise InputCoercionError("Secret inputs require a trusted credential resolver")
 
         def unwrap(input_id: str, value: Value) -> object:
             return self._unwrap(invocation, input_id, value, diagnostics, media_inputs)

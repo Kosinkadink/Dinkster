@@ -10,7 +10,7 @@ import pytest
 from dinkster_api.v1 import current_export_snapshot
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
-from dinkster_graph import Graph, GraphNode
+from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
 from dinkster_protocol import (
     Invocation,
     LazyStatusInvocation,
@@ -24,6 +24,8 @@ from dinkster_schema import (
     build_node_types,
     build_schemas,
     report_event,
+    schema_from_wire,
+    schema_to_wire,
 )
 from dinkster_values import (
     CORE_BOOLEAN,
@@ -169,6 +171,69 @@ def test_worker_preserves_combo_list_order_duplicates_and_fingerprint() -> None:
         output = result.outputs["values"]
         assert output.resolve() == ["b", "a", "b"]
         assert output.fingerprint == value.fingerprint
+
+    run_scenario(scenario())
+
+
+def test_secret_names_cannot_be_wired_or_executed_without_a_trusted_resolver() -> None:
+    class CredentialConsumer(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.credential_consumer",
+                body=(
+                    Input("credential", TypeExpr.concrete(CORE_STRING), secret=True, pin=False),
+                    Output("value", TypeExpr.concrete(CORE_BOOLEAN)),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, credential: str) -> Mapping[str, object]:
+            pytest.fail("An unresolved credential name reached pack code")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schema = schema_from_wire(schema_to_wire(CredentialConsumer.schema()))
+        schemas = {schema.node_type: schema, "review.slow": SlowSyncNode.schema()}
+        for invalid in (
+            Link("source", "value"),
+            TypedLiteral(CORE_STRING, "service_key"),
+            "Bearer sensitive value",
+            ["service_key"],
+        ):
+            graph = Graph(
+                nodes={
+                    "source": GraphNode("review.slow"),
+                    "consumer": GraphNode(schema.node_type, {"credential": invalid}),
+                }
+            )
+            diagnostics = validate(graph, schemas, ["consumer"])
+            assert any(
+                d.code == "invalid-secret-name"
+                and d.node_id == "consumer"
+                and d.input_id == "credential"
+                for d in diagnostics
+            )
+        graph = Graph(
+            nodes={"consumer": GraphNode(schema.node_type, {"credential": "service_key"})}
+        )
+        assert not validate(graph, schemas, ["consumer"])
+        worker = InProcessWorker(build_node_types((CredentialConsumer,)), registry)
+        result = await worker.invoke(
+            Invocation(
+                invocation_id="credential",
+                node_id="consumer",
+                node_type=schema.node_type,
+                inputs={"credential": registry.wrap(CORE_STRING, "service_key")},
+                effective_schema=schema,
+            )
+        )
+        assert result.outputs is None
+        assert result.error is not None
+        assert result.error.node_id == "consumer"
+        assert result.error.message == "Secret inputs require a trusted credential resolver"
+        assert "service_key" not in result.error.message
 
     run_scenario(scenario())
 
