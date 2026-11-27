@@ -516,6 +516,7 @@ class BoundarySession:
         # Events for an id with no sink (caller passed none, or the result
         # already landed) are dropped - they are chatter by contract.
         self._event_sinks: dict[str, OnInvocationEvent] = {}
+        self._network_invocations: dict[str, Invocation] = {}
         self._run_controls: dict[str, Invocation] = {}
         self._run_control_requests: set[tuple[str, str]] = set()
         self._run_control_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
@@ -1490,6 +1491,28 @@ class BoundarySession:
             if files:
                 await self._blob_transfer.ensure_peer_holds(files)
 
+    @property
+    def active_network_nodes(self) -> tuple[str, ...]:
+        return tuple(invocation.node_id for invocation in self._network_invocations.values())
+
+    def report_network_denied(
+        self, origin: str, *, candidates: tuple[str, ...] | None = None
+    ) -> None:
+        nodes = candidates if candidates is not None else self.active_network_nodes
+        for invocation_id in tuple(self._network_invocations):
+            sink = self._event_sinks.get(invocation_id)
+            if sink is not None:
+                sink(
+                    InvocationEvent(
+                        "sandbox-network-denied",
+                        {
+                            "pack": self.pack,
+                            "origin": origin,
+                            "nodeIds": nodes,
+                        },
+                    )
+                )
+
     async def invoke(
         self,
         invocation: Invocation,
@@ -1527,6 +1550,7 @@ class BoundarySession:
             self._run_controls[invocation.invocation_id] = invocation
         if on_event is not None:
             self._event_sinks[invocation.invocation_id] = on_event
+        self._network_invocations[invocation.invocation_id] = invocation
         started_at_ns = time.time_ns()
         started = time.perf_counter()
         try:
@@ -1567,6 +1591,7 @@ class BoundarySession:
             await self._cancel_invocation(key)
             raise
         finally:
+            self._network_invocations.pop(invocation.invocation_id, None)
             self._event_sinks.pop(invocation.invocation_id, None)
             self._run_controls.pop(invocation.invocation_id, None)
             control_tasks = [

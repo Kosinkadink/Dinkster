@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -56,6 +56,7 @@ class LaunchSpec:
     python: str
     use_shm: bool
     temporary_directory: Path | None = None
+    on_network_denied: Callable[[str], None] | None = None
 
     def __post_init__(self) -> None:
         if (

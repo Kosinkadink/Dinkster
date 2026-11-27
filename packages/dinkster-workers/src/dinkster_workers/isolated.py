@@ -374,6 +374,7 @@ class IsolatedWorker:
                     pack_root=self._manifest.root,
                     python=self._python,
                     use_shm=self._use_shm,
+                    on_network_denied=self._session.report_network_denied,
                 )
             )
         except BaseException:
@@ -787,6 +788,13 @@ class GroupIsolatedWorker:
                 await asyncio.wait_for(self._proc.wait(), 1.0)
         return self._proc.returncode if self._proc is not None else None
 
+    def _report_network_denied(self, origin: str) -> None:
+        candidates = tuple(
+            node for session in self._sessions for node in session.active_network_nodes
+        )
+        for session in self._sessions:
+            session.report_network_denied(origin, candidates=candidates)
+
     async def start(self) -> None:
         if self._proc is not None:
             raise RuntimeError(f"worker group {self.name!r} already started")
@@ -850,6 +858,7 @@ class GroupIsolatedWorker:
                     pack_root=self._manifests[0].root,
                     python=self._python,
                     use_shm=self._use_shm,
+                    on_network_denied=self._report_network_denied,
                 )
             )
             connected = [listener.connected for listener in self._listeners]
