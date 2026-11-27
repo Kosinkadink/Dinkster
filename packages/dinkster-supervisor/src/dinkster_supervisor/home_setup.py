@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import re
 import shutil
 import socket
 import sys
@@ -15,6 +16,7 @@ from typing import cast
 from uuid import uuid4
 
 from aiohttp import web
+from packaging.version import Version
 
 from .environment_artifacts import discover
 from .environment_hardware import (
@@ -145,6 +147,7 @@ def setup_facts(
         "buildReason": None,
         "engineRelease": None,
         "baseId": None,
+        "buildDetails": None,
         "detectedCards": None,
         "choices": None,
         "gpus": [],
@@ -177,6 +180,25 @@ def setup_facts(
         engineRelease=catalog.channel.engine_release,
         baseId=catalog.channel.base_for(variant),
     )
+    base = catalog.bases[variant]
+    python = base.get("python")
+    torch = next(
+        (
+            cast("str", wheel["version"])
+            for wheel in cast("list[dict[str, object]]", base.get("wheels", []))
+            if wheel["name"] == "torch"
+        ),
+        None,
+    )
+    if python and torch:
+        # PyTorch's CUDA wheel version names its bundled runtime, even on Windows.
+        cuda = re.fullmatch(r"cu(\d+)(\d)", Version(torch).local or "")
+        facts["buildDetails"] = {
+            "python": python,
+            "pytorch": torch,
+            "cuda": f"{cuda[1]}.{cuda[2]}" if cuda else None,
+            "dinkster": catalog.engine["version"],
+        }
     return facts
 
 

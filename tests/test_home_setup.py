@@ -158,6 +158,77 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize(
+    ("torch", "cuda"),
+    [("2.14.1+cu132", "13.2"), ("2.9.1+cu126", "12.6"), ("2.14.1+cpu", None), (None, None)],
+)
+def test_setup_details_follow_the_selected_build_not_the_planning_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, torch: str | None, cuda: str | None
+) -> None:
+    from dinkster_supervisor import environment_hardware
+
+    monkeypatch.setattr(environment_hardware, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(environment_hardware.platform, "machine", lambda: "x86_64")
+    common = {"platform": {"os": "linux", "arch": "x86_64"}, "nvidia": None}
+    catalog = SimpleNamespace(
+        bases={
+            "first": {
+                **common,
+                "python": "3.14.10",
+                "wheels": [{"name": "torch", "version": "2.8.0+cpu"}],
+            },
+            "second": {
+                **common,
+                "python": "3.13.8",
+                "wheels": [{"name": "torch", "version": torch}] if torch else [],
+            },
+        },
+        channel=SimpleNamespace(engine_release="release", base_for=lambda variant: variant),
+        engine={"version": "0.0.19.dev123"},
+    )
+    monkeypatch.setattr(home_setup, "discover", lambda *args: catalog)
+    monkeypatch.setattr(home_setup, "detect_graphics_cards", list)
+    monkeypatch.setattr(home_setup, "library_engine", lambda _: None)
+
+    async def command(root: Path, *arguments: str) -> dict[str, object]:
+        assert "--plan" in arguments and "--yes" not in arguments
+        return {"runtimeDownloadBytes": 123}
+
+    monkeypatch.setattr(home_setup, "environment_command", command)
+
+    async def scenario() -> None:
+        home = Home(installations=frozenset)
+        root = tmp_path / "prospective"
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            first = await client.get(
+                "/supervisor/setup", params={"root": str(root), "variant": "first"}
+            )
+            assert first.status == 200
+            assert (await first.json())["plan"]["buildDetails"] == {
+                "python": "3.14.10",
+                "pytorch": "2.8.0+cpu",
+                "cuda": None,
+                "dinkster": "0.0.19.dev123",
+            }
+            second = await client.get(
+                "/supervisor/setup", params={"root": str(root), "variant": "second"}
+            )
+            assert second.status == 200
+            assert (await second.json())["plan"]["buildDetails"] == (
+                {
+                    "python": "3.13.8",
+                    "pytorch": torch,
+                    "cuda": cuda,
+                    "dinkster": "0.0.19.dev123",
+                }
+                if torch
+                else None
+            )
+        assert not root.exists()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.usefixtures("signed_channels")
 @pytest.mark.parametrize(
     ("cancel", "occupied"),
