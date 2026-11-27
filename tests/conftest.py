@@ -191,6 +191,21 @@ def shared_model_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dic
         "shared-embedding": models / "embeddings",
         "shared-clip-vision": models / "clip_vision",
         "shared-clip": models / "clip",
+        "shared-unet": models / "unet",
+        "shared-audio-encoder": models / "audio_encoders",
+        "shared-background-removal": models / "background_removal",
+        "shared-config": models / "configs",
+        "shared-detection": models / "detection",
+        "shared-diffusers": models / "diffusers",
+        "shared-frame-interpolation": models / "frame_interpolation",
+        "shared-geometry-estimation": models / "geometry_estimation",
+        "shared-gligen": models / "gligen",
+        "shared-latent-upscaler": models / "latent_upscale_models",
+        "shared-optical-flow": models / "optical_flow",
+        "shared-patch": models / "model_patches",
+        "shared-style": models / "style_models",
+        "shared-hypernetwork": models / "hypernetworks",
+        "shared-photomaker": models / "photomaker",
     }
 
 

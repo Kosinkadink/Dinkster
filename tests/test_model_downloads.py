@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from http.client import HTTPMessage
@@ -1762,6 +1763,86 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
     ]
 
 
+def test_model_folders_discover_kinds_aliases_and_exclude_download_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import LocalAssetLibrary, MountTable
+    from dinkster_assets.integrity import digest_file_with_record
+    from dinkster_assets.library import append_write_record
+
+    from dinkster.model_downloads import shared_model_mounts
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    folders = {
+        "audio_encoders": "model/audio-encoder",
+        "background_removal": "model/background-removal",
+        "configs": "model/config",
+        "detection": "model/detection",
+        "diffusers": "model/diffusers",
+        "frame_interpolation": "model/frame-interpolation",
+        "geometry_estimation": "model/geometry-estimation",
+        "gligen": "model/gligen",
+        "latent_upscale_models": "model/latent-upscaler",
+        "optical_flow": "model/optical-flow",
+        "model_patches": "model/patch",
+        "style_models": "model/style",
+        "unet": "model/diffusion",
+        "clip": "model/text-encoder",
+        "custom_model": "model/custom-model",
+    }
+    for folder in folders:
+        directory = root / folder
+        directory.mkdir(parents=True)
+        (directory / f"{folder}.json").write_text(folder)
+        if os.name != "nt":
+            (directory / f"{folder}.json:Zone.Identifier").write_text("download metadata")
+        # A cache from before the exclusion must not resurrect the sidecar.
+        LocalAssetLibrary(directory, ignore=()).scan()
+        if os.name != "nt":
+            sidecar = directory / f"{folder}.json:Zone.Identifier"
+            digest, record = digest_file_with_record(sidecar)
+            metadata = sidecar.stat()
+            append_write_record(
+                directory, sidecar.name, digest, metadata.st_size, metadata.st_mtime_ns, record
+            )
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [{"id": "models", "path": str(root), "mode": "read"}],
+            }
+        )
+    )
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    service = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    for folder, kind in folders.items():
+        name = f"{folder}.json"
+        bound = table.bind_name(name, kind)
+        assert bound is not None
+        with bound.open() as handle:
+            assert handle.read() == folder.encode()
+        assert table.bind_name(f"{name}:Zone.Identifier", kind) is None
+        mount_id = next(mount.id for mount in shared_model_mounts() if mount.path == root / folder)
+        assert table.scan(mount_id) == 1
+        assert [entry.name for entry in table.entries(mount_id)] == [name]
+        assert not table.missing_entries(mount_id)
+        assert [entry.name for entry in table.list_folder(mount_id).entries] == [name]
+    service.refresh_models()
+    added = root / "another_model"
+    added.mkdir()
+    (added / "later.safetensors").write_bytes(b"newly added pack model")
+    assert "models-another-model" in service.refresh_models()
+    bound = table.bind_name("later.safetensors", "model/another-model")
+    assert bound is not None
+    with bound.open() as handle:
+        assert handle.read() == b"newly added pack model"
+
+
 def test_fresh_model_settings_are_shared_without_changing_existing_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1787,6 +1868,21 @@ def test_fresh_model_settings_are_shared_without_changing_existing_folders(
         "upscale_models",
         "embeddings",
         "clip_vision",
+        "unet",
+        "audio_encoders",
+        "background_removal",
+        "configs",
+        "detection",
+        "diffusers",
+        "frame_interpolation",
+        "geometry_estimation",
+        "gligen",
+        "latent_upscale_models",
+        "optical_flow",
+        "model_patches",
+        "style_models",
+        "hypernetworks",
+        "photomaker",
     }
     for project in ("first", "second"):
         table = MountTable()
@@ -1923,6 +2019,21 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
         "embedding",
         "clip-vision",
         "clip",
+        "unet",
+        "audio-encoder",
+        "background-removal",
+        "config",
+        "detection",
+        "diffusers",
+        "frame-interpolation",
+        "geometry-estimation",
+        "gligen",
+        "latent-upscaler",
+        "optical-flow",
+        "patch",
+        "style",
+        "hypernetwork",
+        "photomaker",
     )
     required = tuple(f"required-{category}" for category in categories)
     common = tuple(f"common-{category}" for category in categories)
