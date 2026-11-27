@@ -25,7 +25,7 @@ from dinkster_engine import (
     EventListener,
     ExecutionRuntime,
 )
-from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
 from dinkster_memory import (
     ConsumerItem,
     MemoryGovernor,
@@ -75,6 +75,7 @@ from dinkster_values import (
 )
 from dinkster_values.model import PyObjPayload, Value, ValueMeta
 from dinkster_workers import InProcessWorker
+from dinkster_workers.catalog import CatalogTypes
 from scaffold_nodes import (
     SCAFFOLD_NODES,
     register_scaffold_types,
@@ -809,6 +810,108 @@ def submit_body(graph: Graph, targets: list[str], **overrides: object) -> dict[s
     }
     body.update(overrides)
     return body
+
+
+@pytest.mark.parametrize("cold", [False, True])
+def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None:
+    from dinkster.lazy_worker import CatalogTypeRegistry
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        atoms = ("compat.value", "native.value", "other.value")
+        pairs = {"compat.value": "native.value", "native.value": "compat.value"}
+        if cold:
+            authority = CatalogTypeRegistry(
+                registry,
+                (
+                    CatalogTypes.from_wire(
+                        {
+                            "typeIds": list(atoms),
+                            "equivalences": pairs,
+                            "assetDecoders": ["native.value", "list<native.value>"],
+                            "batchMerges": ["native.value"],
+                        }
+                    ),
+                ),
+            )
+        else:
+            for type_id in atoms:
+                registry.register(type_id)
+            registry.register_type_equivalence(
+                "compat.value", "native.value", provider_id="test.value@1"
+            )
+            for target in ("native.value", "list<native.value>"):
+                registry.register_asset_decoder(
+                    target, provider_id="test.decode@1", decode=lambda ref: ref
+                )
+            registry.register_batch_merge("native.value", provider_id="test.merge@1", merge=list)
+            authority = registry
+
+        runtime = replace(make_engine().pin_execution(), known_types=authority)
+
+        def factory(on_event: EventListener) -> Engine:
+            return Engine(
+                schemas=SCHEMAS,
+                registry=registry,
+                worker=runtime.worker,
+                cache=MemoryLRUCache(),
+                pin_execution=lambda: runtime,
+                on_event=on_event,
+            )
+
+        async with TestClient(TestServer(create_app(factory, SCHEMAS))) as client:
+            response = await client.get("/api/nodes")
+            assert response.status == 200
+            facts = (await response.json())["dinkster"]["typeAcceptance"]
+            assert facts["atoms"]["native.value"] == ["compat.value", "native.value"]
+            assert facts["atoms"]["compat.value"] == ["compat.value", "native.value"]
+            assert facts["atoms"]["other.value"] == ["other.value"]
+            assert facts["assetDecoders"] == ["list<native.value>", "native.value"]
+            assert facts["batchMerges"] == ["native.value"]
+            graph = Graph(
+                {
+                    "source": GraphNode("source", {}),
+                    "sink": GraphNode("sink", {"value": Link("source", "value")}),
+                }
+            )
+            for source, expected, accepted in (
+                (TypeExpr.concrete("native.value"), TypeExpr.concrete("native.value"), True),
+                (TypeExpr.concrete("compat.value"), TypeExpr.concrete("native.value"), True),
+                (TypeExpr.concrete("other.value"), TypeExpr.concrete("native.value"), False),
+                (
+                    TypeExpr.list_of(TypeExpr.concrete("compat.value")),
+                    TypeExpr.list_of(TypeExpr.concrete("native.value")),
+                    False,
+                ),
+                (
+                    TypeExpr.asset_of(TypeExpr.concrete("native.value")),
+                    TypeExpr.concrete("native.value"),
+                    True,
+                ),
+                (
+                    TypeExpr.list_of(TypeExpr.asset_of(TypeExpr.concrete("native.value"))),
+                    TypeExpr.concrete("native.value"),
+                    True,
+                ),
+                (
+                    TypeExpr.asset_of(TypeExpr.concrete("other.value")),
+                    TypeExpr.concrete("other.value"),
+                    False,
+                ),
+            ):
+                schemas = {
+                    "source": NodeSchema("source", outputs=(OutputSpec("value", source),)),
+                    "sink": NodeSchema("sink", inputs=(InputSpec("value", expected),)),
+                }
+                problems = validate(graph, schemas, ["sink"], known_types=authority)
+                assert (not problems) is accepted, (source, problems)
+
+            runtime = replace(runtime, known_types=frozenset(authority.type_ids()))
+            response = await client.get("/api/nodes")
+            assert "typeAcceptance" not in (await response.json())["dinkster"]
+
+    run_scenario(scenario())
 
 
 def test_host_node_unavailability_is_visible_and_refused_before_queueing() -> None:

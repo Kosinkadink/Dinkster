@@ -31,6 +31,22 @@ class CatalogTypeRegistry:
             or any(type_id in item.type_ids for item in self._declarations)
         )
 
+    def type_ids(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                set(self._registry.type_ids()).union(*(item.atoms for item in self._declarations))
+            )
+        )
+
+    def asset_decoder_targets(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                set(self._registry.asset_decoder_targets()).union(
+                    *(item.asset_decoders for item in self._declarations)
+                )
+            )
+        )
+
     def equivalent_type(self, type_id: str) -> str | None:
         return self._registry.equivalent_type(type_id) or next(
             (other for item in self._declarations if (other := item.equivalences.get(type_id))),
