@@ -760,13 +760,13 @@ class ValueCodec:
                     raise ValueError(mismatch)
                 if spec.validate_encoded_buffer is not None:
                     if isinstance(validation_data, memoryview):
-                        spec.validate_encoded_buffer(validation_data, meta.entries)
+                        spec.validate_encoded_buffer(validation_data, meta.codec_entries)
                     else:
                         with memoryview(validation_data) as inline_view:
-                            spec.validate_encoded_buffer(inline_view, meta.entries)
+                            spec.validate_encoded_buffer(inline_view, meta.codec_entries)
                 else:
                     assert spec.validate_encoded is not None
-                    spec.validate_encoded(bytes(validation_data), meta.entries)
+                    spec.validate_encoded(bytes(validation_data), meta.codec_entries)
             except Exception as exc:
                 if validation_view is not None:
                     validation_view.release()

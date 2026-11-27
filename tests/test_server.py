@@ -73,7 +73,6 @@ from dinkster_values import (
     register_core_types,
     register_curve_type,
 )
-from dinkster_values.model import PyObjPayload, Value, ValueMeta
 from dinkster_workers import InProcessWorker
 from scaffold_nodes import (
     SCAFFOLD_NODES,
@@ -2015,13 +2014,21 @@ class CurveOutput(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.curve_output",
-            body=(Output("curve", TypeExpr.concrete(CURVE_TYPE)),),
+            body=(
+                Input("oversized", TypeExpr.concrete("BOOLEAN"), default=False),
+                Output("curve", TypeExpr.concrete(CURVE_TYPE)),
+            ),
         )
 
     @classmethod
-    def execute(cls) -> Mapping[str, object]:
+    def execute(cls, *, oversized: bool = False) -> Mapping[str, object]:
         return cls.outputs(
-            curve=Curve(((0.0, 0.125), (1.25, 0.875), (4.0, 0.25)), "monotone_cubic")
+            curve=Curve(
+                tuple((float(index), float(index)) for index in range(4097))
+                if oversized
+                else ((0.0, 0.125), (1.25, 0.875), (4.0, 0.25)),
+                "monotone_cubic",
+            )
         )
 
 
@@ -2330,17 +2337,15 @@ def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -
                 ],
             }
 
-            job = cast(TestServer, client.server).app[STATE_KEY].queue.get("c1", "j1")
-            assert job is not None and job.result is not None
-            outputs = cast(dict[str, dict[str, Value]], job.result.outputs)
-            oversized = {"points": [{"position": index, "value": index} for index in range(4097)]}
-            outputs["curve"]["curve"] = Value(
-                type_id=CURVE_TYPE,
-                fingerprint="oversized-curve",
-                meta=ValueMeta({"pointCount": 4097, "start": 0.0, "end": 4096.0}),
-                payload=PyObjPayload(oversized),
+            await finish_job(
+                client,
+                Graph(nodes={"curve": GraphNode("test.curve_output", {"oversized": True})}),
+                ["curve"],
+                job_id="oversized",
             )
-            response = await client.get(url + "&rendition=curve-points")
+            response = await client.get(
+                values_url("curve", output_id="curve", job_id="oversized", rendition="curve-points")
+            )
             refusal = await response.json()
             assert (response.status, refusal["available"], refusal["reason"]) == (
                 404,
