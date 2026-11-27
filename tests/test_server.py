@@ -819,7 +819,7 @@ def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
-        atoms = ("compat.value", "native.value", "other.value")
+        atoms = ("compat.value", "native.value", "other.value", "incoming.value")
         pairs = {"compat.value": "native.value", "native.value": "compat.value"}
         if cold:
             authority = CatalogTypeRegistry(
@@ -831,6 +831,17 @@ def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None
                             "equivalences": pairs,
                             "assetDecoders": ["native.value", "list<native.value>"],
                             "batchMerges": ["native.value"],
+                        }
+                    ),
+                    CatalogTypes.from_wire(
+                        {
+                            "typeIds": ["incoming.value", "native.value"],
+                            "equivalences": {
+                                "incoming.value": "native.value",
+                                "native.value": "incoming.value",
+                            },
+                            "assetDecoders": [],
+                            "batchMerges": [],
                         }
                     ),
                 ),
@@ -864,9 +875,14 @@ def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None
             response = await client.get("/api/nodes")
             assert response.status == 200
             facts = (await response.json())["dinkster"]["typeAcceptance"]
-            assert facts["atoms"]["native.value"] == ["compat.value", "native.value"]
+            assert facts["atoms"]["native.value"] == (
+                ["compat.value", "incoming.value", "native.value"]
+                if cold
+                else ["compat.value", "native.value"]
+            )
             assert facts["atoms"]["compat.value"] == ["compat.value", "native.value"]
             assert facts["atoms"]["other.value"] == ["other.value"]
+            assert facts["atoms"]["incoming.value"] == ["incoming.value"]
             assert facts["assetDecoders"] == ["list<native.value>", "native.value"]
             assert facts["batchMerges"] == ["native.value"]
             graph = Graph(
@@ -878,6 +894,8 @@ def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None
             for source, expected, accepted in (
                 (TypeExpr.concrete("native.value"), TypeExpr.concrete("native.value"), True),
                 (TypeExpr.concrete("compat.value"), TypeExpr.concrete("native.value"), True),
+                (TypeExpr.concrete("incoming.value"), TypeExpr.concrete("native.value"), cold),
+                (TypeExpr.concrete("native.value"), TypeExpr.concrete("incoming.value"), False),
                 (TypeExpr.concrete("other.value"), TypeExpr.concrete("native.value"), False),
                 (
                     TypeExpr.list_of(TypeExpr.concrete("compat.value")),

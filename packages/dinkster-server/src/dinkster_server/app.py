@@ -2613,20 +2613,21 @@ def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str,
         # Equivalence is pairwise at the runtime atom, not recursively lifted
         # through lists or other wrappers. Exact structural acceptance still
         # comes from each port's TypeExpr; asset plans use the provider facts.
-        accepted: dict[str, list[str]] = {}
-        for type_id in sorted(authority.type_ids()):
-            expected = TypeExpr.concrete(type_id)
-            candidates = {type_id}
-            if counterpart := authority.equivalent_type(type_id):
-                candidates.add(counterpart)
-            accepted[type_id] = sorted(
-                source
-                for source in candidates
-                if expected.accepts_concrete(source)
-                or plan_type_equivalence(source, expected, authority) is not None
-            )
+        type_ids = sorted(authority.type_ids())
+        accepted = {type_id: [type_id] for type_id in type_ids}
+        # Composed catalogs can have several incoming counterparts even though
+        # each source has only one. Validation follows the source's lookup.
+        for source in type_ids:
+            counterpart = authority.equivalent_type(source)
+            if (
+                counterpart is not None
+                and counterpart in accepted
+                and plan_type_equivalence(source, TypeExpr.concrete(counterpart), authority)
+                is not None
+            ):
+                accepted[counterpart].append(source)
         cast("dict[str, object]", wire["dinkster"])["typeAcceptance"] = {
-            "atoms": accepted,
+            "atoms": {type_id: sorted(sources) for type_id, sources in accepted.items()},
             "assetDecoders": sorted(authority.asset_decoder_targets()),
             "batchMerges": sorted(
                 type_id
