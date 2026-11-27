@@ -12,7 +12,6 @@ state raises ElaborationError; elaboration never repairs it.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
@@ -25,6 +24,7 @@ from .model import (
     Output,
     TypeExpr,
 )
+from .records import record_selection
 
 MAX_INTERFACE_ITEMS = 1024
 """Hard cap on total effective interface items (inputs + outputs)."""
@@ -241,6 +241,15 @@ def _elaborate_body(
         else spec
         for spec in flat.inputs
     ]
+    for index, spec in enumerate(flat.inputs):
+        if spec.type.kind == "record_field":
+            source = next(item for item in flat.inputs if item.id == spec.type.input_id)
+            selector = next(item for item in flat.inputs if item.id == spec.type.index)
+            selection = (
+                selector.default if values is None else values.get(selector.id, selector.default)
+            )
+            if record_selection(source.type, selection)[2] is not None:
+                projected_inputs[index] = replace(projected_inputs[index], required=False)
     outputs = [
         replace(output, type=_project_output_type(output.type, flat.inputs, values))
         if output.type.requires_elaboration
@@ -281,24 +290,10 @@ def _project_output_type(
         source = next(spec.type for spec in inputs if spec.id == expr.input_id)
         selector = next(spec for spec in inputs if spec.id == expr.index)
         value = selector.default if stored is None else stored.get(selector.id, selector.default)
-        if not isinstance(value, str):
-            raise ElaborationError("record field selector must be a stored literal field path")
         try:
-            path = json.loads(value)
+            return record_selection(source, value)[1]
         except ValueError as exc:
-            raise ElaborationError("record field selector must be a JSON field path") from exc
-        if (
-            not isinstance(path, list)
-            or not path
-            or any(not isinstance(key, str) for key in cast("list[object]", path))
-        ):
-            raise ElaborationError("record field selector requires a nonempty array of field IDs")
-        for key in cast("list[str]", path):
-            field = next((field for field in source.fields if field.id == key), None)
-            if source.kind != "record" or field is None:
-                raise ElaborationError(f"record field {key!r} is not declared")
-            source = field.type
-        return source
+            raise ElaborationError(str(exc)) from exc
     if expr.kind == "tuple_element":
         element = (
             next(spec.type for spec in inputs if spec.id == expr.input_id)

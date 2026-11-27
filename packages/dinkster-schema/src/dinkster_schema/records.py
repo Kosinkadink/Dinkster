@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import cast
@@ -20,6 +21,70 @@ from dinkster_values import (
 )
 
 from .model import TypeExpr
+from .wire import type_expr_from_wire
+
+
+def record_selection(
+    record: TypeExpr, stored: object
+) -> tuple[tuple[str, ...], TypeExpr, str | None]:
+    """Resolve stable IDs, retaining the selected type when a saved field stops fitting."""
+    if not isinstance(stored, str):
+        raise ValueError("record field selector must be a stored literal field path")
+    try:
+        selection = json.loads(stored)
+    except ValueError as exc:
+        raise ValueError("record field selector must be a JSON field path") from exc
+    saved_type = None
+    name = ""
+    if isinstance(selection, dict):
+        saved = cast(dict[str, object], selection)
+        raw_type = saved.get("type")
+        if not isinstance(raw_type, dict) or not isinstance(saved.get("name"), str):
+            raise ValueError("saved record selection requires a name and declared type")
+        saved_type = type_expr_from_wire(cast(dict[str, object], raw_type))
+        if saved_type.runtime_type_id() is None or saved_type.requires_elaboration:
+            raise ValueError("saved record selection requires a resolved type")
+        name = cast(str, saved["name"])
+        selection = saved.get("path")
+    if (
+        not isinstance(selection, list)
+        or not selection
+        or any(not isinstance(key, str) or not key for key in cast(list[object], selection))
+    ):
+        raise ValueError("record field selector requires a nonempty array of field IDs")
+    path = tuple(cast(list[str], selection))
+    current = record
+    for key in path:
+        field = next((field for field in current.fields if field.id == key), None)
+        if current.kind != "record" or field is None:
+            if saved_type is not None:
+                return path, saved_type, f"Record field '{name}' was removed."
+            raise ValueError(f"record field {key!r} is not declared")
+        current = field.type
+
+    def fits(wanted: TypeExpr, supplied: TypeExpr) -> bool:
+        if wanted.kind == "record":
+            return wanted.record_connection_problem(supplied) is None
+        if wanted.kind != supplied.kind:
+            return False
+        if wanted.element is not None and supplied.element is not None:
+            return fits(wanted.element, supplied.element)
+        if wanted.kind == "tuple":
+            return len(wanted.elements) == len(supplied.elements) and all(
+                fits(item, found)
+                for item, found in zip(wanted.elements, supplied.elements, strict=True)
+            )
+        return wanted == supplied
+
+    if saved_type is not None and not fits(saved_type, current):
+        detail = saved_type.record_connection_problem(current)
+        return (
+            path,
+            saved_type,
+            f"Record field '{name}' changed type from {saved_type.runtime_type_id()} "
+            f"to {current.runtime_type_id()}." + (f" {detail}" if detail is not None else ""),
+        )
+    return path, current, None
 
 
 def record_field_bindings(wanted: TypeExpr, source: TypeExpr) -> tuple[object, ...]:

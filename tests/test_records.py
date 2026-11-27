@@ -1,5 +1,6 @@
 """Declared records have directional named-field connections."""
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -15,11 +16,19 @@ from dinkster_graph import (
     Link,
     RegionNode,
     RegionOutput,
+    graph_from_wire,
     graph_output_types,
+    graph_to_wire,
     validate,
 )
 from dinkster_protocol import Invocation, InvocationResult, OnInvocationEvent
-from dinkster_schema import build_node_types, build_schemas, schema_from_wire, schema_to_wire
+from dinkster_schema import (
+    build_node_types,
+    build_schemas,
+    schema_from_wire,
+    schema_to_wire,
+    type_expr_to_wire,
+)
 from dinkster_values import (
     RESOURCE_HANDLE_TYPE,
     RecordPayload,
@@ -934,5 +943,159 @@ def test_change_rebinds_absent_foreign_fields_without_reusing_cached_assignment(
         assert after.outputs["read"]["value"].resolve() == 11
         assert "make" in after.cached
         assert "change" not in after.cached
+
+    run_scenario(scenario())
+
+
+def test_saved_record_selection_keeps_old_wires_without_retargeting() -> None:
+    from dinkster.record_nodes import record_helpers
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        cache = MemoryLRUCache()
+
+        def engine(state: str) -> Engine:
+            selected = RecordField(
+                "replacement" if state == "removed" else "seed",
+                "noise" if state == "renamed" else "seed",
+                TEXT if state == "changed" else INTEGER,
+            )
+            fields = (selected, RecordField("kept", "guidance", INTEGER))
+            record = TypeExpr.record_of(
+                "test.settings", *(reversed(fields) if state == "renamed" else fields)
+            )
+
+            class Produce(Node):
+                @classmethod
+                def define_schema(cls) -> NodeSchema:
+                    return NodeSchema("test.source", body=(Output("record", record),))
+
+                @classmethod
+                def execute(cls) -> Mapping[str, object]:
+                    return cls.outputs(
+                        record={
+                            selected.name: "new text" if state == "changed" else 29,
+                            "guidance": 11,
+                        }
+                    )
+
+            class Consume(Node):
+                @classmethod
+                def define_schema(cls) -> NodeSchema:
+                    return NodeSchema(
+                        "test.consume", body=(Input("value", INTEGER), Output("value", INTEGER))
+                    )
+
+                @classmethod
+                def execute(cls, value: int) -> Mapping[str, object]:
+                    return cls.outputs(value=value + 7)
+
+            helpers = record_helpers(build_schemas((Produce,)).values())
+            nodes = (Produce, Consume, *helpers.values())
+            return Engine(
+                schemas={
+                    identity: schema_from_wire(schema_to_wire(schema))
+                    for identity, schema in build_schemas(nodes).items()
+                },
+                registry=registry,
+                worker=InProcessWorker(build_node_types(nodes), registry),
+                cache=cache,
+            )
+
+        selection = json.dumps(
+            {"path": ["seed"], "name": "seed", "type": type_expr_to_wire(INTEGER)}
+        )
+        graph = graph_from_wire(
+            json.loads(
+                json.dumps(
+                    graph_to_wire(
+                        Graph(
+                            nodes={
+                                "make": GraphNode("test.source"),
+                                "read": GraphNode(
+                                    "test.settings.read",
+                                    {"record": Link("make", "record"), "field": selection},
+                                ),
+                                "consume": GraphNode(
+                                    "test.consume", {"value": Link("read", "value")}
+                                ),
+                                "change": GraphNode(
+                                    "test.settings.change",
+                                    {
+                                        "record": Link("make", "record"),
+                                        "field": selection,
+                                        "value": Link("read", "value"),
+                                    },
+                                ),
+                            }
+                        )
+                    )
+                )
+            )
+        )
+        before = await engine("first").run(graph, list(graph.nodes))
+        assert before.outputs["consume"]["value"].resolve() == 36
+        assert before.outputs["change"]["record"].resolve() == {"seed": 29, "guidance": 11}
+        assert before.diagnostics == ()
+        renamed = await engine("renamed").run(graph, list(graph.nodes))
+        assert renamed.outputs["change"]["record"].resolve() == {"noise": 29, "guidance": 11}
+        assert renamed.outputs["consume"]["value"].resolve() == 36
+        assert set(graph.nodes).issubset(renamed.cached)
+        assert renamed.diagnostics == ()
+
+        for state in ("removed", "changed"):
+            current = engine(state)
+            stale = await current.run(graph, list(graph.nodes))
+            assert is_absent(stale.outputs["read"]["value"])
+            assert stale.outputs["read"]["value"].meta.entries["absent.standsFor"] == "INT"
+            assert is_absent(stale.outputs["consume"]["value"])
+            assert stale.skipped == ("consume",)
+            expected = {"seed": "new text" if state == "changed" else 29, "guidance": 11}
+            assert stale.outputs["change"]["record"].resolve() == expected
+            assert {d.node_id for d in stale.diagnostics} == {"read", "change"}
+            assert all(d.severity == "warning" and d.input_id == "field" for d in stale.diagnostics)
+            if state == "changed":
+                assert all("INT" in d.message and "STRING" in d.message for d in stale.diagnostics)
+            repeated = await current.run(graph, list(graph.nodes))
+            assert is_absent(repeated.outputs["read"]["value"])
+            assert repeated.diagnostics == stale.diagnostics
+            assert {"read", "change"}.issubset(repeated.cached)
+            no_value = replace(
+                graph,
+                nodes={
+                    **graph.nodes,
+                    "change": GraphNode(
+                        "test.settings.change",
+                        {"record": Link("make", "record"), "field": selection},
+                    ),
+                },
+            )
+            assert (await current.run(no_value, ["change"])).outputs["change"][
+                "record"
+            ].resolve() == expected
+            if state == "changed":
+                reselected = replace(
+                    graph,
+                    nodes={
+                        "make": graph.nodes["make"],
+                        "read": GraphNode(
+                            "test.settings.read",
+                            {
+                                "record": Link("make", "record"),
+                                "field": json.dumps(
+                                    {
+                                        "path": ["seed"],
+                                        "name": "seed",
+                                        "type": type_expr_to_wire(TEXT),
+                                    }
+                                ),
+                            },
+                        ),
+                    },
+                )
+                fresh = await current.run(reselected, ["read"])
+                assert fresh.outputs["read"]["value"].resolve() == "new text"
+                assert fresh.diagnostics == ()
 
     run_scenario(scenario())

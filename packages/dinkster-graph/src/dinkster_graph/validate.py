@@ -30,7 +30,7 @@ from dinkster_schema import (
     plan_type_equivalence,
     resolved_type_expr,
 )
-from dinkster_schema.records import contains_records
+from dinkster_schema.records import contains_records, record_selection
 from dinkster_values import (
     ASSET_TYPE,
     CORE_BOOLEAN,
@@ -236,6 +236,19 @@ def elaborate_graph(
                 linked=is_link,
                 literal=literal_value,
             )
+            selections: set[tuple[str, str]] = set()
+            for spec in (*base_schema.inputs, *base_schema.outputs):
+                if spec.type.kind == "record_field":
+                    selections.add((spec.type.input_id, str(spec.type.index)))
+            for record_id, field_id in sorted(selections):
+                source = next(spec for spec in base_schema.inputs if spec.id == record_id)
+                selector = next(spec for spec in base_schema.inputs if spec.id == field_id)
+                value = literal_value(node.inputs.get(field_id, selector.default))
+                problem = record_selection(source.type, value)[2]
+                if problem is not None:
+                    diags.append(
+                        Diagnostic("warning", "record-field-removed", problem, node_id, field_id)
+                    )
         except ElaborationError as exc:
             diags.append(Diagnostic("error", "elaboration-failed", str(exc), node_id))
     return effective, diags

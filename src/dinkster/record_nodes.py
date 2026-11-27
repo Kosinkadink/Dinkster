@@ -13,8 +13,10 @@ from dinkster_schema import (
     NodeSchema,
     Output,
     TypeExpr,
+    type_expr_to_wire,
 )
 from dinkster_schema.body import all_rows
+from dinkster_schema.records import record_selection
 from dinkster_values import CORE_COMBO, RecordPayload, Value, is_absent, make_record_value
 
 
@@ -107,7 +109,18 @@ def _reader(expression: TypeExpr) -> type[Node]:
         for field in record.fields:
             field_path = (*path, field.id)
             field_names = (*names, field.name)
-            options.append(ComboOption(json.dumps(field_path), label=" / ".join(field_names)))
+            options.append(
+                ComboOption(
+                    json.dumps(
+                        {
+                            "path": field_path,
+                            "name": " / ".join(field_names),
+                            "type": type_expr_to_wire(field.type),
+                        }
+                    ),
+                    label=" / ".join(field_names),
+                )
+            )
             if field.type.kind == "record":
                 visit(field.type, field_path, field_names)
 
@@ -144,7 +157,10 @@ def _reader(expression: TypeExpr) -> type[Node]:
         def execute(cls, *, field: str, input_values: Mapping[str, Value]) -> Mapping[str, object]:
             current = input_values["record"]
             declaration = expression
-            for identity in json.loads(field):
+            path, _, problem = record_selection(expression, field)
+            if problem is not None:
+                return cls.outputs(value=ABSENT)
+            for identity in path:
                 selected = next(item for item in declaration.fields if item.id == identity)
                 payload = current.payload
                 if not isinstance(payload, RecordPayload):
@@ -200,7 +216,7 @@ def _changer(expression: TypeExpr) -> type[Node]:
             input_types: Mapping[str, TypeExpr],
         ) -> Mapping[str, object]:
             def change(
-                current: Value, wanted: TypeExpr, source: TypeExpr, path: list[str]
+                current: Value, wanted: TypeExpr, source: TypeExpr, path: tuple[str, ...]
             ) -> Value:
                 selected = next(item for item in wanted.fields if item.id == path[0])
                 supplied = next(
@@ -235,9 +251,12 @@ def _changer(expression: TypeExpr) -> type[Node]:
                 return replace(make_record_value(current.type_id, fields), meta=current.meta)
 
             current = input_values["record"]
+            path, _, problem = record_selection(expression, field)
+            if problem is not None:
+                return cls.outputs(record=current)
             source = input_types.get("record")
             if source is None:
                 raise ValueError("Change requires the linked record declaration")
-            return cls.outputs(record=change(current, expression, source, json.loads(field)))
+            return cls.outputs(record=change(current, expression, source, path))
 
     return ChangeRecord
