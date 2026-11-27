@@ -122,6 +122,7 @@ def generation_pack_metadata(generation: Path) -> list[dict[str, object]]:
             "displayName": entry.pack,
             "available": False,
             "networkOrigins": None,
+            "graphicsCard": {"requested": None, "granted": None},
         }
         try:
             root = generation / "pack-sources" / entry.pack
@@ -133,6 +134,10 @@ def generation_pack_metadata(generation: Path) -> list[dict[str, object]]:
                 displayName=info.display_name,
                 available=True,
                 networkOrigins=list(info.network_origins),
+                graphicsCard={
+                    "requested": any(part.sandbox.gpu for part in (manifest, *manifest.parts)),
+                    "granted": False,
+                },
             )
         except (OSError, ValueError, ManifestError, CompositionError) as exc:
             row["message"] = str(exc)
