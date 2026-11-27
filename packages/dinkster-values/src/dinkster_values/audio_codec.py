@@ -60,6 +60,7 @@ __all__ = [
     "iter_audio_chunks",
     "render_audio_wav",
     "render_audio_waveform",
+    "audio_waveform_peaks",
     "render_audio_window",
     "validate_audio_encoded",
 ]
@@ -555,19 +556,18 @@ def render_audio_window(obj: object, parameters: Mapping[str, str]) -> bytes:
     return render_audio_wav(_selected_audio_window(obj, parameters))
 
 
-def render_audio_waveform(obj: object, parameters: Mapping[str, str]) -> bytes:
+def audio_waveform_peaks(
+    obj: object, width: int, *, batch_index: int = 0
+) -> list[tuple[float, float]]:
+    """Normalized min/max pairs over equal portions of the effective audio timeline."""
     np = _numpy()
-    width, height = (int(value) for value in parameters["waveform"].split("x"))
-    batch_index = int(parameters["batch"])
+    if not 1 <= width <= AUDIO_WAVEFORM_LIMITS["width"]:
+        raise InvalidRenditionRequest("waveform width is outside the supported range")
     facts = effective_audio_facts(obj)
     frames = facts["frames"]
     if frames is None:
         raise RenditionUnavailable("waveform requires a known effective audio duration")
-    background = np.array((0x11, 0x18, 0x27, 0xFF), dtype=np.uint8)
-    waveform_color = np.array((0x22, 0xD3, 0xEE, 0xFF), dtype=np.uint8)
-    center_color = np.array((0x37, 0x41, 0x51, 0xFF), dtype=np.uint8)
-    pixels = np.empty((height, width, 4), dtype=np.uint8)
-    pixels[:] = background
+    peaks: list[tuple[float, float]] = []
     chunk_samples = max(1, AUDIO_WINDOW_LIMITS["sampleValues"] // facts["channels"])
     try:
         with AudioWindowReader(obj) as reader:
@@ -587,13 +587,27 @@ def render_audio_waveform(obj: object, parameters: Mapping[str, str]) -> bytes:
                         minimum = min(minimum, current_min) if has_samples else current_min
                         maximum = max(maximum, current_max) if has_samples else current_max
                         has_samples = True
-                if not has_samples or (minimum == 0.0 and maximum == 0.0):
-                    center = math.floor((height - 1) / 2 + 0.5)
-                    pixels[center, x] = center_color
-                    continue
-                top = math.floor((1.0 - maximum) * (height - 1) / 2 + 0.5)
-                bottom = math.floor((1.0 - minimum) * (height - 1) / 2 + 0.5)
-                pixels[top : bottom + 1, x] = waveform_color
+                peaks.append((minimum, maximum))
     except AudioSourceUnavailableError as error:
         raise RenditionUnavailable(str(error)) from error
+    return peaks
+
+
+def render_audio_waveform(obj: object, parameters: Mapping[str, str]) -> bytes:
+    np = _numpy()
+    width, height = (int(value) for value in parameters["waveform"].split("x"))
+    peaks = audio_waveform_peaks(obj, width, batch_index=int(parameters["batch"]))
+    background = np.array((0x11, 0x18, 0x27, 0xFF), dtype=np.uint8)
+    waveform_color = np.array((0x22, 0xD3, 0xEE, 0xFF), dtype=np.uint8)
+    center_color = np.array((0x37, 0x41, 0x51, 0xFF), dtype=np.uint8)
+    pixels = np.empty((height, width, 4), dtype=np.uint8)
+    pixels[:] = background
+    for x, (minimum, maximum) in enumerate(peaks):
+        if minimum == 0.0 and maximum == 0.0:
+            center = math.floor((height - 1) / 2 + 0.5)
+            pixels[center, x] = center_color
+            continue
+        top = math.floor((1.0 - maximum) * (height - 1) / 2 + 0.5)
+        bottom = math.floor((1.0 - minimum) * (height - 1) / 2 + 0.5)
+        pixels[top : bottom + 1, x] = waveform_color
     return encode_canonical_png(pixels.tobytes(), width=width, height=height, color_type=6)

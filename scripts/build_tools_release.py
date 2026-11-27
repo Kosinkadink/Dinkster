@@ -32,7 +32,16 @@ def inputs_changed(root: Path, before: str, after: str = "HEAD") -> bool:
     }
     if any(
         name in direct
-        or name.startswith(("packages/dinkster-supervisor/", "packages/dinkster-library/"))
+        or name.startswith(
+            (
+                "packages/dinkster-supervisor/",
+                "packages/dinkster-library/",
+                "packages/dinkster-values/",
+                "packages/dinkster-assets/",
+                "packages/dinkster-image-document/",
+                "packages/dinkster-video-runtime/",
+            )
+        )
         for name in changed
     ):
         return True
