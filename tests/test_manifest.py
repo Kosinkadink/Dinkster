@@ -85,6 +85,29 @@ def write_manifest(path: Path, handler: object = None) -> Path:
     return path
 
 
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://api.example.test",
+        "https://api.example.test/download",
+        "https://api.example.test?key=value",
+        "https://api.example.test#fragment",
+        "https://user@api.example.test",
+        "https://api.example.test:70000",
+        42,
+    ],
+)
+def test_manifest_refuses_malformed_network_origin(tmp_path: Path, origin: object) -> None:
+    import json
+
+    path = write_manifest(tmp_path / "dinkster-pack.toml")
+    path.write_text(path.read_text() + f"[pack.sandbox]\nnetwork-origins=[{json.dumps(origin)}]\n")
+    with pytest.raises(ManifestError) as refused:
+        load_manifest(path)
+    assert repr(origin) in str(refused.value)
+    assert "invalid network origin" in str(refused.value)
+
+
 def test_execution_parts_keep_one_release_and_separate_process_inputs(tmp_path: Path) -> None:
     path = tmp_path / "dinkster-pack.toml"
     path.write_text(
@@ -92,6 +115,8 @@ def test_execution_parts_keep_one_release_and_separate_process_inputs(tmp_path: 
         'publisher="example"\nrequires=["humanize==4.13.0"]\n'
         '[pack.entry]\nnodes="adapter.patch:NODES"\ntypes="adapter.patch:register"\n'
         "[pack.sandbox]\nnetwork=true\n"
+        'network-origins=["https://API.example.test:443/", "https://mirror.example.test:8443", '
+        '"https://api.example.test"]\n'
         '[[pack.parts]]\nname="face"\nrequires=["humanize==4.12.3"]\n'
         'namespaces=["adapter.face"]\ntype-namespaces=["adapter.Face"]\n'
         '[pack.parts.entry]\nnodes="adapter.face:NODES"\n'
@@ -117,6 +142,11 @@ def test_execution_parts_keep_one_release_and_separate_process_inputs(tmp_path: 
     assert plain.nodes_entry == "adapter.plain:NODES"
     assert face.types_entry is None
     assert manifest.sandbox.network and not manifest.sandbox.writable_mounts
+    assert manifest.sandbox.network_origins == (
+        "https://api.example.test",
+        "https://mirror.example.test:8443",
+    )
+    assert face.sandbox.network_origins == plain.sandbox.network_origins == ()
     assert not face.sandbox.network and not face.sandbox.writable_mounts
     assert plain.sandbox.writable_mounts and not plain.sandbox.network
     with pytest.raises(ManifestError, match="unknown execution part"):

@@ -793,6 +793,57 @@ def _validate_name(name: str) -> None:
         raise EnvironmentError("engine name must be a portable engine id")
 
 
+def installation_pack_metadata(root: Path, name: str) -> dict[str, object]:
+    """Ask the selected snapshot for installed requests without starting an engine."""
+    _validate_name(name)
+    answer: dict[str, object] = {
+        "root": str(root),
+        "engine": name,
+        "snapshot": None,
+        "available": False,
+        "packs": None,
+    }
+    try:
+        current = read_current(root)
+        if current is None:
+            raise EnvironmentError("no installed snapshot")
+        answer["snapshot"] = str(current)
+        generation = root / "builds" / str(current)
+        result = subprocess.run(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster.manager",
+                "--root",
+                "",
+                "pack-metadata",
+                "--generation",
+                str(generation),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode:
+            raise EnvironmentError(
+                "installed pack metadata is unavailable; update or repair this installation"
+            )
+        metadata = json.loads(result.stdout)
+        if not isinstance(metadata, dict):
+            raise EnvironmentError("invalid installed pack metadata")
+        packs = cast("dict[str, object]", metadata).get("packs")
+        if not isinstance(packs, list):
+            raise EnvironmentError("invalid installed pack metadata")
+        if read_current(root) != current:
+            raise EnvironmentError("installation changed; read its packs again")
+        answer.update(available=True, packs=cast("list[object]", packs))
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        answer["message"] = str(exc)
+    return answer
+
+
 def engine_log_tail(root: Path, name: str) -> dict[str, str | bool]:
     """Read at most 64 KiB of the current snapshot's engine output, even after stop."""
     _validate_name(name)

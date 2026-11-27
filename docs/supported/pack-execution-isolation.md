@@ -128,7 +128,8 @@
   inspection, keyrings, new namespaces, and io_uring; ordinary threads,
   subprocesses, shared memory, and granted GPU access remain available. Pack
   manifests request GPU, writable-mount, and network authority; each request
-  takes effect only when the host grants it. Network grants name exact HTTPS
+  takes effect only when the host grants it. Allowed packs receive their
+  declared `network-origins` automatically. Network grants name exact HTTPS
   origins and never restore host or loopback network access. Refused HTTPS
   proxy requests name the pack and exact origin in node problems, including
   requests from workers with no network grant. Retries produce one warning

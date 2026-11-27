@@ -462,6 +462,7 @@ def test_manifest_admission_retains_part_metadata_and_checks_sibling_requirement
         'requires = ["torch>=2"]\nnamespaces = ["color.face"]\n'
         '[pack.parts.entry]\nnodes = "color_tools.face:PACK_NODES"\n'
         "[pack.parts.sandbox]\ngpu = true\nnetwork = false\nwritable-mounts = false\n"
+        'network-origins = ["https://api.example.test", "https://mirror.example.test:8443"]\n'
     )
     result = run_manifest_admission(root, "color-tools", "1.2.3", publisher="dinkster")
     assert not result.blocked and result.data is not None
@@ -470,7 +471,12 @@ def test_manifest_admission_retains_part_metadata_and_checks_sibling_requirement
     sibling = result.data["parts"]["face"]
     assert sibling["pythonRequirements"] == ["torch>=2"]
     assert sibling["namespaces"] == ["color.face"]
-    assert sibling["sandbox"] == {"gpu": True, "network": False, "writableMounts": False}
+    assert sibling["sandbox"] == {
+        "gpu": True,
+        "network": True,
+        "writableMounts": False,
+        "networkOrigins": ["https://api.example.test", "https://mirror.example.test:8443"],
+    }
     assert not run_doctor_static(root).blocked
     manifest.write_text(manifest.read_text().replace('"torch>=2"', '"color-tools>=1"'))
     refused = run_doctor_static(root)
