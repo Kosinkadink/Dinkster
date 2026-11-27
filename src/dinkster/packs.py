@@ -215,6 +215,13 @@ def pack_info_from_manifest(manifest: PackManifest) -> PackInfo:
         )
     if manifest.settings_schema is not None:
         info = replace(info, settings_schema=manifest.settings_schema)
-    if manifest.sandbox.network_origins:
-        info = replace(info, network_origins=manifest.sandbox.network_origins)
+    network_origins = tuple(
+        dict.fromkeys(
+            origin
+            for execution in (manifest, *manifest.parts)
+            for origin in execution.sandbox.network_origins
+        )
+    )
+    if network_origins:
+        info = replace(info, network_origins=network_origins)
     return info
