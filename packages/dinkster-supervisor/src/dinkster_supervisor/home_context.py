@@ -101,6 +101,8 @@ def configured_wsl() -> WslContext | None:
     if sys.platform != "win32" or not config or not Path(config).exists():
         return None
     value = json.loads(Path(config).read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise EnvironmentError("invalid Desktop WSL context")
     distribution, python = value.get("distribution"), value.get("python")
     if (
         not isinstance(distribution, str)

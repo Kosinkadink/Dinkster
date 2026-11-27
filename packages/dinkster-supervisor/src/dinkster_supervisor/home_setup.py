@@ -236,6 +236,7 @@ class SetupJobs:
         self._task: asyncio.Task[None] | None = None
         self._progress: Path | None = None
         self._lock = asyncio.Lock()
+        self._progress_lock = asyncio.Lock()
         self._closed = False
 
     @property
@@ -245,7 +246,7 @@ class SetupJobs:
     @property
     def active_job(self) -> dict[str, object] | None:
         job_id = next(reversed(self._jobs), None)
-        return self.get(job_id) if job_id is not None else None
+        return self._jobs[job_id] if job_id is not None else None
 
     async def plan(self, root: Path, channel: str, variant: str | None) -> dict[str, object]:
         resolved = await asyncio.to_thread(resolve_installation_root, root)
@@ -377,6 +378,10 @@ class SetupJobs:
         pack_identity: str | None,
     ) -> None:
         root = Path(cast("str", job["root"]))
+        outcome: dict[str, object] = {
+            "state": "failed",
+            "error": {"code": "setup-interrupted", "message": "Setup was interrupted."},
+        }
         try:
             if self._prepare is not None:
                 await self._prepare()
@@ -417,40 +422,49 @@ class SetupJobs:
                     self._cancelled_roots[root] = identity
                     while len(self._cancelled_roots) > 16:
                         del self._cancelled_roots[next(iter(self._cancelled_roots))]
-                job["state"] = "cancelled"
+                outcome = {"state": "cancelled"}
             else:
                 await self._completed(root)
-                job.update(state="completed", installation={"root": str(root), "engine": "main"})
+                outcome = {
+                    "state": "completed",
+                    "installation": {"root": str(root), "engine": "main"},
+                }
         except (OSError, ValueError, LookupError, RuntimeError) as exc:
-            job.update(
-                state="failed",
-                error={"code": getattr(exc, "code", "setup-failed"), "message": str(exc)},
-            )
+            outcome = {
+                "state": "failed",
+                "error": {"code": getattr(exc, "code", "setup-failed"), "message": str(exc)},
+            }
         finally:
             try:
-                context = installation_context(root)
-                if context is not None:
-                    await asyncio.to_thread(context.call, root, "progress", job["id"], "clean")
-                else:
-                    progress.unlink(missing_ok=True)
-                    progress.with_name(progress.name + ".cancel").unlink(missing_ok=True)
+                async with self._progress_lock:
+                    context = installation_context(root)
+                    if context is not None:
+                        await asyncio.to_thread(context.call, root, "progress", job["id"], "clean")
+                    else:
+                        progress.unlink(missing_ok=True)
+                        progress.with_name(progress.name + ".cancel").unlink(missing_ok=True)
             except (OSError, ValueError, RuntimeError) as exc:
-                job.update(
-                    state="failed", error={"code": "setup-cleanup-failed", "message": str(exc)}
-                )
+                outcome = {
+                    "state": "failed",
+                    "error": {"code": "setup-cleanup-failed", "message": str(exc)},
+                }
             finally:
+                job.update(outcome)
                 self._running_plan = None
 
-    def get(self, job_id: str) -> dict[str, object]:
+    async def get(self, job_id: str) -> dict[str, object]:
         job = self._jobs[job_id]
         if job["state"] in {"running", "cancelling"} and self._progress is not None:
             with contextlib.suppress(OSError, ValueError):
                 root = Path(cast("str", job["root"]))
                 context = installation_context(root)
                 observed = (
-                    read_document(self._progress)
+                    await asyncio.to_thread(read_document, self._progress)
                     if context is None
-                    else cast("dict[str, object]", context.call(root, "progress", job_id, "read"))
+                    else cast(
+                        "dict[str, object]",
+                        await asyncio.to_thread(context.call, root, "progress", job_id, "read"),
+                    )
                 )
                 total = observed["total"]
                 job["progress"] = {
@@ -461,18 +475,20 @@ class SetupJobs:
                 }
         return job
 
-    def cancel(self, job_id: str) -> dict[str, object]:
-        job = self.get(job_id)
-        if job["state"] in {"running", "cancelling"}:
-            assert self._progress is not None
-            root = Path(cast("str", job["root"]))
-            context = installation_context(root)
-            if context is not None:
-                context.call(root, "progress", job_id, "cancel")
-            else:
-                self._progress.parent.mkdir(parents=True, exist_ok=True)
-                self._progress.with_name(self._progress.name + ".cancel").touch()
-            job["state"] = "cancelling"
+    async def cancel(self, job_id: str) -> dict[str, object]:
+        job = self._jobs[job_id]
+        async with self._progress_lock:
+            if job["state"] in {"running", "cancelling"}:
+                assert self._progress is not None
+                root = Path(cast("str", job["root"]))
+                context = installation_context(root)
+                if context is not None:
+                    await asyncio.to_thread(context.call, root, "progress", job_id, "cancel")
+                else:
+                    self._progress.parent.mkdir(parents=True, exist_ok=True)
+                    self._progress.with_name(self._progress.name + ".cancel").touch()
+                if job["state"] == "running":
+                    job["state"] = "cancelling"
         return job
 
     async def close(self) -> None:
@@ -480,7 +496,7 @@ class SetupJobs:
             self._closed = True
             if self._task is not None and not self._task.done():
                 assert self.active_job is not None
-                self.cancel(cast("str", self.active_job["id"]))
+                await self.cancel(cast("str", self.active_job["id"]))
                 await self._task
 
 
@@ -500,7 +516,13 @@ async def handle_plan(request: web.Request) -> web.Response:
             channel,
             request.query.get("variant"),
         )
-        return web.json_response({"plan": plan, "activeJob": jobs.active_job})
+        active = jobs.active_job
+        return web.json_response(
+            {
+                "plan": plan,
+                "activeJob": None if active is None else await jobs.get(cast("str", active["id"])),
+            }
+        )
     except (OSError, ValueError) as exc:
         return web.json_response(
             {"error": getattr(exc, "code", "invalid-setup"), "message": str(exc)}, status=400
@@ -531,9 +553,9 @@ async def handle_job(request: web.Request) -> web.Response:
     try:
         jobs = request.app[SETUP_KEY]
         job = (
-            jobs.cancel(request.match_info["id"])
+            await jobs.cancel(request.match_info["id"])
             if request.method == "DELETE"
-            else jobs.get(request.match_info["id"])
+            else await jobs.get(request.match_info["id"])
         )
         status = 202 if request.method == "DELETE" and job["state"] == "cancelling" else 200
         return web.json_response(job, status=status)
@@ -542,3 +564,5 @@ async def handle_job(request: web.Request) -> web.Response:
             {"error": "unknown-job", "message": "That setup job is not known to this process."},
             status=404,
         )
+    except (OSError, ValueError) as exc:
+        return web.json_response({"error": "setup-unavailable", "message": str(exc)}, status=503)
