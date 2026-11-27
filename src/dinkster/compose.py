@@ -2004,6 +2004,7 @@ class _RemoteSurface:
     compat_skips: dict[str, dict[str, CompatGateDiagnostic]]
     vision_providers: tuple[VisionProvider, ...] | None
     generation_providers: tuple[GenerationProvider, ...] | None
+    record_makers: Mapping[str, type[Node]]
 
 
 @dataclass(frozen=True)
@@ -2028,6 +2029,7 @@ class _RemoteRecord:
     """The daemon's process-lifetime token at compose time. The session
     clears its own copy on death, so reattach compares against this record
     to tell a daemon restart from a transport-only reconnect."""
+    record_makers: Mapping[str, type[Node]] = field(default_factory=dict)
 
 
 class _PackTenantRegistry(ModelTenantRegistry):
@@ -4970,6 +4972,27 @@ class ServingComposer:
                     f"{manifest.name}: generated record node {node_type!r} collides"
                 )
         generated = build_schemas(makers.values())
+        self._validate_record_migrations(manifest.name, schemas, generated)
+        attributed = {
+            node_type: spec.attribute(node_type) if spec.attribute else manifest.name
+            for node_type in generated
+        }
+        for node_type, pack_id in attributed.items():
+            if pack_id not in packs:
+                raise CompositionError(
+                    f"{manifest.name}: generated record node {node_type!r} attributes to "
+                    f"{pack_id!r}, which is not among this spec's pack entries"
+                )
+        schemas.update(generated)
+        node_packs.update(attributed)
+        return makers
+
+    def _validate_record_migrations(
+        self,
+        pack: str,
+        schemas: Mapping[str, NodeSchema],
+        generated: Mapping[str, NodeSchema],
+    ) -> None:
         for node_type, schema in generated.items():
             if not node_type.endswith(".make"):
                 continue
@@ -4981,7 +5004,7 @@ class ServingComposer:
             ]
             if any(not rule.from_signature or not rule.note.strip() for rule in rules):
                 raise CompositionError(
-                    f"{manifest.name}: {node_type} migration requires from_signature "
+                    f"{pack}: {node_type} migration requires from_signature "
                     "and a note explaining how saved Make nodes are updated"
                 )
             previous = self.composition.schemas.get(node_type)
@@ -4999,24 +5022,11 @@ class ServingComposer:
                 for rule in rules
             ):
                 raise CompositionError(
-                    f"{manifest.name}: {node_type} adds required fields {added_required!r}; "
+                    f"{pack}: {node_type} adds required fields {added_required!r}; "
                     "declare a same-type replacement with "
                     f"from_signature={schema_signature(previous)!r} and a note explaining "
                     "how saved Make nodes are updated"
                 )
-        attributed = {
-            node_type: spec.attribute(node_type) if spec.attribute else manifest.name
-            for node_type in generated
-        }
-        for node_type, pack_id in attributed.items():
-            if pack_id not in packs:
-                raise CompositionError(
-                    f"{manifest.name}: generated record node {node_type!r} attributes to "
-                    f"{pack_id!r}, which is not among this spec's pack entries"
-                )
-        schemas.update(generated)
-        node_packs.update(attributed)
-        return makers
 
     def _build_topology(
         self,
@@ -5320,6 +5330,8 @@ class ServingComposer:
                 implementation_pack=remote.pack_name,
             )
             for node_type in remote.node_types:
+                if node_type in remote.record_makers:
+                    continue
                 appended = (
                     replace(remote_arm, execution_arm="native")
                     if compat_pack and node_type.startswith("dinkster.")
@@ -5357,6 +5369,21 @@ class ServingComposer:
                     arms_by_type[node_type] = [appended]
                 else:
                     arms.append(appended)
+            if remote.record_makers:
+                host = InProcessWorker(remote.record_makers, self.composition._registry)
+                for node_type in remote.record_makers:
+                    arms_by_type.setdefault(node_type, []).append(
+                        ArmRecord(
+                            name=remote.spec.name,
+                            worker=ArmWorker(host, None),
+                            domain=self._core_domain,
+                            instance_token=lambda worker=host: worker.instance_token,
+                            default_cache_tag="record-maker:1",
+                            default_arm=remote.spec.name,
+                            owner_worker=host,
+                            implementation_pack=remote.pack_name,
+                        )
+                    )
             for local_arm, node_types in remote.body_arms:
                 arm_name = f"{remote.spec.name}@{local_arm}"
                 selected = ArmRecord(
@@ -5507,7 +5534,9 @@ class ServingComposer:
                     continue
                 new_schema = schemas.get(node_type) if schemas is not None else None
                 if new_schema is None or schema_signature(new_schema) != schema_signature(
-                    remote.worker.schemas[node_type]
+                    remote.record_makers[node_type].define_schema()
+                    if node_type in remote.record_makers
+                    else remote.worker.schemas[node_type]
                 ):
                     blockers.setdefault(remote_name, []).append(node_type)
         return blockers
@@ -6162,6 +6191,7 @@ class ServingComposer:
                 node_types=tuple(surface.composed),
                 pack_name=worker.pack,
                 body_arms=surface.body_arms,
+                record_makers=surface.record_makers,
                 vision_providers=surface.vision_providers,
                 generation_providers=surface.generation_providers,
                 instance_token=worker.instance_token,
@@ -6400,9 +6430,57 @@ class ServingComposer:
             if generation_providers is None
             else tuple(provider for provider in generation_providers if provider.node in composed)
         )
-        # No namespace-claim check for remotes: the daemon side already
-        # enforced its own manifest claims, and engine-side claims do
-        # not cross the wire. Reserved roots still gate on host trust.
+        try:
+            selected = record_helpers(composed.values())
+            makers = {
+                node_type: node
+                for node_type, node in record_helpers(announced.values()).items()
+                if node_type in selected
+            }
+        except ValueError as exc:
+            raise CompositionError(f"remote worker {spec.name!r}: {exc}") from exc
+        if makers and worker.record_namespaces is None:
+            raise CompositionError(
+                f"remote worker {spec.name!r}: record declarations require recordNamespaces"
+            )
+        makers = {
+            node_type: node
+            for node_type, node in makers.items()
+            if any(
+                claim_covers(claim, node_type.rsplit(".", 1)[0])
+                for claim in worker.record_namespaces or ()
+            )
+        }
+        generated = build_schemas(makers.values())
+        self._validate_record_migrations(spec.name, announced, generated)
+        generated = {
+            node_type: replace(
+                schema,
+                replacements=tuple(
+                    rule
+                    for carrier in announced.values()
+                    for rule in carrier.replacements
+                    if rule.from_type == node_type
+                    and all(case.to == node_type for case in rule.cases)
+                ),
+            )
+            for node_type, schema in generated.items()
+        }
+        for node_type, schema in generated.items():
+            if node_type in announced:
+                raise CompositionError(
+                    f"remote worker {spec.name!r}: generated record node {node_type!r} collides"
+                )
+            owner = self._owners.get(node_type)
+            if owner is not None and owner != replacing:
+                if schema_signature(composition.schemas[node_type]) != schema_signature(schema):
+                    raise CompositionError(
+                        f"remote worker {spec.name!r}: generated record node {node_type!r} "
+                        f"does not match the schema signature served by {owner!r}"
+                    )
+        composed = {**composed, **generated}
+        # Authored node claims are enforced by the daemon. Generated helper
+        # claims arrive explicitly; reserved roots still require host trust.
         delta_schemas: dict[str, NodeSchema] = {}
         delta_node_packs: dict[str, str] = {}
         for node_type, schema in composed.items():
@@ -6472,6 +6550,7 @@ class ServingComposer:
             compat_skips=delta_compat_skips,
             vision_providers=vision_providers,
             generation_providers=generation_providers,
+            record_makers=makers,
         )
 
     def _remote_owner_blockers(
@@ -6496,7 +6575,9 @@ class ServingComposer:
                 if remote_name == name or node_type not in remote.node_types:
                     continue
                 if new_schema is None or schema_signature(new_schema) != schema_signature(
-                    remote.worker.schemas[node_type]
+                    remote.record_makers[node_type].define_schema()
+                    if node_type in remote.record_makers
+                    else remote.worker.schemas[node_type]
                 ):
                     blockers.setdefault(remote_name, []).append(node_type)
         return blockers
@@ -6603,6 +6684,7 @@ class ServingComposer:
                 node_types=tuple(surface.composed),
                 pack_name=worker.pack,
                 body_arms=surface.body_arms,
+                record_makers=surface.record_makers,
                 vision_providers=surface.vision_providers,
                 generation_providers=surface.generation_providers,
                 instance_token=worker.instance_token,

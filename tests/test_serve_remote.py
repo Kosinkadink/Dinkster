@@ -9,6 +9,7 @@ connection closed, the daemon free for the next client."""
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 import socket
 from collections.abc import Mapping
@@ -26,11 +27,13 @@ from dinkster_graph import (
     Link,
     RegionNode,
     RegionOutput,
+    graph_from_wire,
     graph_to_wire,
 )
 from dinkster_protocol import AttentionRouteToken
 from dinkster_schema import (
     TypeExpr,
+    schema_signature,
 )
 from dinkster_server import STATE_KEY, create_app
 from dinkster_values import CORE_STRING, list_children, value_resource_provenance_refs
@@ -183,6 +186,203 @@ def test_add_remote_composes_eager_choices_from_service(tmp_path: Path) -> None:
                 await composer.close()
         finally:
             await stop_service(proc)
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("allowlist", [False, True])
+def test_remote_records_get_host_helpers_across_daemon_replacement(
+    tmp_path: Path, allowlist: bool
+) -> None:
+    def manifest(
+        version: str, field: str, *, collision: bool = False, migration_from: str | None = None
+    ) -> Path:
+        root = tmp_path / version
+        root.mkdir()
+        (root / "remote_records.py").write_text(
+            "from dinkster_schema import Input, Node, NodeSchema, Output, RecordField, TypeExpr\n"
+            "from dinkster_schema import MappingSource, ReplacementCase, ReplacementRule\n"
+            "INT = TypeExpr.concrete('INT')\n"
+            "INNER = TypeExpr.record_of('remoteowned.settings', "
+            f"RecordField('stable', {field!r}, INT))\n"
+            "COMPLETE = TypeExpr.record_of('remoteowned.settings', *INNER.fields, "
+            "RecordField('extra', 'guidance', INT, optional=True))\n"
+            + (
+                "COMPLETE = TypeExpr.record_of('remoteowned.settings', *COMPLETE.fields, "
+                "RecordField('added', 'iterations', INT))\n"
+                if version in ("required", "migrated")
+                else ""
+            )
+            + "OUTER = TypeExpr.record_of('remoteowned.outer', "
+            "RecordField('inner', 'settings', INNER))\n"
+            "BORROWED = TypeExpr.record_of('borrowed.settings', RecordField('s', 'seed', INT))\n"
+            "class Consume(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema('remotenodes.consume', body=(Input('value', OUTER), "
+            "Input('other', BORROWED, required=False), Output('answer', INT)))\n"
+            "    @classmethod\n"
+            "    def execute(cls, value):\n"
+            f"        return cls.outputs(answer=value['settings'][{field!r}]*3)\n"
+            "class Declare(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema('remotenodes.declare', body=(Output('record', COMPLETE),), "
+            "replacements=("
+            + (
+                "ReplacementRule(from_type='remoteowned.settings.make', "
+                f"from_signature={migration_from!r}, note='Set iterations on saved Make nodes.', "
+                "cases=(ReplacementCase.build('remoteowned.settings.make', inputs={"
+                "'field_737461626c65': MappingSource.copy('field_737461626c65'), "
+                "'field_6578747261': MappingSource.copy('field_6578747261'), "
+                "'field_6164646564': MappingSource.constant(23)}, "
+                "outputs={'record': 'record'}),)),"
+                if migration_from is not None
+                else ""
+            )
+            + "))\n"
+            "    @classmethod\n"
+            "    def execute(cls):\n"
+            f"        return cls.outputs(record={{{field!r}: 7, 'guidance': 11}} | "
+            f"({{'iterations': 23}} if {version in ('required', 'migrated')!r} else {{}}))\n"
+            + (
+                "class Collision(Consume):\n"
+                "    @classmethod\n"
+                "    def define_schema(cls):\n"
+                "        return NodeSchema('remoteowned.settings.make', "
+                "body=(Output('value', INT),))\n"
+                "NODES = (Consume, Declare, Collision)\n"
+                if collision
+                else "NODES = (Consume, Declare)\n"
+            ),
+            encoding="ascii",
+        )
+        path = root / "dinkster-pack.toml"
+        path.write_text(
+            '[pack]\nname="remote-records"\npublisher="dinkster"\n'
+            'namespaces=["remotenodes", "remoteowned"]\n'
+            'type-namespaces=["remoteowned"]\n'
+            '[pack.entry]\nnodes="remote_records:NODES"\n',
+            encoding="ascii",
+        )
+        return path
+
+    async def scenario() -> None:
+        first = manifest("first", "seed")
+        proc, host, port = await start_service(first, tmp_path, pythonpath=(first.parent,))
+        duplicate = None
+        composer = ServingComposer()
+        try:
+            spec = remote_spec(
+                host, port, tmp_path, nodes=("remotenodes.consume",) if allowlist else None
+            )
+            delta = await composer.add_remote(spec)
+            helpers = {
+                f"remoteowned.{record}.{operation}"
+                for record in ("settings", "outer")
+                for operation in ("make", "read", "change")
+            }
+            assert helpers <= delta.schemas.keys()
+            assert not any(name.startswith("borrowed.") for name in delta.schemas)
+            assert all(delta.node_packs[name] == "box1" for name in helpers)
+            old_signature = schema_signature(delta.schemas["remoteowned.settings.make"])
+            graph = Graph(
+                {
+                    "make": GraphNode(
+                        "remoteowned.settings.make",
+                        {"field_737461626c65": 29, "field_6578747261": 11},
+                        schema_signature=old_signature,
+                    ),
+                    "change": GraphNode(
+                        "remoteowned.settings.change",
+                        {"record": Link("make", "record"), "field": '["stable"]', "value": 41},
+                    ),
+                    "outer": GraphNode(
+                        "remoteowned.outer.make", {"field_696e6e6572": Link("change", "record")}
+                    ),
+                    "read": GraphNode(
+                        "remoteowned.outer.read",
+                        {"record": Link("outer", "record"), "field": '["inner", "stable"]'},
+                    ),
+                    "consume": GraphNode("remotenodes.consume", {"value": Link("outer", "record")}),
+                }
+            )
+            graph = graph_from_wire(json.loads(json.dumps(graph_to_wire(graph))))
+            engine = composer.composition.make_engine(lambda event: None)
+            result = await engine.run(graph, ["consume", "read"])
+            assert result.outputs["consume"]["answer"].resolve() == 123
+            assert result.outputs["read"]["value"].resolve() == 41
+            duplicate, other_host, other_port = await start_service(
+                first, tmp_path, pythonpath=(first.parent,)
+            )
+            shared = await composer.add_remote(
+                remote_spec(
+                    other_host,
+                    other_port,
+                    tmp_path,
+                    name="box2",
+                    nodes=("remotenodes.consume",) if allowlist else None,
+                )
+            )
+            assert not shared.schemas
+            engine = composer.composition.make_engine(lambda event: None)
+            shared_result = await engine.run(
+                graph,
+                ["consume", "read"],
+                execution=composer.place_execution(engine.pin_execution(), {"consume": "box2"}),
+            )
+            assert shared_result.outputs["consume"]["answer"].resolve() == 123
+            assert shared_result.outputs["read"]["value"].resolve() == 41
+            await stop_service(proc)
+            async with asyncio.timeout(10):
+                while composer.remote_connected("box1"):
+                    await asyncio.sleep(0.01)
+            bad = manifest("collision", "seed", collision=True)
+            proc, _, _ = await start_service(bad, tmp_path, pythonpath=(bad.parent,), port=port)
+            before = composition_snapshot(composer)
+            with pytest.raises(CompositionError, match="generated record node.*collides"):
+                await composer.reattach_remote(spec)
+            assert composition_snapshot(composer) == before
+            await stop_service(proc)
+            required = manifest("required", "seed")
+            proc, _, _ = await start_service(
+                required, tmp_path, pythonpath=(required.parent,), port=port
+            )
+            with pytest.raises(CompositionError, match="adds required fields.*iterations"):
+                await composer.reattach_remote(spec)
+            assert composition_snapshot(composer) == before
+            await stop_service(proc)
+            second = manifest("second", "noise")
+            proc, _, _ = await start_service(
+                second, tmp_path, pythonpath=(second.parent,), port=port
+            )
+            replacement = await composer.reattach_remote(spec)
+            assert helpers <= replacement.result.delta.schemas.keys()
+            engine = composer.composition.make_engine(lambda event: None)
+            renamed = await engine.run(graph, ["consume", "read", "change"])
+            assert renamed.outputs["consume"]["answer"].resolve() == 123
+            assert renamed.outputs["read"]["value"].resolve() == 41
+            assert renamed.outputs["change"]["record"].resolve() == {"noise": 41, "guidance": 11}
+            await composer.close()
+            await stop_service(proc)
+            migrated = manifest("migrated", "noise", migration_from=old_signature)
+            proc, _, _ = await start_service(
+                migrated, tmp_path, pythonpath=(migrated.parent,), port=port
+            )
+            composer = ServingComposer()
+            await composer.add_remote(spec)
+            engine = composer.composition.make_engine(lambda event: None)
+            upgraded = await engine.run(graph, ["make"])
+            assert upgraded.outputs["make"]["record"].resolve() == {
+                "noise": 29,
+                "guidance": 11,
+                "iterations": 23,
+            }
+        finally:
+            await composer.close()
+            await stop_service(proc)
+            if duplicate is not None:
+                await stop_service(duplicate)
 
     run_scenario(scenario())
 

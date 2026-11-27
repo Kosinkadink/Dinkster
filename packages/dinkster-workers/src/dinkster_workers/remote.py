@@ -266,6 +266,10 @@ class RemoteWorker:
         return self._session.body_arms
 
     @property
+    def record_namespaces(self) -> tuple[str, ...] | None:
+        return self._session.record_namespaces
+
+    @property
     def vision_providers(self) -> tuple[VisionProvider, ...] | None:
         return self._session.vision_providers
 
