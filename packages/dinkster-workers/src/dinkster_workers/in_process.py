@@ -85,7 +85,7 @@ from dinkster_schema import (
 from dinkster_schema.body import all_rows
 from dinkster_schema.flatten import described_ids, flatten_body
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.model import Output
+from dinkster_schema.model import Output, TypeExpr
 from dinkster_schema.nest import OutputShapeError, flatten_outputs, nest_inputs
 from dinkster_schema.records import (
     contains_records,
@@ -1142,7 +1142,7 @@ class InProcessWorker:
             return contract_error("; ".join(problems))
 
         outputs: dict[str, Value] = {}
-        bindings: Mapping[str, str] | None = None
+        bindings: Mapping[str, TypeExpr] | None = None
         for out in schema.outputs:
             expected = out.type.runtime_type_id()
             if expected is None:

@@ -8,16 +8,30 @@ import pytest
 from dinkster_api.v1 import Input, Node, NodeSchema, Output, RecordField, TypeExpr
 from dinkster_caches import DiskCacheStore, MemoryLRUCache, encode_entry
 from dinkster_engine import Engine, ExecutionError
-from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput, validate
+from dinkster_graph import (
+    PORTS_NODE_ID,
+    Graph,
+    GraphNode,
+    Link,
+    RegionNode,
+    RegionOutput,
+    graph_output_types,
+    validate,
+)
 from dinkster_schema import build_node_types, build_schemas, schema_from_wire, schema_to_wire
 from dinkster_values import (
     RESOURCE_HANDLE_TYPE,
     RecordPayload,
     ResourceHandle,
     TypeRegistry,
+    Value,
+    list_children,
+    make_list_value,
     make_record_value,
+    make_tuple_value,
     register_core_types,
     register_resource_handle_type,
+    value_children,
     value_resource_ids,
 )
 from dinkster_workers import InProcessWorker
@@ -453,6 +467,150 @@ def test_region_record_port_binds_fields_before_exporting(port: str, same_record
             assert (
                 "state port" if missing_at == "state" else "input"
             ) in raised.value.error.message
+
+    run_scenario(scenario())
+
+
+def test_generic_record_containers_keep_fields_for_downstream_and_region_contracts() -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        record = TypeExpr.record_of(
+            "test.settings",
+            RecordField("s", "seed", INTEGER),
+            RecordField("p", "prompt", TEXT),
+        )
+        generic = TypeExpr.variable("T")
+
+        class Produce(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema("test.make", body=(Output("value", record),))
+
+            @classmethod
+            def execute(cls) -> Mapping[str, object]:
+                return cls.outputs(value={"seed": 29, "prompt": "seven"})
+
+        class Collect(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    "test.collect",
+                    body=(Input("value", generic), Output("value", TypeExpr.list_of(generic))),
+                    input_values=True,
+                )
+
+            @classmethod
+            def execute(cls, *, input_values: Mapping[str, Value]) -> Mapping[str, object]:
+                value = input_values["value"]
+                return cls.outputs(value=make_list_value(value.type_id, (value,)))
+
+        class Pair(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    "test.pair",
+                    body=(
+                        Input("value", TypeExpr.list_of(generic)),
+                        Output("value", TypeExpr.tuple_of(TEXT, generic)),
+                    ),
+                    input_values=True,
+                )
+
+            @classmethod
+            def execute(cls, *, input_values: Mapping[str, Value]) -> Mapping[str, object]:
+                children = list_children(input_values["value"])
+                assert children is not None
+                return cls.outputs(
+                    value=make_tuple_value((registry.wrap("STRING", "first"), children[0]))
+                )
+
+        class Pick(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    "test.pick",
+                    body=(
+                        Input("value", generic),
+                        Input("index", INTEGER, default=-1),
+                        Output("value", TypeExpr.tuple_element("value", "index")),
+                    ),
+                    input_values=True,
+                )
+
+            @classmethod
+            def execute(
+                cls, *, index: int, input_values: Mapping[str, Value]
+            ) -> Mapping[str, object]:
+                children = value_children(input_values["value"])
+                assert children is not None
+                return cls.outputs(value=children[index])
+
+        class Consume(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    "test.read", body=(Input("value", record), Output("value", INTEGER))
+                )
+
+            @classmethod
+            def execute(cls, *, value: dict[str, object]) -> Mapping[str, object]:
+                return cls.outputs(value=value["seed"])
+
+        nodes = (Produce, Collect, Pair, Pick, Consume)
+        schemas = build_schemas(nodes)
+        graph = Graph(
+            nodes={
+                "make": GraphNode("test.make"),
+                "collect": GraphNode("test.collect", {"value": Link("make", "value")}),
+                "pair": GraphNode("test.pair", {"value": Link("collect", "value")}),
+                "pick": GraphNode("test.pick", {"value": Link("pair", "value"), "index": -1}),
+                "read": GraphNode("test.read", {"value": Link("pick", "value")}),
+                "region": RegionNode(
+                    kind="map",
+                    body=Graph(
+                        nodes={
+                            "pick": GraphNode("test.pick", {"value": Link(PORTS_NODE_ID, "pair")})
+                        }
+                    ),
+                    ports={"pair": TypeExpr.tuple_of(TEXT, record), "item": INTEGER},
+                    inputs={"pair": Link("pair", "value"), "item": [3, 7]},
+                    element_ports=("item",),
+                    outputs={"value": RegionOutput(Link("pick", "value"))},
+                ),
+            }
+        )
+        assert validate(graph, schemas, ["read", "region"]) == []
+        output_types = graph_output_types(graph, schemas)
+        assert output_types["pick"]["value"] == record
+        assert output_types["region"]["value"] == TypeExpr.list_of(record)
+        engine = Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        result = await engine.run(graph, ["read", "region"])
+        assert result.outputs["read"]["value"].resolve() == 29
+        assert result.outputs["region"]["value"].resolve() == [
+            {"seed": 29, "prompt": "seven"},
+            {"seed": 29, "prompt": "seven"},
+        ]
+        for wanted in (
+            TypeExpr.record_of("other.settings", RecordField("s", "missing", INTEGER)),
+            TypeExpr.record_of("other.settings", RecordField("s", "seed", TEXT)),
+        ):
+            broken = {
+                **schemas,
+                "test.read": replace(
+                    schemas["test.read"], body=(Input("value", wanted), Output("value", INTEGER))
+                ),
+            }
+            problems = validate(graph, broken, ["read"])
+            assert any(
+                d.code == "record-field-mismatch" and d.node_id == "read" and d.severity == "error"
+                for d in problems
+            )
 
     run_scenario(scenario())
 

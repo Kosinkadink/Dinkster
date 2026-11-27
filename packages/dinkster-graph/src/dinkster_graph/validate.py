@@ -8,7 +8,7 @@ Other link type mismatches are advisory warnings.
 from __future__ import annotations
 
 from collections.abc import Container, Iterable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Literal, cast
 
 from dinkster_schema import (
@@ -380,7 +380,7 @@ def _resolve_linked_output_types(
             schema = effective.get(node_id)
             if schema is None:
                 continue
-            input_types: dict[str, str] = {}
+            input_types: dict[str, str | TypeExpr] = {}
             all_generic_inputs_resolved = True
             for input_id, value in node.inputs.items():
                 input_spec = schema.input(input_id)
@@ -394,10 +394,10 @@ def _resolve_linked_output_types(
                     continue
                 linked_type = source_type(value) if isinstance(value, Link) else None
                 runtime_type = None if linked_type is None else linked_type.runtime_type_id()
-                if runtime_type is None:
+                if runtime_type is None or linked_type is None:
                     all_generic_inputs_resolved = False
                     continue
-                input_types[input_id] = runtime_type
+                input_types[input_id] = linked_type
             # The worker binds the same way and would fail this node only
             # after everything upstream ran, so a conflict among the types
             # already known rejects the graph.
@@ -440,19 +440,21 @@ def _resolve_linked_output_types(
     return resolved
 
 
-def _conflict_message(schema: NodeSchema, input_types: Mapping[str, str], variable: str) -> str:
+def _conflict_message(
+    schema: NodeSchema, input_types: Mapping[str, str | TypeExpr], variable: str
+) -> str:
     """Each input that binds ``variable``, by its own label, with the type it brings."""
     brought: list[str] = []
     for spec in schema.inputs:
         if spec.id not in input_types:
             continue
         try:
-            type_id = bind_type_variables((spec,), {spec.id: input_types[spec.id]}).get(variable)
+            expression = bind_type_variables((spec,), {spec.id: input_types[spec.id]}).get(variable)
         except TypeSolveError:
             continue
-        if type_id is not None:
+        if expression is not None:
             label = spec.label if isinstance(spec.label, str) and spec.label else spec.id
-            brought.append(f"{label.rsplit('.', 1)[-1]} is {type_id}")
+            brought.append(f"{label.rsplit('.', 1)[-1]} is {expression.runtime_type_id()}")
     return "These inputs must be the same type: " + ", ".join(brought) + "."
 
 
@@ -504,6 +506,9 @@ class _Level:
     ports: Mapping[str, TypeExpr] | None
     prefix: str
     known_types: Container[str] | None
+    output_types: Mapping[str, Mapping[str, TypeExpr]] = field(
+        default_factory=dict[str, Mapping[str, TypeExpr]]
+    )
 
 
 def _check_input_value(
@@ -603,7 +608,7 @@ def _check_input_value(
                         )
                     )
                     return
-                out_type = out.type
+                out_type = level.output_types.get(value.node_id, {}).get(value.output_id, out.type)
                 out_optional = out.optional
                 producer_desc = producer.node_type
         if expected is None:
@@ -1028,9 +1033,10 @@ def validate(
 
 def _validate_level(level: _Level, diags: list[Diagnostic]) -> None:
     output_diagnostics: list[Diagnostic] = []
-    _resolve_linked_output_types(
+    output_types = _resolve_linked_output_types(
         level.graph, level.ports or {}, level.effective, level.regions, output_diagnostics
     )
+    level = replace(level, output_types=output_types)
     diags.extend(_prefixed(diag, level.prefix) for diag in output_diagnostics)
     if PORTS_NODE_ID in level.graph.nodes:
         diags.append(
