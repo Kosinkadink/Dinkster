@@ -401,8 +401,9 @@ Default: off (flag). Linux and macOS.
 Runs isolated pack workers in a fail-closed bubblewrap jail on Linux or a
 Seatbelt sandbox on macOS. In-process
 first-party packs are not affected. Each pack's `[pack.sandbox]` table
-requests GPU, network, and writable-mount access, but the declaration grants
-nothing by itself. Writable access is limited to mounts the operator already
+requests GPU, network, and writable-mount access. An allowed pack's declared
+`network-origins` are granted automatically as exact HTTPS origins, never raw
+network access. Other needs require host grants. Writable access is limited to mounts the operator already
 configured as `readwrite`; all other configured mounts remain read-only.
 Linux workers have an unshared network namespace; macOS workers are denied
 direct network access, including loopback. Allowed HTTPS connections cross a
@@ -431,8 +432,10 @@ Syntax: `--sandbox-grant-network PACK=HTTPS_ORIGIN` (repeatable). Requires
 `--sandbox-packs`.
 
 Allows the named pack to reach one exact HTTPS origin when its manifest also
-requests `network = true`. Repeat the option for every origin, including the
-origins used by signed upload or download URLs. Origins cannot contain
+requests `network = true` or declares `network-origins`. Repeat the option for
+origins not already declared by the pack, including origins used by signed
+upload or download URLs. Legacy `network = true` without a list keeps requiring
+host-supplied origins. Origins cannot contain
 credentials, paths, queries, or fragments. DNS resolution happens in the host
 proxy, which refuses private, loopback, link-local, reserved, and otherwise
 non-global addresses before connecting to a validated address. TLS remains

@@ -1819,6 +1819,16 @@ def _cmd_prepare_catalogs(args: argparse.Namespace) -> None:
         raise InstallError("runtime catalog preparation failed; repair findings and retry")
 
 
+def _cmd_pack_metadata(args: argparse.Namespace) -> None:
+    from .generation_packs import generation_pack_metadata
+
+    try:
+        packs = generation_pack_metadata(args.generation)
+    except (OSError, ValueError) as exc:
+        raise InstallError(f"installed pack metadata unavailable: {exc}") from exc
+    json.dump({"packs": packs}, sys.stdout)
+
+
 def _cmd_catalog_nodes(args: argparse.Namespace) -> None:
     """Print the node entries a sealed snapshot's catalogs can supply, without composing."""
     from dinkster_registry import Lockfile
@@ -2081,6 +2091,12 @@ def main() -> None:
     )
     catalog_nodes.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
     catalog_nodes.set_defaults(handler=_cmd_catalog_nodes)
+
+    pack_metadata = commands.add_parser(
+        "pack-metadata", help="print installed pack identity and declared network origins"
+    )
+    pack_metadata.add_argument("--generation", type=Path, required=True, metavar="SNAPSHOT")
+    pack_metadata.set_defaults(handler=_cmd_pack_metadata)
 
     def add_plan_apply_arguments(command: argparse.ArgumentParser) -> None:
         """Every mutating command carries the plan/apply controls."""

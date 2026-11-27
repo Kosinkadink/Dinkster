@@ -1254,6 +1254,77 @@ def test_installations_report_their_wire_version_and_own_frontend(tmp_path: Path
     run_scenario(scenario())
 
 
+def test_installation_packs_read_stopped_snapshot_requests(tmp_path: Path) -> None:
+    from dinkster_registry import LockedPack, Lockfile
+    from test_environment_runtime import make_generation
+
+    root = tmp_path / "installed"
+    make_generation(root, fake_serve=False)
+    generation = root / "builds/1"
+    names = ("declared", "offline", "missing")
+    (generation / "dinkster.lock").write_text(
+        Lockfile.of(
+            [LockedPack(name, "1.2", "blake3:" + "a" * 64, "", (name,)) for name in names]
+        ).record_json()
+    )
+    for name in names[:2]:
+        source = generation / "pack-sources" / name
+        source.mkdir(parents=True)
+        (source / "nodes.py").write_text('raise AssertionError("must not import pack code")\n')
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\nnamespaces=["{name}"]\n'
+            '[pack.entry]\nnodes="nodes:NODES"\n'
+            + (
+                '[pack.sandbox]\nnetwork-origins=["https://API.example.test:443/"]\n'
+                '[[pack.parts]]\nname="extra"\n[pack.parts.entry]\nnodes="nodes:NODES"\n'
+                '[pack.parts.sandbox]\nnetwork-origins=["https://mirror.example.test:8443", '
+                '"https://api.example.test"]\n'
+                if name == "declared"
+                else "[pack.sandbox]\nnetwork=true\n"
+            )
+        )
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({root.resolve()}))
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/packs"
+            for query, expected in (
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unknown")}, 404),
+                ({"root": str(root), "engine": "../other"}, 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected
+            response = await client.get(endpoint, params={"root": str(root)})
+            assert response.status == 200
+            body = await response.json()
+            assert body["available"] is True and body["snapshot"] == "1"
+            packs = {row["pack"]: row for row in body["packs"]}
+            assert packs["declared"] == {
+                "pack": "declared",
+                "version": "1.2",
+                "displayName": "declared",
+                "available": True,
+                "networkOrigins": ["https://api.example.test", "https://mirror.example.test:8443"],
+            }
+            assert packs["offline"]["networkOrigins"] == []
+            assert packs["missing"]["version"] == "1.2"
+            assert packs["missing"]["available"] is False
+            assert packs["missing"]["networkOrigins"] is None
+            assert packs["missing"]["message"]
+            (generation / "dinkster.lock").unlink()
+            unavailable = await (await client.get(endpoint, params={"root": str(root)})).json()
+            assert unavailable["available"] is False and unavailable["packs"] is None
+            assert unavailable["message"]
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["state"] == "stopped" and "open" not in status
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_installation_frontend_address_serves_the_open_installations_own_frontend(
     tmp_path: Path,
 ) -> None:

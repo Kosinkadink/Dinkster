@@ -128,7 +128,8 @@
   inspection, keyrings, new namespaces, and io_uring; ordinary threads,
   subprocesses, shared memory, and granted GPU access remain available. Pack
   manifests request GPU, writable-mount, and network authority; each request
-  takes effect only when the host grants it. Network grants name exact HTTPS
+  takes effect only when the host grants it. Allowed packs receive their
+  declared `network-origins` automatically. Network grants name exact HTTPS
   origins and never restore host or loopback network access.
 - macOS supports opt-in OS sandboxing for local isolated packs through
   `dinkster-serve --sandbox-packs`. Workers can access only granted folders
