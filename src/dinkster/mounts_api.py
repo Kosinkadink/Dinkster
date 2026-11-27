@@ -41,8 +41,9 @@ grants without hashing, excluding hidden/ignored files, partial downloads,
 indexes and child symlinks. Alias grants share a canonical-folder identity;
 overlapping parent/child grants are separate observations, not additive disk
 usage. Reads share a cooperative one-second budget, with at most 100,000
-entries per grant; an OS call can outlast that budget. Failed, incomplete,
-pending and restart-required observations have no byte count. Empty is zero.
+entries and 64 directory levels per grant; an OS call can outlast that budget.
+Failed, incomplete, pending and restart-required observations have no byte
+count. Empty is zero.
 """
 
 from __future__ import annotations

@@ -244,32 +244,71 @@ class LocalAssetLibrary:
         try:
             root = self._root.resolve(strict=True)
             original = root.stat()
-            pending = [root]
-            total = visited = 0
-            while pending:
-                directory = pending.pop()
-                if time.monotonic() >= deadline or directory.resolve(strict=True) != directory:
+            visited = 0
+            descriptor_reads = os.scandir in os.supports_fd and os.open in os.supports_dir_fd
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+            def read(directory: Path, descriptor: int | None) -> int | None:
+                nonlocal visited
+                if (
+                    time.monotonic() >= deadline
+                    or len(directory.relative_to(root).parts) >= 64
+                    or directory.resolve(strict=True) != directory
+                ):
                     return None
-                with os.scandir(directory) as entries:
+                before = directory.stat(follow_symlinks=False)
+                if not stat.S_ISDIR(before.st_mode) or (
+                    descriptor is not None and not os.path.samestat(before, os.fstat(descriptor))
+                ):
+                    return None
+                total = 0
+                with os.scandir(descriptor if descriptor is not None else directory) as entries:
                     for entry in entries:
                         visited += 1
                         if visited > 100_000 or time.monotonic() >= deadline:
                             return None
-                        path = Path(entry.path)
-                        relative = path.relative_to(root).as_posix()
+                        member = directory / entry.name
+                        relative = member.relative_to(root).as_posix()
                         if (
                             entry.name.startswith(".")
                             or self._ignore.matches(relative, entry.name)
-                            or path.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS
-                            or path == self._index_path
-                            or entry.is_symlink()
+                            or member.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS
+                            or member == self._index_path
                         ):
                             continue
                         metadata = entry.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(metadata.st_mode) or getattr(
+                            metadata, "st_file_attributes", 0
+                        ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                            continue
                         if stat.S_ISDIR(metadata.st_mode):
-                            pending.append(path)
+                            child = (
+                                os.open(entry.name, flags, dir_fd=descriptor)
+                                if descriptor is not None
+                                else None
+                            )
+                            try:
+                                size = read(member, child)
+                            finally:
+                                if child is not None:
+                                    os.close(child)
+                            if size is None:
+                                return None
+                            total += size
                         elif stat.S_ISREG(metadata.st_mode):
                             total += metadata.st_size
+                if directory.resolve(strict=True) != directory or not os.path.samestat(
+                    before, directory.stat(follow_symlinks=False)
+                ):
+                    return None
+                return total
+
+            descriptor = os.open(root, flags) if descriptor_reads else None
+            try:
+                total = read(root, descriptor)
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
             current = self._root.stat()
             if (current.st_dev, current.st_ino) != (original.st_dev, original.st_ino):
                 return None

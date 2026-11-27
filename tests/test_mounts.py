@@ -960,6 +960,31 @@ def test_mount_folder_sizes_observe_current_files_without_hashing(
             (root / "one.bin").unlink()
             (root / "added.bin").unlink()
             assert (await sizes())["models"] == {**available, "bytes": 0}
+            private = tmp_path / "private"
+            seed(private, {"secret.bin": b"private contents outside the grant"})
+            nested = root / "nested"
+            original_directory = nested.stat()
+            scandir = os.scandir
+            replaced = False
+
+            def replace_directory(path: int | str | os.PathLike[str]):
+                nonlocal replaced
+                selected = (
+                    os.path.samestat(original_directory, os.fstat(path))
+                    if isinstance(path, int)
+                    else Path(path) == nested
+                )
+                if selected and not replaced:
+                    replaced = True
+                    nested.rename(root / "retained")
+                    nested.symlink_to(private, target_is_directory=True)
+                return scandir(path)
+
+            with monkeypatch.context() as race:
+                race.setattr(os, "scandir", replace_directory)
+                if scandir in os.supports_fd:
+                    race.setattr(os, "supports_fd", os.supports_fd | {replace_directory})
+                assert (await sizes())["models"] == {"status": "unavailable"}
             root.rename(tmp_path / "removed")
             assert (await sizes())["models"] == {"status": "unavailable"}
         finally:
