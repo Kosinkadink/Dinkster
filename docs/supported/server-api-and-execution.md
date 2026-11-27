@@ -140,7 +140,8 @@
   workflow bytes, using saved node attribution or installed host attribution for
   unstamped nodes. Unrecognized workflows remain unknown rather than guessed.
   Project needs also report the running environment's installed pack IDs and
-  versions, including disabled packs and versionless local packs. These facts
+  versions, including disabled packs and versionless local packs, whether any
+  installed nodes exist, and whether the caller may change the project. These facts
   do not enable packs or approve software changes.
   `/api/nodes?project=ID` publishes only that project's enabled packs and core
   nodes; without a project it retains the installed catalog. Removing an extra
