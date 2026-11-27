@@ -747,8 +747,12 @@ def test_stopping_home_cannot_leave_an_owned_start_running(
                 assert [row["state"] for row in after] == (["stopped"] if previous else [])
 
                 # A deliberate stop must not prevent a later start of the same installation.
+                spawned.clear()
                 response = await client.post("/supervisor/engine/restart")
                 assert response.status == 200, await response.text()
+                # CLI completion, not startup speed, establishes when Home can be ready.
+                await spawned.wait()
+                await children[-1].wait()
                 await wait_for(client, lambda status: status["state"] == "ready")
                 assert (await client.post("/supervisor/shutdown")).status == 200
                 assert [row["state"] for row in await asyncio.to_thread(engine_status, root)] == [
