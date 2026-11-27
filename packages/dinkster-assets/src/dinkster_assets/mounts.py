@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
 import tomllib
@@ -304,6 +305,15 @@ class MountDef:
                 require_asset_kind(kind)
             except AssetError as exc:
                 raise MountsError(f"mount {self.id!r}: {exc}") from exc
+
+    def require_writable(self) -> None:
+        """Test actual create/write/remove access, including ACLs and read-only filesystems."""
+        try:
+            with tempfile.NamedTemporaryFile(prefix=".dinkster-write-", dir=self.path) as probe:
+                probe.write(b"\0")
+                probe.flush()
+        except OSError as exc:
+            raise MountsError(f"Cannot save here: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -621,6 +631,7 @@ class _MountRow:
         self.kind = kind
         self.state = "pending"
         self.error: str | None = None
+        self.save_error: str | None = None
         self.library: LocalAssetLibrary | None = None
         self.entry_count: int | None = None
         self.missing_entry_count: int | None = None
@@ -817,6 +828,10 @@ class MountTable:
                     }
                 if row.error is not None:
                     wire["error"] = "model root unavailable" if hidden_semantic_root else row.error
+                if row.save_error is not None:
+                    wire["saveError"] = (
+                        "Cannot save here" if hidden_semantic_root else row.save_error
+                    )
                 out.append(wire)
             return out
 
@@ -865,7 +880,14 @@ class MountTable:
         try:
             if not row.mount.path.is_dir():
                 raise AssetError(f"asset library root is not a directory: {row.mount.path}")
+            save_error = None
+            if row.mount.mode == "readwrite":
+                try:
+                    row.mount.require_writable()
+                except MountsError as exc:
+                    save_error = str(exc)
             with self._lock:
+                row.save_error = save_error
                 library = self._library_for(row)
 
             with self._lock:
@@ -1009,6 +1031,8 @@ class MountTable:
                 raise AssetError(
                     f"mount {mount_id!r} is granted read-only; saving needs a readwrite mount"
                 )
+            if row.save_error is not None:
+                raise AssetError(row.save_error)
             if row.state != "ready" and not (
                 row.kind.startswith("model/")
                 and row.state in {"pending", "scanning"}
@@ -1437,6 +1461,7 @@ class MountTable:
                     "root": str(row.mount.path),
                     "index": str(row.library.index_path) if row.library is not None else "",
                     "mode": row.mount.mode,
+                    "saveError": row.save_error,
                     "kind": row.kind,
                     "priority": row.mount.priority,
                     "localBindingCapability": row.local_binding_capability,

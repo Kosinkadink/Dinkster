@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Mapping
 from dataclasses import replace
@@ -28,8 +29,10 @@ from dinkster_assets import (
     AssetWriter,
     LibraryStore,
     LocalAssetLibrary,
+    MountConfiguration,
     MountDef,
     MountSnapshotResolver,
+    MountSnapshotWriter,
     MountTable,
     digest_bytes,
     dump_mounts,
@@ -43,6 +46,7 @@ from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_library import LibraryClient
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import (
     Input,
@@ -1660,6 +1664,159 @@ def test_helper_project_edit_after_shared_model_location_change(
                 await client.close()
 
         run_scenario(scenario())
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("shared", [False, True])
+def test_mount_access_updates_refuse_stale_and_selected_then_persist(
+    tmp_path: Path, restart: bool, shared: bool
+) -> None:
+    config = tmp_path / "mounts.toml"
+    mounts = tuple(MountDef(name, tmp_path / name, "readwrite") for name in ("first", "second"))
+    config.write_text(dump_mounts(mounts, output_mount="first"))
+    table = MountTable(output_mount="first", index_root=tmp_path / "indexes")
+    for mount in mounts:
+        mount.path.mkdir()
+        table.add(mount)
+        table.scan(mount.id)
+    helper = LibraryClient(tmp_path / "library") if shared else None
+    if helper is not None:
+        MountConfiguration.load(helper).save(mounts, output_mount="first")
+    service = MountService(
+        table, config, allow_changes=True, restart_for_changes=restart, library=helper
+    )
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            state = await (await client.get("/api/mounts")).json()
+            revision = state["revision"]
+            refused = await client.put(
+                "/api/mounts/first/access", json={"mode": "read", "revision": revision}
+            )
+            assert refused.status == 409
+            assert "replacement" in (await refused.json())["error"]
+            response = await client.put(
+                "/api/mounts/second/access", json={"mode": "read", "revision": revision}
+            )
+            assert response.status == 200, await response.text()
+            changed = await response.json()
+            assert {row["id"]: row["mode"] for row in changed["mounts"]} == {
+                "first": "readwrite",
+                "second": "read",
+            }
+            assert changed["revision"] != revision
+            stale = await client.put(
+                "/api/mounts/second/access", json={"mode": "readwrite", "revision": revision}
+            )
+            assert stale.status == 409
+            persisted = (
+                MountConfiguration.load(helper).mounts
+                if helper is not None
+                else load_mounts(config)
+            )
+            assert {mount.id: mount.mode for mount in persisted}["second"] == "read"
+            restored_table = MountTable(output_mount="first")
+            for mount in persisted:
+                restored_table.add(mount)
+            restored = MountService(restored_table, config, library=helper)
+            restored_state = restored.project_response("default")
+            restored_rows = cast(list[dict[str, object]], restored_state["mounts"])
+            assert {row["id"]: row["mode"] for row in restored_rows} == {
+                "first": "readwrite",
+                "second": "read",
+            }
+            response = await client.put(
+                "/api/mounts/second/access",
+                json={"mode": "readwrite", "revision": changed["revision"]},
+            )
+            assert response.status == 200
+            persisted = (
+                MountConfiguration.load(helper).mounts
+                if helper is not None
+                else load_mounts(config)
+            )
+            assert {mount.id: mount.mode for mount in persisted} == {
+                "first": "readwrite",
+                "second": "readwrite",
+            }
+            revision = (await response.json())["revision"]
+            peer_mounts = tuple(
+                replace(mount, priority=37) if mount.id == "first" else mount for mount in persisted
+            )
+            if helper is not None:
+                MountConfiguration.load(helper).save(peer_mounts, output_mount="first")
+            else:
+                config.write_text(dump_mounts(peer_mounts, output_mount="first"))
+            refused = await client.put(
+                "/api/mounts/second/access", json={"mode": "read", "revision": revision}
+            )
+            assert refused.status == 409
+            persisted = (
+                MountConfiguration.load(helper).mounts
+                if helper is not None
+                else load_mounts(config)
+            )
+            assert {mount.id: (mount.mode, mount.priority) for mount in persisted} == {
+                "first": ("readwrite", 37),
+                "second": ("readwrite", 0),
+            }
+        finally:
+            await service.close()
+            await client.close()
+            if helper is not None:
+                helper.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory permission fixture")
+def test_unwritable_mount_refuses_add_and_keeps_existing_files_readable(tmp_path: Path) -> None:
+    if sys.platform != "win32" and os.geteuid() == 0:
+        pytest.skip("run as an unprivileged user to exercise actual write refusal")
+    root = tmp_path / "readonly"
+    root.mkdir()
+    (root / "kept.txt").write_bytes(b"readable content")
+    root.chmod(0o555)
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes", output_mount="existing")
+    table.add(MountDef("existing", root, "readwrite"))
+    table.scan("existing")
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            with pytest.raises(PermissionError):
+                (root / "not-created.txt").write_bytes(b"denied")
+            refused = await client.post(
+                "/api/mounts", json={"id": "new", "path": str(root), "mode": "readwrite"}
+            )
+            assert refused.status == 400
+            assert "Cannot save here" in (await refused.json())["error"]
+            state = await (await client.get("/api/mounts")).json()
+            assert [row["id"] for row in state["mounts"]] == ["existing"]
+            assert state["mounts"][0]["state"] == "ready"
+            assert "Permission denied" in state["mounts"][0]["saveError"]
+            assert state["outputMount"] is None
+            assert table.ref("mounts/existing/kept.txt").read_bytes() == b"readable content"
+            for authority in (table, MountSnapshotWriter(snapshot)):
+                with pytest.raises(AssetError, match="Cannot save here"):
+                    authority.writable_root("existing")
+            refused = await client.put("/api/mounts/output", json={"id": "existing"})
+            assert refused.status == 400
+            root.chmod(0o755)
+            table.scan("existing")
+            recovered = await (await client.get("/api/mounts")).json()
+            assert "saveError" not in recovered["mounts"][0]
+            assert recovered["outputMount"] == "existing"
+            assert MountSnapshotWriter(snapshot).writable_root("existing") == root
+        finally:
+            root.chmod(0o755)
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> None:
