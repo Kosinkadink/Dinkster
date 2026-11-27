@@ -313,8 +313,10 @@ def add_project_routes(
         )
         relay: asyncio.Task[None] | None = None
         try:
-            if "changes.head" not in cast("list[str]", client.sync.hello["capabilities"]):
-                raise LibraryError("capability", "Library change relay requires updated tools.")
+            if not {"changes.head", "projects.pack-selection"}.issubset(
+                cast("list[str]", client.sync.hello["capabilities"])
+            ):
+                raise LibraryError("capability", "Project library requires updated tools.")
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
             if identity is not None:
                 value: object = json.loads(identity)
