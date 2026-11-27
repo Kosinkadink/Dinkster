@@ -14,6 +14,7 @@ import venv
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from urllib.request import Request, urlopen
 
 import pytest
@@ -2441,6 +2442,89 @@ def test_generations_keep_assignments_but_take_turns_on_the_library(tmp_path: Pa
             stop_engine(tmp_path, "main", generation=2)
     finally:
         stop_engine(tmp_path, "main", generation=1)
+
+
+def test_status_reader_does_not_abort_supervisor_state_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_process import process_state
+
+    lifecycle = tmp_path / "lifecycle"
+    prepare_process(lifecycle, "concurrent-status")
+    opened, release = Event(), Event()
+    original_open = Path.open
+
+    def open_reader(path: Path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        if path == lifecycle / "state.json":
+            read = handle.read
+
+            def paused_read(*args, **kwargs):
+                opened.set()
+                if not release.wait(10):
+                    raise TimeoutError("status reader was not released")
+                return read(*args, **kwargs)
+
+            handle.read = paused_read
+        return handle
+
+    monkeypatch.setattr(Path, "open", open_reader)
+    command = [
+        sys.executable,
+        "-c",
+        """
+import sys
+from pathlib import Path
+from filelock import FileLock
+from dinkster_supervisor.environment_process import (
+    complete_process, process_lifetime, process_state,
+)
+
+# A lock-attempt barrier releases the real reader without a timing assumption.
+# Unfixed Windows reaches the final barrier instead, after the real replace fails.
+acquire = FileLock._acquire
+notified = False
+def attempt(self):
+    global notified
+    acquire(self)
+    if not notified:
+        notified = True
+        print('reader-can-close', flush=True)
+FileLock._acquire = attempt
+root = Path(sys.argv[1])
+try:
+    with process_lifetime(root, 'concurrent-status') as admitted:
+        assert admitted
+        assert process_state(root, 'concurrent-status') == 'running'
+        complete_process(root, 'concurrent-status', descendants=True)
+    assert process_state(root, 'concurrent-status') == 'stopped'
+finally:
+    print('finished', flush=True)
+""",
+        str(lifecycle),
+    ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reader = pool.submit(process_state, lifecycle, "concurrent-status")
+        try:
+            assert opened.wait(10), "status reader did not open the state file"
+            with subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            ) as child:
+                try:
+                    assert child.stdout is not None
+                    pool.submit(child.stdout.readline).result(timeout=10)
+                    release.set()
+                    stdout, stderr = child.communicate(timeout=10)
+                    assert child.returncode == 0, stdout + stderr
+                finally:
+                    release.set()
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait(timeout=10)
+            assert reader.result(timeout=10) == "pending"
+        finally:
+            release.set()
+    assert process_state(lifecycle, "concurrent-status") == "stopped"
 
 
 def test_cancelled_delayed_supervisor_cannot_spawn_its_engine(tmp_path: Path) -> None:
