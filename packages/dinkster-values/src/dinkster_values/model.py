@@ -225,6 +225,13 @@ class ValueMeta:
     def get(self, key: str, default: object = None) -> object:
         return self.entries.get(key, default)
 
+    @property
+    def codec_entries(self) -> Mapping[str, object]:
+        """Type metadata excludes the host's diagnostic producer attribution."""
+        if "producer.pack" not in self.entries:
+            return self.entries
+        return {key: value for key, value in self.entries.items() if key != "producer.pack"}
+
 
 @runtime_checkable
 class Payload(Protocol):

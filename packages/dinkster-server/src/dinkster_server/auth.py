@@ -120,6 +120,7 @@ class Principal:
     local: bool = False
     verified_jwt: bool = False
     authorization_error: str | None = None
+    browser_session_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.principal_id:
@@ -155,6 +156,17 @@ class Authenticator(Protocol):
     """Resolve one opaque bearer credential without framework coupling."""
 
     async def authenticate(self, token: str) -> Principal | None: ...
+
+
+class BrowserAuthenticator(Protocol):
+    """Authenticate an initiating browser and recheck its session on live streams."""
+
+    def authenticate(self, request: web.Request) -> Principal | None: ...
+
+    def current(self, principal: Principal) -> bool: ...
+
+
+BROWSER_AUTH_KEY: web.AppKey[BrowserAuthenticator] = web.AppKey("browser_auth")
 
 
 class StaticBearerAuthenticator:
@@ -394,6 +406,10 @@ def principal_for(request: web.Request) -> Principal:
     if _RAW_PRINCIPAL_KEY not in request:
         return principal
     principal = request[_RAW_PRINCIPAL_KEY]
+    if principal.browser_session_id is not None:
+        browser = request.app.get(BROWSER_AUTH_KEY)
+        if browser is None or not browser.current(principal):
+            return replace(principal, grants={}, authorization_error="account-session-ended")
     if principal.expires_at is not None and principal.expires_at <= time.time():
         return replace(principal, grants={})
     try:
@@ -1098,7 +1114,28 @@ def install_auth(
         resource = route.resource if isinstance(route, ResourceRoute) else None
         canonical = resource.canonical if resource is not None else None
         is_media_ingest = request.method == "POST" and canonical == "/api/assets/media"
-        if authenticator is None:
+        browser = request.app.get(BROWSER_AUTH_KEY)
+        browser_principal = (
+            browser.authenticate(request)
+            if browser is not None and "Authorization" not in request.headers
+            else None
+        )
+        if browser_principal is not None:
+            if (
+                request.headers.get("Upgrade", "").lower() == "websocket"
+                and "ticket" in request.query
+            ):
+                ticket_principal = request.app[WS_TICKETS_KEY].redeem(request.query["ticket"])
+                if ticket_principal is None or (
+                    ticket_principal.principal_id != browser_principal.principal_id
+                    or ticket_principal.browser_session_id != browser_principal.browser_session_id
+                ):
+                    return web.json_response({"error": "account-session-ended"}, status=401)
+            if authenticator is None and request.headers.get("X-Dinkster-Actor-Kind") == "agent":
+                browser_principal = replace(browser_principal, kind="agent")
+            request[_RAW_PRINCIPAL_KEY] = browser_principal
+            request[PRINCIPAL_KEY] = store.apply(browser_principal)
+        elif authenticator is None:
             local = LOCAL_PRINCIPAL
             if request.headers.get("X-Dinkster-Actor-Kind") == "agent":
                 local = replace(LOCAL_PRINCIPAL, kind="agent")
@@ -1161,6 +1198,8 @@ def install_auth(
             request[PRINCIPAL_KEY] = store.apply(principal)
 
         raw = request[_RAW_PRINCIPAL_KEY]
+        if raw.browser_session_id is not None and browser_principal is None:
+            return web.json_response({"error": "account-session-ended"}, status=401)
         if (
             authenticator is not None
             and raw.kind != "agent"

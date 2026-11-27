@@ -433,7 +433,7 @@ class AssetSize(Node):
         return NodeSchema(
             node_type="test.asset.size",
             body=(
-                Input("asset", ASSET, widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT)),
+                Input("asset", ASSET, widget=AssetWidget(kind="media/file")),
                 Output("bytes", INT),
             ),
         )
@@ -441,6 +441,23 @@ class AssetSize(Node):
     @classmethod
     def execute(cls, *, asset: AssetRef) -> Mapping[str, object]:
         return cls.outputs(bytes=len(asset.read_bytes()))
+
+
+class ModelSize(AssetSize):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="test.model.size",
+            body=(
+                Input(
+                    "asset",
+                    ASSET,
+                    default=AssetRef(MODEL_DIGEST, "model.bin", len(MODEL_BYTES)).to_wire(),
+                    widget=AssetWidget(kind=KIND_MODEL_CHECKPOINT),
+                ),
+                Output("bytes", INT),
+            ),
+        )
 
 
 class AssetCompileSource(Node):
@@ -456,7 +473,7 @@ class AssetCompileSource(Node):
         return cls.outputs(value=1)
 
 
-NODES = (AssetSize, AssetCompileSource)
+NODES = (AssetSize, ModelSize, AssetCompileSource)
 SCHEMAS = build_schemas(NODES)
 
 
@@ -500,6 +517,7 @@ async def make_asset_client(
     *,
     mounts: MountTable | None = None,
     resolver: AssetResolver | None = None,
+    asset_needs: Mapping[str, AssetNeed] | None = None,
 ) -> tuple[TestClient, ServerLibrary]:
     vault = AssetVault(tmp_path / "vault")
     library = ServerLibrary(
@@ -508,6 +526,7 @@ async def make_asset_client(
         provenance=ProvenanceStore(tmp_path / "provenance.json"),
         resolver=resolver or mounts,
         local_resolver=mounts,
+        asset_needs=asset_needs or {},
     )
 
     def make_engine(on_event: EventListener | None = None) -> Engine:
@@ -600,7 +619,7 @@ def test_submit_bare_model_name_before_mount_hashing(tmp_path: Path, present: bo
         mounts.add(MountDef(id="models", path=root), kind=KIND_MODEL_CHECKPOINT)
         client, _ = await make_asset_client(tmp_path, mounts=mounts)
         try:
-            graph = Graph({"s": GraphNode("test.asset.size", {"asset": name})})
+            graph = Graph({"s": GraphNode("test.model.size", {"asset": name})})
             response = await client.post("/api/jobs", json=submit_body(graph))
             if present:
                 assert response.status == 202
@@ -618,6 +637,67 @@ def test_submit_bare_model_name_before_mount_hashing(tmp_path: Path, present: bo
             assert not (tmp_path / "indexes" / "models.json").exists()
         finally:
             await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("declared", [False, True], ids=["model-input", "declared-model"])
+@pytest.mark.parametrize("default", [False, True], ids=["explicit", "default"])
+def test_submit_model_consent_does_not_download(
+    tmp_path: Path, declared: bool, default: bool
+) -> None:
+    async def scenario() -> None:
+        hits: list[str] = []
+        host = TestServer(make_asset_host({"model": MODEL_BYTES}, hits))
+        await host.start_server()
+        url = str(host.make_url("/files/model"))
+        client, library = await make_asset_client(
+            tmp_path,
+            asset_needs={
+                MODEL_DIGEST: AssetNeed(
+                    digest=MODEL_DIGEST,
+                    name="model.bin",
+                    kind=KIND_MODEL_CHECKPOINT,
+                    sources=(RemoteSource(url),),
+                )
+            }
+            if declared
+            else None,
+        )
+        try:
+            graph = Graph(
+                {
+                    "s": GraphNode(
+                        "test.model.size",
+                        {}
+                        if default
+                        else {"asset": asset_literal(MODEL_DIGEST, "model.bin", len(MODEL_BYTES))},
+                    )
+                }
+            )
+            response = await client.post(
+                "/api/jobs",
+                json=submit_body(
+                    graph, acquireAssets=[MODEL_DIGEST], assetSources={MODEL_DIGEST: [url]}
+                ),
+            )
+            assert response.status == 409, await response.text()
+            plan = await response.json()
+            assert plan["error"] == "assets-missing"
+            assert plan["assets"][0]["kind"] == KIND_MODEL_CHECKPOINT
+            assert plan["assets"][0]["status"] == "missing"
+            assert hits == []
+            assert not library.vault.has(MODEL_DIGEST)
+            with library.vault.writer(MODEL_DIGEST) as writer:
+                writer.write(MODEL_BYTES)
+                writer.commit()
+            response = await client.post("/api/jobs", json=submit_body(graph))
+            assert response.status == 202, await response.text()
+            assert (await wait_terminal(client))["state"] == "completed"
+            assert hits == []
+        finally:
+            await client.close()
+            await host.close()
 
     run_scenario(scenario())
 
@@ -684,9 +764,11 @@ def test_unselected_missing_asset_branch_still_refuses_graph_wide_preflight(
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("model_default", [False, True], ids=["media-literal", "model-default"])
 def test_compiled_literal_asset_is_preflighted_before_queue(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    model_default: bool,
 ) -> None:
     async def scenario() -> None:
         client, app, engine, runtime = await make_compiled_asset_client(tmp_path)
@@ -698,8 +780,10 @@ def test_compiled_literal_asset_is_preflighted_before_queue(
             graph = Graph(
                 {
                     "compiled": GraphNode(
-                        "test.asset.size",
-                        {
+                        "test.model.size" if model_default else "test.asset.size",
+                        {}
+                        if model_default
+                        else {
                             "asset": asset_literal(
                                 MODEL_DIGEST, "compiled-only.bin", len(MODEL_BYTES)
                             )
@@ -719,7 +803,9 @@ def test_compiled_literal_asset_is_preflighted_before_queue(
             plan = await response.json()
             assert plan["error"] == "assets-missing"
             assert plan["assets"][0]["digest"] == MODEL_DIGEST
-            assert plan["assets"][0]["name"] == "compiled-only.bin"
+            assert plan["assets"][0]["name"] == (
+                "model.bin" if model_default else "compiled-only.bin"
+            )
             assert calls == 1
             assert app[STATE_KEY].queue.get("c1", "j1") is None
         finally:

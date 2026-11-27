@@ -958,7 +958,10 @@ class InProcessWorker:
         diagnostics: list[dict[str, object]] | None = None,
         media_inputs: dict[str, Value] | None = None,
     ) -> object:
-        obj = self._unwrap_value(invocation, input_id, value)
+        try:
+            obj = self._unwrap_value(invocation, input_id, value)
+        except UnresolvablePayload as exc:
+            raise InputCoercionError(f"input '{input_id}': {exc}") from exc
         spec = invocation.effective_schema.input(input_id)
         if spec is None or is_absent(value):
             return obj

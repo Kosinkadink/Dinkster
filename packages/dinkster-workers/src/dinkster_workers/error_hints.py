@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import errno
+import os
 import re
 from collections.abc import Callable, Sequence
 
 from dinkster_protocol import ErrorHint
+
+from .launch import SANDBOX_NETWORK_ENV
 
 Interpreter = Callable[[BaseException], tuple[ErrorHint, ...]]
 
@@ -150,7 +154,37 @@ def _cuda_oom(exc: BaseException) -> tuple[ErrorHint, ...]:
     )
 
 
+def _sandbox_network_refusal(exc: BaseException) -> tuple[ErrorHint, ...]:
+    if os.environ.get(SANDBOX_NETWORK_ENV) != "1":
+        return ()
+    seen: set[int] = set()
+    while id(exc) not in seen:
+        seen.add(id(exc))
+        refused = isinstance(exc, OSError) and exc.errno in {errno.ENETUNREACH, errno.EHOSTUNREACH}
+        if isinstance(exc, PermissionError):
+            frame = exc.__traceback__
+            while frame is not None:
+                if frame.tb_frame.f_globals.get("__name__") == "socket":
+                    refused = True
+                    break
+                frame = frame.tb_next
+        if refused:
+            return (
+                ErrorHint(
+                    "sandbox-network-destination-unknown",
+                    "Sandboxed worker was refused direct internet access; destination unknown.",
+                ),
+            )
+        reason = getattr(exc, "reason", None)
+        nested = reason if isinstance(reason, BaseException) else exc.__cause__ or exc.__context__
+        if not isinstance(nested, BaseException):
+            break
+        exc = nested
+    return ()
+
+
 INTERPRETERS: tuple[Interpreter, ...] = (
+    _sandbox_network_refusal,
     _tensor_shape_mismatch,
     _dtype_mismatch,
     _device_mismatch,

@@ -14,7 +14,7 @@ from dinkster_server.auth import principal_for
 from dinkster_server.projects import validate_project
 from dinkster_values.asset_folders import use_asset_folders
 
-from .model_settings import ModelSettings, ModelSettingsConflict
+from .model_settings import ModelSettings, ModelSettingsConflict, filesystem_space
 from .project_folders import HiddenModelPreference, ProjectFolders
 from .storelock import StoreLockTimeout
 
@@ -63,6 +63,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 and live_modes.get(mount.id) == saved_modes.get(mount.id)
                 for mount in mounts
             )
+            row["space"] = filesystem_space(location.path)
         return web.json_response(
             {
                 "settings": settings.to_wire(),

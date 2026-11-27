@@ -1201,6 +1201,7 @@ def _installed_pack_spec(
         docs=manifest_info.docs,
         locale_catalogs=manifest_info.locale_catalogs,
         templates=manifest_info.templates,
+        network_origins=manifest_info.network_origins,
     )
     return PackSpec(
         manifest=manifest,
@@ -1472,16 +1473,24 @@ class Composition:
 def _merge_pack_entry(
     packs: dict[str, PackInfo], pack_id: str, info: PackInfo, source: str
 ) -> None:
-    """Table entries may repeat across specs only when identical (two compat
-    workers both contributing the shared "comfy" entry); a conflicting
-    redefinition is misconfiguration."""
+    """Merge execution parts' storage choices under one pack identity.
+
+    Other pack metadata must agree, including for shared compat entries.
+    """
     if pack_id == CORE_PACK_ID:
         raise CompositionError(f"{source}: pack id {CORE_PACK_ID!r} is reserved")
     existing = packs.get(pack_id)
-    if existing is not None and existing != info:
-        raise CompositionError(
-            f"{source}: pack id {pack_id!r} already declared with different info"
-        )
+    if existing is not None:
+        storage = dict(existing.type_storage)
+        if replace(existing, type_storage=()) != replace(info, type_storage=()) or any(
+            type_id in storage and storage[type_id] != provider
+            for type_id, provider in info.type_storage
+        ):
+            raise CompositionError(
+                f"{source}: pack id {pack_id!r} already declared with different info"
+            )
+        storage.update(info.type_storage)
+        info = replace(info, type_storage=tuple(sorted(storage.items())))
     packs[pack_id] = info
 
 
@@ -2557,6 +2566,82 @@ class ServingComposer:
                 ) from exc
         return scratch
 
+    def _pack_infos(self, spec: PackSpec, manifest: PackManifest) -> dict[str, PackInfo]:
+        infos = (
+            dict(spec.packs)
+            if spec.packs is not None
+            else {
+                manifest.name: replace(
+                    pack_info_from_manifest(
+                        load_manifest(manifest.path) if manifest.part is not None else manifest
+                    ),
+                    source=f"local:{manifest.root.resolve()}",
+                )
+            }
+        )
+        if manifest.uses_types and manifest.name in infos:
+            providers = self._type_providers((manifest,))
+            infos[manifest.name] = replace(
+                infos[manifest.name],
+                type_storage=tuple(
+                    (type_id, providers.get(type_id, manifest).name)
+                    for type_id in sorted(manifest.uses_types)
+                ),
+            )
+        return infos
+
+    @staticmethod
+    def _pack_storage_infos(
+        records: Mapping[str, _PackRecord], registry: TypeRegistry
+    ) -> dict[str, PackInfo]:
+        """Project the shared host's storing, including its cold type registrations.
+
+        Isolated workers retain their launch-time providers. Host workers
+        share one registry, and execution prepares every matching cold host
+        type registration before resolving values.
+        """
+        host_records = tuple(record for record in records.values() if record.spec.in_process)
+        candidates: dict[str, set[str]] = {}
+        owners: dict[str, str] = {}
+        for record in host_records:
+            for info in record.delta.packs.values():
+                for type_id, provider in info.type_storage:
+                    choices = candidates.setdefault(type_id, set())
+                    if getattr(record.worker, "cold", False):
+                        choices.add(provider)
+                    elif storing := registry.storing_pack(type_id):
+                        choices.add(storing.partition("~")[0])
+            for type_id in record.worker.registered_types:
+                owners[type_id] = record.manifest.name
+        providers: dict[str, str] = {}
+        for type_id, choices in candidates.items():
+            storing = registry.storing_pack(type_id) if type_id in registry else None
+            if storing is not None and storing == registry.owner_of(type_id):
+                providers[type_id] = storing.partition("~")[0]
+            elif type_id in owners:
+                providers[type_id] = owners[type_id]
+            else:
+                if storing is not None:
+                    choices.add(storing.partition("~")[0])
+                providers[type_id] = min(choices, key=lambda name: (canonical_name(name), name))
+        infos: dict[str, PackInfo] = {}
+        for record in records.values():
+            for pack_id, info in record.delta.packs.items():
+                _merge_pack_entry(
+                    infos,
+                    pack_id,
+                    replace(
+                        info,
+                        type_storage=tuple(
+                            (type_id, providers[type_id]) for type_id, _ in info.type_storage
+                        ),
+                    )
+                    if record.spec.in_process
+                    else info,
+                    record.manifest.execution_id,
+                )
+        return infos
+
     def _type_providers(self, manifests: Sequence[PackManifest]) -> dict[str, PackManifest]:
         """Choose the pack that stores each type these packs use.
 
@@ -2763,6 +2848,13 @@ class ServingComposer:
         network_requesters = frozenset(
             canonical_name(manifest.name) for manifest in manifests if manifest.sandbox.network
         )
+        network_grants = dict(self._sandbox_network_grants)
+        for manifest in manifests:
+            name = canonical_name(manifest.name)
+            network_grants[name] = (
+                *network_grants.get(name, ()),
+                *manifest.sandbox.network_origins,
+            )
         if any(manifest.sandbox.writable_mounts for manifest in manifests):
             writable_mounts = {
                 os.path.realpath(os.path.abspath(path)) for path in self._sandbox_writable_mounts
@@ -2807,9 +2899,7 @@ class ServingComposer:
         missing_network_grants = {
             requester
             for requester in network_requesters
-            if not global_egress
-            and not implicit_egress
-            and not self._sandbox_network_grants.get(requester)
+            if not global_egress and not implicit_egress and not network_grants.get(requester)
         }
         if missing_network_grants:
             denied = ", ".join(
@@ -2831,7 +2921,7 @@ class ServingComposer:
                     *(
                         origin
                         for requester in sorted(network_requesters)
-                        for origin in self._sandbox_network_grants.get(requester, ())
+                        for origin in network_grants.get(requester, ())
                     ),
                 )
             )
@@ -3969,7 +4059,7 @@ class ServingComposer:
         remote_names = frozenset(self._remotes)
         runtime_schemas = MappingProxyType(dict(self.composition.schemas))
         host_type_workers = tuple(
-            record.worker
+            (record.worker, record.manifest.uses_types)
             for record in self._records.values()
             if record.spec.in_process
             and record.manifest.types_entry is not None
@@ -3983,8 +4073,8 @@ class ServingComposer:
         )
 
         async def prepare_host_types(atoms: set[str]) -> None:
-            for host_worker in host_type_workers:
-                if atoms.intersection(host_worker.catalog.types.atoms):
+            for host_worker, used_types in host_type_workers:
+                if atoms.intersection((*host_worker.catalog.types.atoms, *used_types)):
                     await host_worker.ensure_started()
 
         def resolve_providers(graph: Graph) -> Graph:
@@ -5341,8 +5431,8 @@ class ServingComposer:
         Validates against everything composed SO FAR - the same rules
         whether packs arrive all at once or one at a time - and returns
         the delta for a live server to announce. The delta's packs map may
-        repeat an existing entry only when identical (two compat workers
-        both contributing the shared "comfy" entry)."""
+        repeat an existing entry when identical or when the shared host's
+        selected type storage changes."""
         async with self._mutate:
             return await self._add_pack_locked(entry)
 
@@ -5484,18 +5574,7 @@ class ServingComposer:
         # nothing pinned them, and omission MEANS unpinned on the wire.
         # Specs that provide their own packs table (installer-managed,
         # compat workers) carry their own provenance untouched.
-        spec_packs = (
-            dict(spec.packs)
-            if spec.packs is not None
-            else {
-                manifest.name: replace(
-                    pack_info_from_manifest(
-                        load_manifest(manifest.path) if manifest.part is not None else manifest
-                    ),
-                    source=f"local:{manifest.root.resolve()}",
-                )
-            }
-        )
+        spec_packs = self._pack_infos(spec, manifest)
         # Validate against a STAGED copy; nothing below this line mutates
         # composed state until the commit point at the end. add_pack is
         # atomic: a pack that fails to start or validate leaves the
@@ -5522,6 +5601,7 @@ class ServingComposer:
                     yield
 
             loaded: list[Any] = []
+            type_providers = self._type_providers((manifest,))
 
             async def start_in_process() -> Any:
                 if offline_partner:
@@ -5537,7 +5617,7 @@ class ServingComposer:
                     import_from_pack_root=True,
                     registry=current_registry,
                     saved_preview_vault=self._saved_preview_vault,
-                    type_providers=self._type_providers((manifest,)),
+                    type_providers=type_providers,
                 )
                 loaded.append(loaded_worker)
                 self._validate_body_arms(manifest, loaded_worker)
@@ -5568,7 +5648,7 @@ class ServingComposer:
                         import_from_pack_root=True,
                         registry=staged_registry,
                         saved_preview_vault=self._saved_preview_vault,
-                        type_providers=self._type_providers((manifest,)),
+                        type_providers=type_providers,
                     )
             except BaseException:
                 if tenant_proxy is not None:
@@ -5777,6 +5857,13 @@ class ServingComposer:
                 self._register_worker_renditions(staged_registry, manifest.execution_id, worker)
             if spec.host_types is not None:
                 spec.host_types(staged_registry)
+            host_packs = self._pack_storage_infos(staged_records, staged_registry)
+            changed_host_packs = {
+                pack_id: info
+                for pack_id, info in host_packs.items()
+                if staged_packs.get(pack_id) != info
+            }
+            staged_packs.update(changed_host_packs)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -5845,6 +5932,7 @@ class ServingComposer:
         changed_derived_choices = self._changed_derived_choices(old_derived_choices)
         delta = replace(
             delta,
+            packs={**delta.packs, **changed_host_packs},
             schemas={node_type: composition.schemas[node_type] for node_type in published_types},
             node_packs={
                 node_type: composition.node_packs[node_type] for node_type in published_types
@@ -6619,18 +6707,13 @@ class ServingComposer:
                         f"namespace {claim!r} claimed by {manifest.name!r} "
                         f"overlaps {held!r} claimed by {holder!r}"
                     )
-            spec_packs = (
-                dict(spec.packs)
-                if spec.packs is not None
-                else {
-                    manifest.name: replace(
-                        pack_info_from_manifest(
-                            load_manifest(manifest.path) if manifest.part is not None else manifest
-                        ),
-                        source=f"local:{manifest.root.resolve()}",
-                    )
-                }
+            promoted = (
+                isinstance(record.worker, LazyWorker)
+                and record.worker.declarations_changed
+                and spec == record.spec
+                and source_digest(manifest) == record.worker.catalog.source
             )
+            spec_packs = dict(record.delta.packs) if promoted else self._pack_infos(spec, manifest)
             # Stage the pack table as it would look after the swap: current
             # entries minus this pack's exclusive ids, then the new
             # declarations merged under the identical-or-new rule (a shared
@@ -6648,12 +6731,6 @@ class ServingComposer:
             }
             for pack_id, info in spec_packs.items():
                 _merge_pack_entry(staged_packs, pack_id, info, str(manifest.path))
-            promoted = (
-                isinstance(record.worker, LazyWorker)
-                and record.worker.declarations_changed
-                and spec == record.spec
-                and source_digest(manifest) == record.worker.catalog.source
-            )
             if promoted:
                 worker = await record.worker.ensure_started()
                 if not worker.alive:
@@ -7074,20 +7151,7 @@ class ServingComposer:
                             f"node type {node_type!r} is declared by both {prior!r} and {pack!r}"
                         )
                 member_spec = specs[pack]
-                spec_packs = (
-                    dict(member_spec.packs)
-                    if member_spec.packs is not None
-                    else {
-                        manifest.name: replace(
-                            pack_info_from_manifest(
-                                load_manifest(manifest.path)
-                                if manifest.part is not None
-                                else manifest
-                            ),
-                            source=f"local:{manifest.root.resolve()}",
-                        )
-                    }
-                )
+                spec_packs = self._pack_infos(member_spec, manifest)
                 for pack_id, info in spec_packs.items():
                     _merge_pack_entry(staged_pack_table, pack_id, info, str(manifest.path))
                 node_packs = {
@@ -7299,7 +7363,8 @@ class ServingComposer:
         aggregate_skips: dict[str, dict[str, CompatGateDiagnostic]] = {}
         for pack in group_records:
             delta = staged_records[pack].delta
-            aggregate_packs.update(delta.packs)
+            for pack_id, info in delta.packs.items():
+                _merge_pack_entry(aggregate_packs, pack_id, info, pack)
             aggregate_choices.update(delta.choices)
             aggregate_lazy.update(delta.lazy_choices)
             for pack_id, skips in delta.compat_skips.items():
@@ -7428,6 +7493,7 @@ class ServingComposer:
             assert snapshot is not None
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            old_packs = dict(composition.packs)
             staged_registry = composition._registry.copy()
             staged_registry.remove_pack_types(name)
             staged_registry.remove_relayed_renditions(name)
@@ -7452,7 +7518,11 @@ class ServingComposer:
             self._rebuild_registries()
             self._apply_derived_choices(derived_choices)
             changed_derived_choices = self._changed_derived_choices(old_derived_choices)
-            changed_packs: dict[str, PackInfo] = {}
+            changed_packs = {
+                pack_id: info
+                for pack_id, info in composition.packs.items()
+                if old_packs.get(pack_id) != info
+            }
             self._apply_inference_unavailable(inference_unavailable, changed_packs)
             self._publish_runtime(
                 topology,
@@ -7855,8 +7925,15 @@ class ServingComposer:
         self._choice_owners.clear()
         self._choice_owners.update(dict.fromkeys(self._core_choices, CORE_PACK_ID))
         self._compat_skip_owners = {}
+        host_packs = self._pack_storage_infos(self._records, composition._registry)
         for name, record in self._records.items():
-            self._merge_delta_registrations(name, record.canonical, record.delta)
+            delta = record.delta
+            if record.spec.in_process:
+                delta = replace(
+                    delta,
+                    packs={pack_id: host_packs[pack_id] for pack_id in delta.packs},
+                )
+            self._merge_delta_registrations(name, record.canonical, delta)
             for claim in record.claims:
                 self._claim_owners.setdefault(claim, name)
         for name, remote in self._remotes.items():
@@ -7869,7 +7946,8 @@ class ServingComposer:
         cleared registries (packs and remotes share this shape)."""
         composition = self.composition
         composition.schemas.update(delta.schemas)
-        composition.packs.update(delta.packs)
+        for pack_id, info in delta.packs.items():
+            _merge_pack_entry(composition.packs, pack_id, info, name)
         composition.node_packs.update(delta.node_packs)
         composition.choices.update(delta.choices)
         composition.lazy_choices.update(delta.lazy_choices)

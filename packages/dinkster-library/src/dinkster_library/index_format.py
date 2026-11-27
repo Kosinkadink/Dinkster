@@ -16,6 +16,7 @@ DEFAULT_IGNORE: tuple[str, ...] = (
     "put_*_here",
     "Thumbs.db",
     "desktop.ini",
+    "*:Zone.Identifier",
     "*.tmp",
     "*.part",
     "*.crdownload",

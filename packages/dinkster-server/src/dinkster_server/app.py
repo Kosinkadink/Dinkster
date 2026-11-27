@@ -369,6 +369,7 @@ from .preflight import (
     asset_preflight,
     bind_model_names,
     graph_asset_names,
+    graph_model_assets,
     graph_node_types,
     graph_provider_selections,
     parse_asset_consent,
@@ -945,6 +946,8 @@ class PackInfo:
     'local:<path>') - where the bytes came from, never identity."""
     publisher: str = ""
     """Canonical publisher id ('local' for unpublished installs)."""
+    type_storage: tuple[tuple[str, str], ...] = ()
+    """Borrowed type ids and the packs selected to store their values in this worker."""
     blueprints: tuple[PackBlueprintAsset, ...] = ()
     """Starter workflow documents the pack ships; descriptors ride the
     packs table inline, bodies ride the lazy per-pack endpoint. Never
@@ -971,6 +974,8 @@ class PackInfo:
     """Validated static frontend files, served lazily outside the packs table."""
     settings_schema: PackSettingsSchema | None = None
     """Declared user settings schema; values live in the host library."""
+    network_origins: tuple[str, ...] = ()
+    """Exact HTTPS origins requested by the installed pack, not host-added grants."""
     inference_unavailable: PackInferenceUnavailable | None = None
     """Set when this pack's ``[pack.extension]`` inference surface degraded
     because no native sampling worker is live. Its other surfaces are served
@@ -997,6 +1002,8 @@ class PackInfo:
             wire["source"] = self.source
         if self.publisher:
             wire["publisher"] = self.publisher
+        if self.type_storage:
+            wire["typeStorage"] = dict(self.type_storage)
         if self.icon is not None:
             # Descriptor only - bytes ride /api/packs/{packId}/icon, never
             # inline (the table would re-download on every schema refresh).
@@ -1027,6 +1034,8 @@ class PackInfo:
                 }
         if self.settings_schema is not None:
             wire["settings"] = True
+        if self.network_origins:
+            wire["networkOrigins"] = list(self.network_origins)
         if self.inference_unavailable is not None:
             # One inline record per degraded pack: it is a handful of strings,
             # so it needs no lazy endpoint, and it must ride the table the
@@ -1473,7 +1482,7 @@ class ServerState:
 
         Validates the delta against the same rules construction applies -
         node-type collisions refused, pack-table entries may repeat only
-        when identical (two compat workers both contributing "comfy"),
+        when their identity agrees (type storage may change as packs load),
         every attribution names a known type and a known table entry -
         then merges state, re-derives the cross-pack replacement
         diagnostics over the COMPLETE mapping, bumps the surface epoch,
@@ -1490,7 +1499,9 @@ class ServerState:
         merged_packs = dict(self.packs)
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and existing != info:
+            if existing is not None and replace(existing, type_storage=()) != replace(
+                info, type_storage=()
+            ):
                 raise ValueError(f"announce redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type, pack_id in node_packs.items():
@@ -1806,7 +1817,9 @@ class ServerState:
         }
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and existing != info:
+            if existing is not None and replace(existing, type_storage=()) != replace(
+                info, type_storage=()
+            ):
                 raise ValueError(f"replace redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type in node_packs:
@@ -3647,7 +3660,11 @@ async def handle_submit(request: web.Request) -> web.Response:
         # consent is TOCTOU-proof: verified ingest means a consented identity
         # can only ever land the exact bytes it names.
         if library is not None:
+            assert execution.schemas is not None
             referenced = graph_asset_names(preflight_graph)
+            model_assets = graph_model_assets(preflight_graph, execution.schemas)
+            for digest, (name, _kind) in model_assets.items():
+                referenced.setdefault(digest, name)
             # Node-declared requirements ([[pack.assets]] nodes = [...]): a
             # fixed internal model a node type needs joins the preflight set
             # the moment the graph instantiates that type - no widget, no
@@ -3679,6 +3696,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     scope=scope,
                     project=project,
                     acquired_kinds=acquired_kinds,
+                    model_kinds={digest: kind for digest, (_name, kind) in model_assets.items()},
                 )
                 announce_asset_kinds(request.app, acquired_kinds)
         if (

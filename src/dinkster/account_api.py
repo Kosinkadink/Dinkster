@@ -4,25 +4,94 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
-from dataclasses import dataclass, field
+import secrets
+from dataclasses import dataclass, field, replace
 from typing import cast
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from aiohttp import web
 from dinkster_library import LibraryError
-from dinkster_server.auth import principal_for
+from dinkster_server.auth import BROWSER_AUTH_KEY, Principal, principal_for
 from dinkster_server.projects import PROJECTS_KEY
 
 from .account import AccountError, AccountSession, AccountSignIn
 
 _HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+_COOKIE = "dinkster_account"
+
+
+def _same_origin(request: web.Request) -> bool:
+    origin = request.headers.get("Origin")
+    return request.headers.get("Sec-Fetch-Site") != "cross-site" and (
+        origin is None or origin == f"{request.scheme}://{request.host}"
+    )
+
+
+@dataclass
+class _BrowserAccount:
+    account: AccountSession
+    token: str = field(default="", repr=False)
+    revision: str = field(default_factory=lambda: secrets.token_hex(16))
+    native_session: str | None = field(default=None, repr=False)
+    principal: Principal | None = None
+    initiator: Principal | None = None
+
+    def owns(self, request: web.Request) -> bool:
+        token = request.cookies.get(_COOKIE, "")
+        return bool(self.token) and secrets.compare_digest(token.encode(), self.token.encode())
+
+    def begin(self, principal: Principal) -> None:
+        if principal.browser_session_id == self.revision and self.initiator is not None:
+            principal = self.initiator
+        self.token = secrets.token_urlsafe(32)
+        self.revision = secrets.token_hex(16)
+        self.native_session = None
+        self.principal = None
+        self.initiator = principal
+
+    def end(self) -> None:
+        self.token = ""
+        self.revision = secrets.token_hex(16)
+        self.native_session = None
+        self.principal = None
+        self.initiator = None
+
+    def current(self, principal: Principal) -> bool:
+        if principal.browser_session_id != self.revision or self.native_session is None:
+            return False
+        if not self.account.matches_session(self.native_session):
+            self.end()
+            return False
+        return True
+
+    def authenticate(self, request: web.Request) -> Principal | None:
+        if _COOKIE not in request.cookies:
+            return None
+        if not _same_origin(request):
+            raise web.HTTPForbidden(
+                text='{"error":"same-origin-required"}', content_type="application/json"
+            )
+        if self.owns(request) and self.principal is not None and self.current(self.principal):
+            return self.principal
+        if self.owns(request) and self.principal is None:
+            return None
+        # These account controls clear a stale binding; they never grant account authority.
+        if request.path in {"/api/account", "/api/account/sign-in", "/api/account/sign-out"}:
+            return None
+        raise web.HTTPUnauthorized(
+            text='{"error":"account-session-ended"}', content_type="application/json"
+        )
+
+    def cookie(self, response: web.Response, request: web.Request) -> None:
+        response.set_cookie(
+            _COOKIE, self.token, httponly=True, secure=request.secure, samesite="Strict", path="/"
+        )
 
 
 @dataclass
 class _SignIn:
     owner: str
-    baseline: dict[str, object]
     attempt: AccountSignIn = field(default_factory=AccountSignIn)
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
@@ -33,8 +102,15 @@ class _SignIn:
 def add_account_routes(app: web.Application, account: AccountSession | None) -> None:
     pending: _SignIn | None = None
     control = asyncio.Lock()
+    browser = _BrowserAccount(account) if account is not None else None
+    if browser is not None:
+        app[BROWSER_AUTH_KEY] = browser
 
     def authority(request: web.Request) -> str:
+        if request.method not in {"GET", "HEAD"} and not _same_origin(request):
+            raise web.HTTPForbidden(
+                text='{"error":"same-origin-required"}', content_type="application/json"
+            )
         principal = principal_for(request)
         if not principal.is_operator:
             raise web.HTTPForbidden(
@@ -42,6 +118,11 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                 content_type="application/json",
                 headers=_HEADERS,
             )
+        if browser is not None:
+            if principal == browser.initiator and (not principal.local or browser.owns(request)):
+                return browser.revision
+            if browser.owns(request) and principal.browser_session_id == browser.revision:
+                return browser.revision
         return principal.principal_id
 
     def reply(value: dict[str, object], status: int = 200) -> web.Response:
@@ -61,7 +142,14 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
             reason = "account-unavailable"
         elif not local_browser(request):
             reason = "account-sign-in-requires-engine-machine"
-        availability = {"canStartSignIn": reason is None, "signInUnavailableReason": reason}
+        principal = principal_for(request)
+        availability = {
+            "canStartSignIn": reason is None,
+            "signInUnavailableReason": reason,
+            "principalRevision": (principal.browser_session_id or "local")
+            if principal.authorization_error is None
+            else "local",
+        }
         if account is None:
             return {
                 "available": False,
@@ -74,11 +162,18 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
             return {
                 "available": True,
                 **availability,
-                **pending.baseline,
+                "signedIn": False,
+                "profile": None,
                 "signIn": {"state": "pending"},
             }
         try:
-            result = await asyncio.to_thread(account.status)
+            result = (
+                await asyncio.to_thread(account.status)
+                if browser is not None
+                and principal.browser_session_id == browser.revision
+                and browser.principal is not None
+                else {"signedIn": False, "profile": None}
+            )
         except (AccountError, OSError):
             raise web.HTTPServiceUnavailable(
                 text='{"error":"account-status-unavailable"}',
@@ -113,7 +208,10 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
 
     async def status(request: web.Request) -> web.Response:
         authority(request)
-        return reply(await snapshot(request))
+        response = reply(await snapshot(request))
+        if browser is not None and _COOKIE in request.cookies and not browser.owns(request):
+            response.del_cookie(_COOKIE, path="/")
+        return response
 
     async def start(request: web.Request) -> web.Response:
         nonlocal pending
@@ -132,8 +230,10 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                 if pending.owner != owner:
                     return reply({"error": "account-sign-in-owner-required"}, 403)
                 return reply({**await snapshot(request), "authorizationUrl": pending.url}, 202)
-            current = await snapshot(request)
-            flow = _SignIn(owner, {"signedIn": current["signedIn"], "profile": current["profile"]})
+            assert browser is not None
+            browser.begin(principal_for(request))
+            owner = browser.revision
+            flow = _SignIn(owner)
             pending = flow
             loop = asyncio.get_running_loop()
 
@@ -145,9 +245,18 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                 loop.call_soon_threadsafe(publish)
 
             async def login() -> None:
-                assert account is not None
+                assert account is not None and browser is not None
                 try:
                     await asyncio.to_thread(account.login, open_browser=ready, sign_in=flow.attempt)
+                    identity = await asyncio.to_thread(account.authenticated_identity)
+                    if identity is not None and browser.revision == flow.owner:
+                        session_id, subject = identity
+                        browser.native_session = session_id
+                        browser.principal = replace(
+                            cast(Principal, browser.initiator),
+                            principal_id=subject,
+                            browser_session_id=browser.revision,
+                        )
                 except (AccountError, OSError):
                     flow.error = "account-sign-in-failed"
                 finally:
@@ -160,14 +269,25 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                 await stop(owner)
                 raise
             if not flow.url or flow.task.done():
-                return reply(await snapshot(request), 409)
-            return reply({**await snapshot(request), "authorizationUrl": flow.url}, 202)
+                response = reply(await snapshot(request), 409)
+            else:
+                response = reply({**await snapshot(request), "authorizationUrl": flow.url}, 202)
+            browser.cookie(response, request)
+            return response
 
     async def cancel(request: web.Request) -> web.Response:
         owner = authority(request)
         async with control:
+            was_pending = (
+                pending is not None and pending.task is not None and not pending.task.done()
+            )
             await stop(owner)
-            return reply(await snapshot(request))
+            if was_pending and browser is not None:
+                browser.end()
+            response = reply(await snapshot(request))
+            if was_pending:
+                response.del_cookie(_COOKIE, path="/")
+            return response
 
     async def sign_out(request: web.Request) -> web.Response:
         owner = authority(request)
@@ -183,7 +303,11 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                     await asyncio.to_thread(account.logout)
                 except (AccountError, OSError):
                     return reply({"error": "account-sign-out-failed"}, 503)
-            return reply(await snapshot(request))
+            if browser is not None:
+                browser.end()
+            response = reply(await snapshot(request))
+            response.del_cookie(_COOKIE, path="/")
+            return response
 
     async def project_choices(request: web.Request) -> web.Response:
         authority(request)
