@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import sys
 from contextlib import suppress
 
-from .egress import _MAX_CLIENTS, EGRESS_PROXY_ENV, _relay
+from .egress import EGRESS_PROXY_ENV, MAX_PROXY_CLIENTS, relay_streams
 
 
 async def _run(command: list[str]) -> int:
@@ -16,14 +17,14 @@ async def _run(command: list[str]) -> int:
 
     async def bridge(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
-        if task is None or len(clients) >= _MAX_CLIENTS:
+        if task is None or len(clients) >= MAX_PROXY_CLIENTS:
             writer.close()
             return
         clients.add(task)
         upstream: asyncio.StreamWriter | None = None
         try:
             remote, upstream = await asyncio.open_unix_connection(endpoint)
-            await _relay(reader, writer, remote, upstream)
+            await relay_streams(reader, writer, remote, upstream)
         except OSError:
             pass
         finally:
@@ -56,4 +57,10 @@ async def _run(command: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(_run(sys.argv[1:])))
+    status = asyncio.run(_run(sys.argv[1:]))
+    if status < 0:
+        if -status != signal.SIGKILL:
+            signal.signal(-status, signal.SIG_DFL)
+        os.kill(os.getpid(), -status)
+        signal.pause()
+    sys.exit(status)

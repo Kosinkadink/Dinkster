@@ -278,7 +278,9 @@ class WindowsProcessLauncher:
         try:
             if self.policy.egress_allowlist:
                 proxy = await EgressProxy.start_tcp(
-                    self.policy.egress_allowlist, secrets.token_hex(32)
+                    self.policy.egress_allowlist,
+                    secrets.token_hex(32),
+                    on_denied=spec.on_network_denied,
                 )
             configuration, endpoints = build_windows_policy(
                 spec, self.policy, proxy_url=proxy.url if proxy is not None else None

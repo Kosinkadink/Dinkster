@@ -788,15 +788,25 @@ class Engine:
         if event.name == "sandbox-network-denied":
             pack = event.data.get("pack")
             origin = event.data.get("origin")
-            candidates = event.data.get("nodeIds")
+            raw_candidates = event.data.get("nodeIds")
+            candidates = (
+                tuple(
+                    node
+                    for node in cast("Sequence[object]", raw_candidates)
+                    if isinstance(node, str)
+                )
+                if isinstance(raw_candidates, (list, tuple))
+                else (node_id,)
+            )
             problems = self._run_network_problems.get(run_id)
             if not isinstance(pack, str) or not isinstance(origin, str) or problems is None:
                 return
             reported = problems.setdefault((pack, origin), {})
             if node_id in reported:
                 return
-            ambiguous = isinstance(candidates, (list, tuple)) and len(candidates) > 1
-            attribution = "One of these nodes" if ambiguous else "This node"
+            attribution = "This node"
+            if len(candidates) > 1:
+                attribution = f"One of these nodes ({', '.join(candidates)})"
             hint = ErrorHint(
                 "sandbox-network-denied",
                 f"{attribution} in sandboxed pack {pack!r} was refused access to {origin}.",

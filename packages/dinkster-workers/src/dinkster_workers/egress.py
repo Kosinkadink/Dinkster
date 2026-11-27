@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 EGRESS_PROXY_ENV = "DINKSTER_EGRESS_PROXY"
 
 _MAX_HEADER_BYTES = 16 * 1024
-_MAX_CLIENTS = 64
+MAX_PROXY_CLIENTS = 64
 _MAX_RESOLVE_BODY_BYTES = 64 * 1024
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _UPSTREAM_TIMEOUT_SECONDS = 10.0
@@ -213,7 +213,7 @@ async def _pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
         await writer.drain()
 
 
-async def _relay(
+async def relay_streams(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
     remote_reader: asyncio.StreamReader,
@@ -223,10 +223,12 @@ async def _relay(
         asyncio.create_task(_pump(client_reader, remote_writer)),
         asyncio.create_task(_pump(remote_reader, client_writer)),
     }
-    _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class EgressProxy:
@@ -254,10 +256,16 @@ class EgressProxy:
         return self._socket_path
 
     @classmethod
-    async def start_tcp(cls, origins: tuple[str, ...], token: str) -> EgressProxy:
+    async def start_tcp(
+        cls,
+        origins: tuple[str, ...],
+        token: str,
+        *,
+        on_denied: Callable[[str], None] | None = None,
+    ) -> EgressProxy:
         if len(token) < 32 or not token.isalnum() or not token.isascii():
             raise EgressProxyError("TCP egress proxy requires a private random token")
-        proxy = cls(None, origins)
+        proxy = cls(None, origins, on_denied)
         proxy._authorization = "Basic " + base64.b64encode(f"dinkster:{token}".encode()).decode()
         proxy._server = await asyncio.start_server(
             proxy._handle, host="127.0.0.1", port=0, limit=_MAX_HEADER_BYTES
@@ -333,7 +341,7 @@ class EgressProxy:
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
-        if self._closing or task is None or len(self._clients) >= _MAX_CLIENTS:
+        if self._closing or task is None or len(self._clients) >= MAX_PROXY_CLIENTS:
             writer.close()
             with suppress(Exception):
                 await writer.wait_closed()
@@ -362,7 +370,7 @@ class EgressProxy:
                 remote_reader, remote_writer = await _connect(addresses, port)
                 writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 await writer.drain()
-                await _relay(reader, writer, remote_reader, remote_writer)
+                await relay_streams(reader, writer, remote_reader, remote_writer)
             else:
                 await _try_write_response(writer, 405, "Method Not Allowed")
         except _ProxyAuthenticationRequired:

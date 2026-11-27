@@ -818,25 +818,45 @@ class TestLiveJail:
             encoding="ascii",
         )
         (pack / "network_probe.py").write_text(
-            "import urllib.request\n"
-            "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "import asyncio, urllib.request\n"
+            "from dinkster_api.v1 import (CORE_STRING, InputSpec, Node, NodeSchema, "
+            "OutputSpec, TypeExpr)\n"
             "class Probe(Node):\n"
+            "    arrived = 0\n"
+            "    finished = 0\n"
+            "    ready = None\n"
+            "    done = None\n"
             "    @classmethod\n"
             "    def define_schema(cls):\n"
-            "        return NodeSchema(node_type='networkprobe.probe', outputs=(\n"
+            "        return NodeSchema(node_type='networkprobe.probe', idempotent=False,\n"
+            "            inputs=(InputSpec('mode', TypeExpr.concrete(CORE_STRING)),), outputs=(\n"
             "            OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
             "    @classmethod\n"
-            "    def execute(cls):\n"
+            "    async def execute(cls, mode):\n"
+            "        if mode != 'single':\n"
+            "            if cls.ready is None:\n"
+            "                cls.ready, cls.done = asyncio.Event(), asyncio.Event()\n"
+            "            cls.arrived += 1\n"
+            "            if cls.arrived == 2:\n"
+            "                cls.ready.set()\n"
+            "            await cls.ready.wait()\n"
             "        last = None\n"
-            "        for host in ('downloads.example.test', 'mirror.example.test'):\n"
+            "        for host in ('downloads.example.test', 'mirror.example.test:8443'):\n"
             "            for attempt in range(2):\n"
             "                try:\n"
-            "                    urllib.request.urlopen('https://' + host + '/model', timeout=1)\n"
+            "                    await asyncio.to_thread(urllib.request.urlopen,\n"
+            "                        'https://' + host + '/model', timeout=1)\n"
             "                except OSError as error:\n"
             "                    last = error\n"
             "                else:\n"
             "                    raise RuntimeError('sandbox unexpectedly allowed HTTPS')\n"
-            "        raise last\n"
+            "        if mode == 'single':\n"
+            "            raise last\n"
+            "        cls.finished += 1\n"
+            "        if cls.finished == 2:\n"
+            "            cls.done.set()\n"
+            "        await cls.done.wait()\n"
+            "        return cls.outputs(report='refused')\n"
             "NODES = (Probe,)\n",
             encoding="ascii",
         )
@@ -845,9 +865,11 @@ class TestLiveJail:
             composer = ServingComposer(sandbox_policy=SandboxPolicy())
             try:
                 await composer.add_pack(PackSpec(manifest, env={"PYTHONPATH": str(pack)}))
-                engine = composer.composition.make_engine(lambda _event: None)
-                graph = Graph(nodes={"probe": GraphNode("networkprobe.probe", {})})
+                events = []
+                engine = composer.composition.make_engine(events.append)
+                graph = Graph(nodes={"probe": GraphNode("networkprobe.probe", {"mode": "single"})})
                 for _run in range(2):
+                    events.clear()
                     with pytest.raises(ExecutionError) as refused:
                         await engine.run(graph, ["probe"])
                     error = refused.value.error
@@ -857,7 +879,7 @@ class TestLiveJail:
                     assert len(reports) == 2, error
                     for origin in (
                         "https://downloads.example.test",
-                        "https://mirror.example.test",
+                        "https://mirror.example.test:8443",
                     ):
                         assert (
                             sum(
@@ -866,6 +888,34 @@ class TestLiveJail:
                             )
                             == 1
                         ), error
+                    diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                    assert len(diagnostics) == 2
+                    assert all("One of these nodes" not in hint.message for hint in reports)
+
+                events.clear()
+                result = await asyncio.wait_for(
+                    engine.run(
+                        Graph(
+                            nodes={
+                                node: GraphNode("networkprobe.probe", {"mode": node})
+                                for node in ("left", "right")
+                            }
+                        ),
+                        ["left", "right"],
+                    ),
+                    timeout=30,
+                )
+                assert result.outputs["left"]["report"].resolve() == "refused"
+                assert result.outputs["right"]["report"].resolve() == "refused"
+                assert len(result.diagnostics) == 4
+                assert {item.node_id for item in result.diagnostics} == {"left", "right"}
+                assert all("One of these nodes" in item.message for item in result.diagnostics)
+                diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                assert len(diagnostics) == 4
+                assert all(
+                    set(event.detail["diagnostics"][0]["candidateNodeIds"]) == {"left", "right"}
+                    for event in diagnostics
+                )
             finally:
                 await composer.close()
 
