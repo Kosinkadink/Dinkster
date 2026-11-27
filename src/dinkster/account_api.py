@@ -273,7 +273,9 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
     async def cancel(request: web.Request) -> web.Response:
         owner = authority(request)
         async with control:
-            was_pending = pending is not None and pending.task is not None and not pending.task.done()
+            was_pending = (
+                pending is not None and pending.task is not None and not pending.task.done()
+            )
             await stop(owner)
             if was_pending and browser is not None:
                 browser.end()
