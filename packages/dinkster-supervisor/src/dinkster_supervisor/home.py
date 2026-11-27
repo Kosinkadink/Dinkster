@@ -671,6 +671,7 @@ class Home:
 
     async def _run(self, target: OpenTarget) -> None:
         timeout = aiohttp.ClientTimeout(total=5)
+        expected_instance: str | None = None
         async with aiohttp.ClientSession(timeout=timeout) as session:
 
             async def engine_status() -> dict[str, object] | None:
@@ -683,6 +684,8 @@ class Home:
                 if not isinstance(status, dict):
                     return None
                 body = cast("dict[str, object]", status)
+                if expected_instance is not None and body.get("instance") != expected_instance:
+                    return None
                 return body if body.get("state") in {"starting", "ready", "failed"} else None
 
             starting = asyncio.create_task(self._start(target, self._found))
@@ -695,6 +698,23 @@ class Home:
                         )
                     await asyncio.wait((starting,), timeout=self._watch_interval)
                 url = starting.result()
+                if (context := installation_context(target.root)) is not None:
+                    connection = cast(
+                        "dict[str, str]",
+                        await asyncio.to_thread(
+                            context.call, target.root, "connection", target.engine
+                        ),
+                    )
+                    expected_instance = connection["instance"]
+                    self.link.base_url = url.rstrip("/")
+                    if (
+                        connection["url"].rstrip("/") != self.link.base_url
+                        or await engine_status() is None
+                    ):
+                        raise RuntimeError(
+                            "The WSL engine is not reachable at its Windows address. "
+                            "Another Windows process may be using its port."
+                        )
             except Exception as error:  # noqa: BLE001 - every start failure is reported in status
                 log.warning("opening %s failed: %s", target.root, error)
                 self._set(state="failed", detail=str(error))

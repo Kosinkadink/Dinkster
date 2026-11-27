@@ -51,6 +51,7 @@ from .home_context import installation_context
 
 __all__ = [
     "engine_assignments",
+    "engine_connection",
     "engine_status",
     "generation_runtime_lock",
     "generation_runtime_reason",
@@ -664,6 +665,19 @@ def engine_status(root: Path) -> tuple[dict[str, object], ...]:
     for path in sorted(paths):
         rows.append(_public_row(_inspect(_parse_record(path))))
     return tuple(rows)
+
+
+def engine_connection(root: Path, name: str) -> dict[str, str]:
+    """The verified supervisor endpoint and public instance identity, never its shutdown token."""
+    _validate_name(name)
+    generation = read_current(root)
+    record = None if generation is None else _load_record(root, name, generation)
+    if record is None:
+        raise EnvironmentError("engine has no supervisor record")
+    inspected = _inspect(record)
+    if not _identity_matches(inspected):
+        raise EnvironmentError("engine supervisor identity is not verified")
+    return {key: cast("str", inspected[key]) for key in ("url", "instance")}
 
 
 def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:

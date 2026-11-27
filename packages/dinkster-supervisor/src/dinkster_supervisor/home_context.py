@@ -196,6 +196,8 @@ def _dispatch(root: Path, operation: str, arguments: list[object]) -> object:
         return library_root(root)
     if operation == "status":
         return runtime.engine_status(root)
+    if operation == "connection":
+        return runtime.engine_connection(root, cast("str", arguments[0]))
     if operation == "stop":
         runtime.stop_engine(
             root, cast("str", arguments[0]), generation=cast("int | None", arguments[1])
