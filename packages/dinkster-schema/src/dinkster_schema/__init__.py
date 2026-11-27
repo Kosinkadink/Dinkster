@@ -7,6 +7,7 @@ from .capture import (
 from .coerce import (
     AssetCoercionPlan,
     CoercionProviders,
+    TypeAcceptanceProvider,
     TypeEquivalenceProvider,
     combo_type_mismatch_is_error,
     plan_asset_coercion,
@@ -241,6 +242,7 @@ __all__ = [
     "TextCompletionKind",
     "TextCompletions",
     "TypeExpr",
+    "TypeAcceptanceProvider",
     "TypeEquivalenceProvider",
     "TypeSolveError",
     "ValueTransform",

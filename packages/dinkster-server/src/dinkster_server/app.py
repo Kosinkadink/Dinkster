@@ -291,8 +291,11 @@ from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
     NodeSchema,
     ReplacementProblem,
+    TypeAcceptanceProvider,
+    TypeExpr,
     combo_choices_json_bytes,
     core_logger,
+    plan_type_equivalence,
     problem_to_wire,
     schema_signature,
     schema_to_wire,
@@ -2603,6 +2606,35 @@ def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str,
         "nodes": nodes,
         "typeOwners": state.engine.registry.type_owners(),
     }
+    authority = (
+        execution.known_types if execution.known_types is not None else state.engine.registry
+    )
+    if isinstance(authority, TypeAcceptanceProvider):
+        # Equivalence is pairwise at the runtime atom, not recursively lifted
+        # through lists or other wrappers. Exact structural acceptance still
+        # comes from each port's TypeExpr; asset plans use the provider facts.
+        type_ids = sorted(authority.type_ids())
+        accepted = {type_id: [type_id] for type_id in type_ids}
+        # Composed catalogs can have several incoming counterparts even though
+        # each source has only one. Validation follows the source's lookup.
+        for source in type_ids:
+            counterpart = authority.equivalent_type(source)
+            if (
+                counterpart is not None
+                and counterpart in accepted
+                and plan_type_equivalence(source, TypeExpr.concrete(counterpart), authority)
+                is not None
+            ):
+                accepted[counterpart].append(source)
+        cast("dict[str, object]", wire["dinkster"])["typeAcceptance"] = {
+            "atoms": {type_id: sorted(sources) for type_id, sources in accepted.items()},
+            "assetDecoders": sorted(authority.asset_decoder_targets()),
+            "batchMerges": sorted(
+                type_id
+                for type_id in authority.type_ids()
+                if authority.batch_merge_for(type_id) is not None
+            ),
+        }
     if state.services is not None:
         cast("dict[str, object]", wire["dinkster"])["services"] = state.services
     if state.development_description is not None:
