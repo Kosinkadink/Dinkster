@@ -188,6 +188,10 @@ def test_secret_names_cannot_be_wired_or_executed_without_a_trusted_resolver() -
             )
 
         @classmethod
+        def check_lazy_status(cls, *, credential: str) -> list[str]:
+            return [credential]
+
+        @classmethod
         def execute(cls, *, credential: str) -> Mapping[str, object]:
             pytest.fail("An unresolved credential name reached pack code")
 
@@ -245,6 +249,25 @@ def test_secret_names_cannot_be_wired_or_executed_without_a_trusted_resolver() -
         assert result.error.node_id == "consumer"
         assert result.error.message == "Secret inputs require a trusted credential resolver"
         assert "service_key" not in result.error.message
+        for pack_failure in (False, True):
+            invoking = pack_failure
+            lazy_result = await worker.check_lazy_status(
+                LazyStatusInvocation(
+                    request_id="credential-lazy",
+                    node_id="consumer",
+                    node_type=schema.node_type,
+                    available_inputs={"credential": registry.wrap(CORE_STRING, "service_key")},
+                    connected_undemanded_inputs=(),
+                    effective_schema=schema,
+                )
+            )
+            assert lazy_result.requested_inputs is None
+            assert lazy_result.error is not None
+            assert lazy_result.error.node_id == "consumer"
+            assert lazy_result.error.message == (
+                "Secret inputs require a trusted credential resolver"
+            )
+            assert not lazy_result.error.traceback
 
     run_scenario(scenario())
 

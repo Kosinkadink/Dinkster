@@ -453,6 +453,14 @@ class InProcessWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> LazyStatusResult:
         del on_event
+        if any(spec.secret for spec in invocation.effective_schema.inputs):
+            return LazyStatusResult(
+                error=NodeError(
+                    invocation.node_id,
+                    invocation.node_type,
+                    "Secret inputs require a trusted credential resolver",
+                )
+            )
         if invocation.executor is not None or invocation.arm is not None:
             return LazyStatusResult(
                 error=NodeError(
