@@ -69,8 +69,9 @@ hash verification; it does not freely resolve dependencies against the index.
 Per-pack virtual environments remain isolated.
 Engine-provided packages must satisfy the pack's declared requirements and its
 private dependency wheels' requirements, not the versions recorded at publication.
-Private dependencies remain exactly locked; an unconstrained engine-provided
-dependency does not require a new pack release when the engine updates it.
+Private dependencies remain exactly locked; the install lock's base identity records
+publication provenance, so an otherwise compatible engine base or engine-provided
+dependency update does not require a new pack release.
 The schema 2 `/static/packs/index.json` catalog lists one entry per pack:
 `name`, `publisher`, `latestVersion`, `library` and a static-relative `url`
 such as `packs/my-pack/index.json`. That per-pack file has `schemaVersion: 2`,
