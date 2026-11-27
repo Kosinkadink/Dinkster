@@ -751,6 +751,112 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
     run_scenario(scenario())
 
 
+def test_host_record_make_executes_and_survives_pack_reload(tmp_path: Path) -> None:
+    def manifest(version: str, name: str, *, collision: bool = False) -> Path:
+        root = tmp_path / version
+        root.mkdir()
+        module = f"record_maker_{version}"
+        (root / f"{module}.py").write_text(
+            "from dinkster_schema import Input, Node, NodeSchema, Output, RecordField, TypeExpr\n"
+            "INT = TypeExpr.concrete('INT')\n"
+            "TEXT = TypeExpr.concrete('STRING')\n"
+            "INNER_FIELDS = ["
+            f"RecordField('1-seed', '{name}', INT), "
+            "RecordField('optional', 'guidance', INT, optional=True)]\n"
+            "INNER = TypeExpr.record_of('recordtest.inner', "
+            + ("*reversed(INNER_FIELDS))\n" if version == "second" else "*INNER_FIELDS)\n")
+            + "OUTER = TypeExpr.record_of('recordtest.outer', "
+            "RecordField('settings', 'settings', INNER), RecordField('label', 'prompt', TEXT))\n"
+            "class Consume(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema('recordtest.consume', body=(Input('value', OUTER), "
+            "Input('seed_only', TypeExpr.record_of('recordtest.inner', INNER_FIELDS[0])), "
+            "Output('text', TEXT)))\n"
+            "    @classmethod\n"
+            "    def execute(cls, value, seed_only):\n"
+            f"        count = value['settings']['{name}']\n"
+            f"        return cls.outputs(text=str(count+seed_only['{name}'])+'|'+value['prompt'])\n"
+            + (
+                "class Collision(Consume):\n"
+                "    @classmethod\n"
+                "    def define_schema(cls):\n"
+                "        return NodeSchema('recordtest.inner.make', body=(Output('value', INT),))\n"
+                "NODES = (Consume, Collision)\n"
+                if collision
+                else "NODES = (Consume,)\n"
+            ),
+            encoding="ascii",
+        )
+        path = root / "dinkster-pack.toml"
+        path.write_text(
+            '[pack]\nname = "record-test"\npublisher = "dinkster"\n'
+            'namespaces = ["recordtest"]\n'
+            f'[pack.entry]\nnodes = "{module}:NODES"\n',
+            encoding="ascii",
+        )
+        return path
+
+    first_manifest = manifest("first", "seed")
+    second_manifest = manifest("second", "noise")
+    collision_manifest = manifest("collision", "seed", collision=True)
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            with pytest.raises(CompositionError, match="generated record node.*collides"):
+                await composer.add_pack(PackSpec(collision_manifest))
+            delta = await composer.add_pack(PackSpec(first_manifest))
+            graph = Graph(
+                nodes={
+                    "inner": GraphNode("recordtest.inner.make", {"field_312d73656564": 29}),
+                    "outer": GraphNode(
+                        "recordtest.outer.make",
+                        {
+                            "field_73657474696e6773": Link("inner", "record"),
+                            "field_6c6162656c": "seven",
+                        },
+                    ),
+                    "consume": GraphNode(
+                        "recordtest.consume",
+                        {"value": Link("outer", "record"), "seed_only": Link("inner", "record")},
+                    ),
+                }
+            )
+            assert delta.schema_owners["recordtest.inner.make"] == "record-test"
+            engine = composer.composition.make_engine(lambda _event: None)
+            result = await engine.run(graph, ["inner", "outer", "consume"])
+            assert result.outputs["consume"]["text"].resolve() == "58|seven"
+            assert result.outputs["inner"]["record"].resolve() == {"seed": 29}
+            graph = Graph(
+                nodes={
+                    **graph.nodes,
+                    "inner": GraphNode(
+                        "recordtest.inner.make",
+                        {"field_312d73656564": 97, "field_6f7074696f6e616c": 11},
+                    ),
+                }
+            )
+            changed = await engine.run(graph, ["inner", "outer", "consume"])
+            assert changed.outputs["consume"]["text"].resolve() == "194|seven"
+            assert changed.outputs["inner"]["record"].resolve() == {"seed": 97, "guidance": 11}
+            reload = await composer.reload_pack("record-test", PackSpec(second_manifest))
+            assert "recordtest.inner.make" in reload.delta.schemas
+            renamed = await engine.run(graph, ["inner", "outer", "consume"])
+            assert renamed.outputs["consume"]["text"].resolve() == "194|seven"
+            assert renamed.outputs["inner"]["record"].resolve() == {"noise": 97, "guidance": 11}
+            assert "inner" in renamed.cached
+            assert "outer" in renamed.cached
+            removed = await composer.remove_pack("record-test")
+            assert "recordtest.inner.make" in removed.removed_types
+            with pytest.raises(KeyError, match="recordtest.inner.make"):
+                await engine.run(graph, ["consume"])
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize(
     ("in_process", "supplied_registry"), ((True, False), (False, False), (False, True))
 )

@@ -278,6 +278,8 @@ from dinkster_workers.session import WorkerDied
 from dinkster_workers.windows_sandbox import WindowsProcessLauncher
 from packaging.requirements import Requirement
 
+from dinkster.record_nodes import record_makers
+
 from .composition_error import CompositionError
 from .extension_assets import read_module, resolve_frontend_modules
 from .lazy_worker import CatalogTypeRegistry, LazyWorker
@@ -1719,6 +1721,7 @@ class _PackRecord:
     extension_contributions: tuple[tuple[ExtensionScope, ContributionSurfaceDescriptor], ...] = ()
     tenant_registrations: _PackTenantRegistry | None = None
     owns_tenant_registrations: bool = True
+    record_makers: Mapping[str, type[Node]] = field(default_factory=dict)
 
 
 PackContractInput = tuple[PackManifest, PackSpec]
@@ -4849,6 +4852,35 @@ class ServingComposer:
     def _require_available_inference(self, inputs: Mapping[str, Value]) -> None:
         del inputs
 
+    def _add_record_makers(
+        self,
+        schemas: dict[str, NodeSchema],
+        node_packs: dict[str, str],
+        manifest: PackManifest,
+        replacing: Collection[str] = (),
+    ) -> dict[str, type[Node]]:
+        try:
+            makers = record_makers(schemas.values())
+        except ValueError as exc:
+            raise CompositionError(f"{manifest.name}: {exc}") from exc
+        makers = {
+            node_type: node
+            for node_type, node in makers.items()
+            if any(
+                claim_covers(claim, node_type.removesuffix(".make"))
+                for claim in (*manifest.namespaces, *manifest.type_namespaces)
+            )
+        }
+        for node_type in makers:
+            owner = self._owners.get(node_type)
+            if node_type in schemas or (owner is not None and owner not in replacing):
+                raise CompositionError(
+                    f"{manifest.name}: generated record node {node_type!r} collides"
+                )
+        schemas.update(build_schemas(makers.values()))
+        node_packs.update(dict.fromkeys(makers, manifest.name))
+        return makers
+
     def _build_topology(
         self,
         records: Mapping[str, _PackRecord],
@@ -4951,12 +4983,33 @@ class ServingComposer:
                 ),
             )
             for node_type in record.delta.schemas:
+                if node_type in records_by_owned_type:
+                    other = records_by_owned_type[node_type].delta.pack
+                    raise CompositionError(
+                        f"node type {node_type!r} is declared by both "
+                        f"{other!r} and {record.delta.pack!r}"
+                    )
                 arms_by_type[node_type] = (
                     []
                     if node_type in record.schema_only
                     else [annotate_local(arm, record, node_type)]
                 )
                 records_by_owned_type[node_type] = record
+            if record.record_makers:
+                host = InProcessWorker(record.record_makers, self.composition._registry)
+                for node_type in record.record_makers:
+                    arms_by_type[node_type] = [
+                        ArmRecord(
+                            name=record.delta.pack,
+                            worker=ArmWorker(host, None),
+                            domain=self._core_domain,
+                            instance_token=lambda worker=host: worker.instance_token,
+                            default_cache_tag="record-maker:1",
+                            default_arm=record.delta.pack,
+                            owner_worker=host,
+                            implementation_pack=record.manifest.name,
+                        )
+                    ]
             body_records: list[tuple[tuple[str, ...], ArmRecord]] = []
             for local_arm, node_types in record.body_arms:
                 if isinstance(record.worker, _SingleJobWorkerPool):
@@ -5650,6 +5703,7 @@ class ServingComposer:
                     )
                 delta_schemas[node_type] = schema
                 delta_node_packs[node_type] = pack_id
+            makers = self._add_record_makers(delta_schemas, delta_node_packs, manifest)
             delta_choices: dict[str, tuple[str, ...]] = {}
             for choice_id, values in worker.combo_choices.items():
                 if not any(claim_covers(claim, choice_id) for claim in manifest.namespaces):
@@ -5755,6 +5809,7 @@ class ServingComposer:
                 else tenant_proxy
             ),
             owns_tenant_registrations=reused_in_process is None,
+            record_makers=makers,
         )
         staged_records = {**self._records, manifest.execution_id: record}
         snapshot: ExtensionSnapshot | None = None
@@ -6697,6 +6752,7 @@ class ServingComposer:
                         )
                     delta_schemas[node_type] = schema
                     delta_node_packs[node_type] = pack_id
+                makers = self._add_record_makers(delta_schemas, delta_node_packs, manifest, (name,))
                 delta_choices: dict[str, tuple[str, ...]] = {}
                 for choice_id, values in worker.combo_choices.items():
                     if not any(claim_covers(claim, choice_id) for claim in manifest.namespaces):
@@ -6787,6 +6843,7 @@ class ServingComposer:
                 asset_roots=_pack_asset_roots(spec, manifest, spec_packs),
                 extension=manifest.extension if manifest.extension_declared else None,
                 extension_contributions=worker.extension_contributions,
+                record_makers=makers,
             )
             staged_records = dict(self._records)
             del staged_records[name]
@@ -7166,6 +7223,7 @@ class ServingComposer:
                             f"{prior!r} and {pack!r}"
                         )
                     compat_skips.setdefault(pack_id, {})[node_id] = diagnostic
+                makers = self._add_record_makers(announced, node_packs, manifest, group_names)
                 delta = replace(
                     old_record.delta,
                     schemas=announced,
@@ -7192,6 +7250,7 @@ class ServingComposer:
                     asset_roots=_pack_asset_roots(member_spec, manifest, spec_packs),
                     extension=manifest.extension if manifest.extension_declared else None,
                     extension_contributions=member.extension_contributions,
+                    record_makers=makers,
                 )
             staged_owners = {
                 node_type: pack
