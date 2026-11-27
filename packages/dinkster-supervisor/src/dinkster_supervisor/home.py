@@ -384,30 +384,47 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
         ),
         (),
     )
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-I",
-        "-m",
-        "dinkster_supervisor.environment",
-        "--root",
-        str(target.root),
-        "start",
-        "--engine",
-        target.engine,
-        *(argument for gpu in gpus for argument in ("--gpu", gpu)),
-        "--yes",
-        "--json",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
+    launching = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            sys.executable,
+            "-I",
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(target.root),
+            "start",
+            "--engine",
+            target.engine,
+            *(argument for gpu in gpus for argument in ("--gpu", gpu)),
+            "--yes",
+            "--json",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+        )
     )
-    output = asyncio.ensure_future(process.communicate())
-    while not output.done():
-        with contextlib.suppress(OSError, ValueError):
-            url = await asyncio.to_thread(address)
-            if url is not None:
-                found(url)
-        await asyncio.wait((output,), timeout=0.25)
-    stdout, _ = output.result()
+    output = None
+    try:
+        # Even cancellation during spawn must recover ownership of the start CLI.
+        process = await asyncio.shield(launching)
+        output = asyncio.create_task(process.communicate())
+        while not output.done():
+            with contextlib.suppress(OSError, ValueError):
+                url = await asyncio.to_thread(address)
+                if url is not None:
+                    found(url)
+            await asyncio.wait((output,), timeout=0.25)
+        stdout, _ = output.result()
+    except asyncio.CancelledError:
+        process = await launching
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+        # Reap the writer before stop can trust an absent or previous runtime record.
+        if output is None:
+            await process.communicate()
+        else:
+            await output
+        raise
     try:
         result = cast("dict[str, object]", json.loads(stdout))
     except ValueError:
@@ -620,7 +637,10 @@ class Home:
                 self._set(state="failed", detail=str(error))
                 return
             finally:
-                starting.cancel()
+                if not starting.done():
+                    starting.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await starting
             self.link.base_url = url.rstrip("/")
             self._set(state="ready")
             log.info("engine %s of %s is open at %s", target.engine, target.root, url)
