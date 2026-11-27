@@ -375,6 +375,7 @@ from .preflight import (
 )
 from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue, JobState
 from .redaction import PathRedactor
+from .secrets import SecretStore, add_secret_routes
 from .settings import SETTINGS_CATEGORIES, RuntimeSettings, add_settings_routes
 from .training_sessions import TrainingSessionStore, add_training_routes
 
@@ -4734,6 +4735,7 @@ def create_app(
     compat_skips: Mapping[str, Mapping[str, CompatGateDiagnostic]] | None = None,
     settings: RuntimeSettings | None = None,
     pack_settings_root: Path | LibraryClient | None = None,
+    secrets_root: Path | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
     applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
@@ -5142,6 +5144,7 @@ def create_app(
     app.router.add_post("/api/queue/resume", handle_queue_resume)
     app.router.add_post("/api/queue/clear", handle_queue_clear)
     app.router.add_get("/api/events", handle_events)
+    add_secret_routes(app, SecretStore(secrets_root))
     add_settings_routes(app, state.settings)
     app.router.add_get("/memory/status", handle_memory_status)
     app.router.add_post("/memory/reset-peak", handle_memory_reset_peak)

@@ -840,6 +840,120 @@ def test_host_node_unavailability_is_visible_and_refused_before_queueing() -> No
     run_scenario(scenario())
 
 
+def test_secret_accounts_deployment_fallback_and_private_persistence(tmp_path: Path) -> None:
+    from dinkster_server.secrets import SECRETS_KEY
+
+    alice = Principal("alice", {"local": frozenset({"secrets:use"})})
+    bob = Principal("bob", {"local": frozenset()})
+    administrator = Principal("administrator", {"local": frozenset({"settings:write"})})
+    agent = Principal("alice", {"local": frozenset({"secrets:use"})}, kind="agent")
+    authenticator = MappingAuthenticator(
+        {"alice": alice, "bob": bob, "admin": administrator, "agent": agent}
+    )
+    root = tmp_path / "secrets"
+    deployment_value = "test-only-deployment-credential-271"
+    personal_value = "test-only-personal-credential-683"
+    bob_value = "test-only-bob-credential-919"
+    unset = {"name": "service_key", "set": False, "source": None, "fallback": False}
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, authenticator=authenticator, secrets_root=root)
+        async with TestClient(TestServer(app)) as client:
+
+            async def call(
+                method: str, who: str, path: str = "/api/secrets/service_key", **kwargs: Any
+            ) -> dict[str, Any]:
+                response = await client.request(
+                    method, path, headers={"Authorization": "Bearer " + who}, **kwargs
+                )
+                text = await response.text()
+                assert deployment_value not in text and personal_value not in text
+                assert bob_value not in text
+                assert response.headers.get("Cache-Control") == "no-store"
+                assert response.status == 200, text
+                return await response.json()
+
+            assert (await client.get("/api/secrets/service_key")).status == 401
+            assert await call("GET", "bob") == unset
+            await call("PUT", "admin", json={"scope": "deployment", "value": deployment_value})
+            # Existence is indistinguishable from absence without deployment permission.
+            assert await call("GET", "bob") == unset
+            assert await call("GET", "alice") == {
+                "name": "service_key",
+                "set": True,
+                "source": "deployment",
+                "fallback": False,
+            }
+            for who in ("alice", "bob", "agent"):
+                response = await client.put(
+                    "/api/secrets/service_key",
+                    json={"scope": "deployment", "value": "must-not-replace"},
+                    headers={"Authorization": "Bearer " + who},
+                )
+                assert response.status == 403
+            assert await call("PUT", "alice", json={"value": personal_value}) == {
+                "name": "service_key",
+                "set": True,
+                "source": "account",
+                "fallback": True,
+            }
+            await call("PUT", "bob", json={"value": bob_value})
+            store = app[SECRETS_KEY]
+            assert store.resolve(alice, "service_key") == (personal_value, "account", True)
+            assert store.resolve(bob, "service_key") == (bob_value, "account", False)
+            for invalid in ({"value": ""}, {"value": 3}, {"value": "x", "scope": []}):
+                response = await client.put(
+                    "/api/secrets/service_key",
+                    json=invalid,
+                    headers={"Authorization": "Bearer alice"},
+                )
+                assert response.status == 400
+                assert store.resolve(alice, "service_key")[0] == personal_value
+            response = await client.put(
+                "/api/secrets/service_key",
+                json={"value": "must-not-replace"},
+                headers={"Authorization": "Bearer agent"},
+            )
+            assert response.status == 403
+
+        restarted = create_app(make_engine, SCHEMAS, authenticator=authenticator, secrets_root=root)
+        async with TestClient(TestServer(restarted)) as client:
+            store = restarted[SECRETS_KEY]
+            assert store.resolve(alice, "service_key") == (personal_value, "account", True)
+            assert store.resolve(bob, "service_key") == (bob_value, "account", False)
+            response = await client.delete(
+                "/api/secrets/service_key", headers={"Authorization": "Bearer alice"}
+            )
+            assert response.status == 200
+            assert await response.json() == {
+                "name": "service_key",
+                "set": True,
+                "source": "deployment",
+                "fallback": False,
+            }
+            assert store.resolve(alice, "service_key")[0] == deployment_value
+            assert store.resolve(bob, "service_key")[0] == bob_value
+            response = await client.delete(
+                "/api/secrets/service_key?scope=deployment",
+                headers={"Authorization": "Bearer admin"},
+            )
+            assert response.status == 200
+            assert store.resolve(alice, "service_key") == (None, None, False)
+            assert store.resolve(bob, "service_key")[0] == bob_value
+
+    run_scenario(scenario())
+    for path in root.iterdir():
+        if path.is_file():
+            data = path.read_bytes()
+            assert deployment_value.encode() not in data
+            assert personal_value.encode() not in data
+            assert bob_value.encode() not in data
+    if os.name != "nt":
+        assert root.stat().st_mode & 0o777 == 0o700
+        assert (root / "master.key").stat().st_mode & 0o777 == 0o600
+        assert (root / "credentials.sqlite3").stat().st_mode & 0o777 == 0o600
+
+
 def test_pack_static_assets_and_settings_end_to_end(tmp_path: Path) -> None:
     schema = PackSettingsSchema.from_wire(
         {
