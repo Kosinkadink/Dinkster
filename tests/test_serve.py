@@ -3580,7 +3580,10 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                 ops = f"{base}/api/sessions/{(await resp.json())['sessionId']}/ops"
             revision = 0
 
-            async def post(patch: list[dict[str, object]]) -> tuple[int, dict[str, object]]:
+            async def post(
+                patch: list[dict[str, object]],
+                corrections: list[dict[str, object]] | None = None,
+            ) -> tuple[int, dict[str, object]]:
                 nonlocal revision
                 body = {
                     "protocolVersion": 1,
@@ -3589,6 +3592,8 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                     "baseRevision": revision,
                     "patch": patch,
                 }
+                if corrections is not None:
+                    body["numericCorrections"] = corrections
                 async with session.post(ops, json=body, headers=agent) as resp:
                     answer = await resp.json()
                 if resp.status == 200:
@@ -3617,6 +3622,13 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
             ]
             assert (await post(write(steps=0)))[0] == 422
             assert (await post(write(cfg=30.5)))[0] == 422
+            owner = {"graphId": "root", "nodeId": "s", "valueKey": "steps"}
+            corrections: list[dict[str, object]] = [
+                {"owner": owner, "causes": [{**owner, "instancePath": [], "stamp": "limits"}]}
+            ]
+            status, annotated_refusal = await post(write(steps=10001, cfg=9.0), corrections)
+            assert status == 422
+            assert annotated_refusal["error"] == "value-outside-limits"
             # Steps count from min: 2, 6, 10, 14 ... and a decimal is not judged on its step.
             status, refusal = await post(write(frames=12))
             assert status == 422

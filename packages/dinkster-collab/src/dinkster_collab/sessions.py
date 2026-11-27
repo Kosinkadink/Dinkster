@@ -150,6 +150,68 @@ class InvalidSnapshotError(ValueError):
     """The document-kind validator refused a session snapshot."""
 
 
+class InvalidNumericCorrectionsError(ValueError):
+    """Correction provenance is malformed or does not describe changed numbers."""
+
+
+class OpContentMismatchError(ValueError):
+    """A retained operation id was reused with different correction provenance."""
+
+
+def _numeric_corrections(value: object) -> tuple[Mapping[str, Any], ...]:
+    if not isinstance(value, (list, tuple)):
+        raise InvalidNumericCorrectionsError("numericCorrections must be an array")
+    records: list[Mapping[str, Any]] = []
+    owners: set[tuple[str, ...]] = set()
+    for raw_entry in cast("Sequence[object]", value):
+        if not isinstance(raw_entry, dict):
+            raise InvalidNumericCorrectionsError("each correction must contain owner and causes")
+        entry = cast("dict[str, Any]", raw_entry)
+        if set(entry) != {"owner", "causes"}:
+            raise InvalidNumericCorrectionsError("each correction must contain owner and causes")
+        owner = entry["owner"]
+        causes = entry["causes"]
+        if not _correction_address(owner, {"graphId", "nodeId", "valueKey"}):
+            raise InvalidNumericCorrectionsError(
+                "correction owner must name graphId, nodeId, valueKey"
+            )
+        key = tuple(owner[field] for field in ("graphId", "nodeId", "valueKey"))
+        if key in owners:
+            raise InvalidNumericCorrectionsError("correction owners must be unique")
+        owners.add(key)
+        if not isinstance(causes, list) or not causes:
+            raise InvalidNumericCorrectionsError("correction causes must be a non-empty array")
+        for cause in cast("list[Any]", causes):
+            if not _correction_address(
+                cause, {"graphId", "nodeId", "valueKey", "instancePath", "stamp"}
+            ) or not isinstance(cause["instancePath"], list):
+                raise InvalidNumericCorrectionsError("correction cause address is malformed")
+            if not all(
+                isinstance(part, str) and part
+                for part in cast("list[object]", cause["instancePath"])
+            ):
+                raise InvalidNumericCorrectionsError("instancePath must contain non-empty strings")
+        records.append(deepcopy(entry))
+    return tuple(records)
+
+
+def _correction_address(value: Any, keys: set[str]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    address = cast("dict[str, Any]", value)
+    return set(address) == keys and all(
+        isinstance(address[key], str) and address[key] for key in keys - {"instancePath"}
+    )
+
+
+def _correction_number(document: object, owner: Mapping[str, Any]) -> object:
+    for part in ("graphs", owner["graphId"], "nodes", owner["nodeId"], "values", owner["valueKey"]):
+        if not isinstance(document, dict):
+            return None
+        document = cast("dict[str, object]", document).get(part)
+    return document
+
+
 type DocPath = tuple[str | int, ...]
 
 
@@ -297,6 +359,7 @@ class SessionOp:
     timestamp: float
     principal_id: str = "local"
     actor_kind: str = "human"
+    numeric_corrections: tuple[Mapping[str, Any], ...] = ()
 
 
 @dataclass
@@ -543,6 +606,7 @@ class SessionService:
         patch: Sequence[Mapping[str, Any]],
         principal_id: str = "local",
         actor_kind: str = "human",
+        numeric_corrections: object = (),
     ) -> tuple[SessionOp, bool]:
         """Order one op. Returns (op, replayed): replayed=True means the
         opId was already retained and the recorded envelope is returned
@@ -554,6 +618,7 @@ class SessionService:
         normalized_patch = tuple(
             cast("dict[str, Any]", _normalize_json(dict(entry), "patch entry")) for entry in patch
         )
+        corrections = _numeric_corrections(numeric_corrections)
         bound_principal = session.actor_bindings.get(actor_id)
         if bound_principal is not None and bound_principal != principal_id:
             raise ActorPrincipalMismatchError(actor_id)
@@ -561,6 +626,8 @@ class SessionService:
         if existing is not None:
             if existing.actor_id != actor_id:
                 raise ActorPrincipalMismatchError(actor_id)
+            if existing.numeric_corrections != corrections:
+                raise OpContentMismatchError(op_id)
             if bound_principal is None:
                 self._bind_actor(session, actor_id, principal_id)
             return deepcopy(existing), True
@@ -573,14 +640,30 @@ class SessionService:
         if session.document_kind == "board":
             if problem := validate_patch(list(normalized_patch)):
                 raise InvalidSnapshotError(problem)
-        if self._write_check is not None or session.document_kind == "board":
+        if self._write_check is not None or session.document_kind == "board" or corrections:
             document = self._document(session)
             try:
                 after = apply_patch(document, normalized_patch)
             except PatchConflictError as exc:
+                if corrections:
+                    raise InvalidNumericCorrectionsError(str(exc)) from exc
                 if session.document_kind == "board":
                     raise InvalidSnapshotError(str(exc)) from exc
             else:
+                for correction in corrections:
+                    before_number = _correction_number(document, correction["owner"])
+                    after_number = _correction_number(after, correction["owner"])
+                    if (
+                        session.document_kind != "workflow"
+                        or isinstance(before_number, bool)
+                        or not isinstance(before_number, (int, float))
+                        or isinstance(after_number, bool)
+                        or not isinstance(after_number, (int, float))
+                        or before_number == after_number
+                    ):
+                        raise InvalidNumericCorrectionsError(
+                            "correction owner must identify a changed numeric stored workflow value"
+                        )
                 if session.document_kind == "board":
                     after = self._validated_snapshot(
                         session.document_kind, session.document_id, after
@@ -602,13 +685,14 @@ class SessionService:
             timestamp=time.time(),
             principal_id=principal_id,
             actor_kind=actor_kind,
+            numeric_corrections=corrections,
         )
         if self._store is not None:
             self._store.append_op(session_id, op, principal_id)
         session.ops.append(op)
         session.ops_by_id[op_id] = op
         session.actor_bindings.setdefault(actor_id, principal_id)
-        if self._write_check is not None or session.document_kind == "board":
+        if self._write_check is not None or session.document_kind == "board" or corrections:
             self._documents[session_id] = (op.revision, document)
         return deepcopy(op), False
 

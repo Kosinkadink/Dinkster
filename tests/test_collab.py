@@ -348,6 +348,124 @@ def test_session_edit_permission_tracks_role_and_scope_without_exposing_acl() ->
     run_scenario(scenario())
 
 
+def test_numeric_correction_provenance_reaches_peers_and_survives_restart(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "sessions.sqlite"
+        store = SessionStore(path)
+        client = await make_authenticated_client(SessionService(store=store))
+        writer = {"X-Principal": "writer"}
+        viewer = {"X-Principal": "viewer"}
+        owner = {"graphId": "g", "nodeId": "n", "valueKey": "strength"}
+        correction = [
+            {"owner": owner, "causes": [{**owner, "instancePath": ["instance"], "stamp": "sdxl"}]}
+        ]
+        patch = [
+            {
+                "op": "replace",
+                "path": ["graphs", "g", "nodes", "n", "values", "strength"],
+                "value": 2,
+            }
+        ]
+        body = op_body("automatic", 0, patch=patch, numericCorrections=correction)
+        try:
+            created = await (
+                await client.post(
+                    "/api/sessions",
+                    headers=writer,
+                    json={
+                        "scope": "team",
+                        "documentId": "d",
+                        "snapshot": {
+                            "graphs": {"g": {"nodes": {"n": {"values": {"strength": 4.25}}}}}
+                        },
+                    },
+                )
+            ).json()
+            sid = created["sessionId"]
+            url = f"/api/sessions/{sid}/ops"
+            await client.put(
+                f"/api/sessions/{sid}/acl",
+                headers=writer,
+                json={"defaultRole": "viewer", "entries": {"writer": "owner"}},
+            )
+            ws = await client.ws_connect(f"/api/sessions/{sid}/events", headers=viewer)
+            await ws.receive_json()
+            try:
+                denied = await client.post(url, headers=viewer, json=body)
+                assert denied.status == 403
+                for invalid in (
+                    None,
+                    [{"owner": owner, "causes": []}],
+                    [
+                        {
+                            "owner": owner,
+                            "causes": [{**owner, "instancePath": "instance", "stamp": "sdxl"}],
+                        }
+                    ],
+                    [correction[0], correction[0]],
+                    [{**correction[0], "oldValue": 4.25}],
+                    [{**correction[0], "owner": {**owner, "nodeId": "missing"}}],
+                ):
+                    refused = await client.post(
+                        url, headers=writer, json={**body, "numericCorrections": invalid}
+                    )
+                    assert refused.status == 400
+                    assert (await refused.json())["error"] == "numeric-corrections-invalid"
+                unchanged = await client.post(
+                    url, headers=writer, json={**body, "patch": [{**patch[0], "value": 4.25}]}
+                )
+                assert unchanged.status == 400
+                response = await client.post(url, headers=writer, json=body)
+                assert response.status == 200
+                envelope = await response.json()
+                assert envelope["revision"] == 1
+                assert envelope["numericCorrections"] == correction
+                assert await ws.receive_json() == {"type": "op", **envelope}
+                competing = await client.post(
+                    url, headers=writer, json={**body, "opId": "competing", "actorId": "u2"}
+                )
+                assert competing.status == 409
+                assert (await competing.json())["error"] == "stale-base"
+                page = await (await client.get(url + "?after=0", headers=viewer)).json()
+                assert page["ops"] == [envelope]
+            finally:
+                await ws.close()
+        finally:
+            await client.close()
+            store.close()
+
+        # Reopen the actual database, not the previous service's in-memory state.
+        store = SessionStore(path)
+        client = await make_authenticated_client(SessionService(store=store))
+        try:
+            page = await (await client.get(url + "?after=0", headers=viewer)).json()
+            assert page["ops"] == [envelope]
+            replay = await client.post(url, headers=writer, json=body)
+            assert await replay.json() == {**envelope, "replayed": True}
+            changed = deepcopy(correction)
+            changed[0]["causes"][0]["stamp"] = "other"
+            for annotations in (changed, []):
+                refused = await client.post(
+                    url, headers=writer, json={**body, "numericCorrections": annotations}
+                )
+                assert refused.status == 409
+                assert (await refused.json())["error"] == "op-content-mismatch"
+            ordinary = await client.post(
+                url, headers=writer, json=op_body("personal", 1, patch=[{**patch[0], "value": 1.5}])
+            )
+            assert ordinary.status == 200
+            assert "numericCorrections" not in await ordinary.json()
+            page = await (await client.get(url + "?after=0", headers=viewer)).json()
+            assert len(page["ops"]) == 2
+            assert page["ops"][0] == envelope
+            assert "numericCorrections" not in page["ops"][1]
+        finally:
+            await client.close()
+            store.close()
+
+    run_scenario(scenario())
+
+
 def test_image_session_kind_and_snapshot_validation_over_http() -> None:
     def validator(document_kind: str, document_id: str, snapshot: object) -> str | None:
         if document_kind == "image" and snapshot != {"lineage": document_id}:
