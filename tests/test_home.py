@@ -1386,6 +1386,12 @@ def test_installation_history_reads_recorded_entries_without_retained_builds(
             assert [entry["reason"] for entry in body["history"]] == ["setup", "update"]
             known_empty = await (await client.get(endpoint, params={"root": str(empty)})).json()
             assert known_empty == {"root": str(empty.resolve()), "current": None, "history": []}
+            (empty / "history").write_text("not a directory")
+            unavailable = await client.get(endpoint, params={"root": str(empty)})
+            assert unavailable.status == 503
+            assert (await unavailable.json())["error"] == "history-unavailable"
+            assert (empty / "history").read_text() == "not a directory"
+            (empty / "history").unlink()
             empty.rmdir()
             assert (await client.get(endpoint, params={"root": str(empty)})).status == 503
             assert not empty.exists()
