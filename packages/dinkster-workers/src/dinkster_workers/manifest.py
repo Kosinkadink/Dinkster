@@ -95,6 +95,8 @@ from dinkster_values import MEBIBYTE
 from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
+from .egress import normalize_egress_origin
+
 
 class ManifestError(Exception):
     """A pack manifest is missing, unreadable, or malformed."""
@@ -1846,6 +1848,7 @@ class PackSandboxNeeds:
     gpu: bool = False
     network: bool = False
     writable_mounts: bool = False
+    network_origins: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2646,7 +2649,7 @@ def _parse_sandbox(raw: object, manifest_path: Path) -> PackSandboxNeeds:
         raise ManifestError(f"{manifest_path}: [pack.sandbox] must be a table")
     table = cast("dict[object, object]", raw)
     known = {"gpu", "network", "writable-mounts"}
-    unknown = sorted(str(key) for key in set(table) - known)
+    unknown = sorted(str(key) for key in set(table) - known - {"network-origins"})
     if unknown:
         raise ManifestError(f"{manifest_path}: [pack.sandbox] unknown fields: {', '.join(unknown)}")
     values: dict[str, bool] = {}
@@ -2655,10 +2658,24 @@ def _parse_sandbox(raw: object, manifest_path: Path) -> PackSandboxNeeds:
         if type(value) is not bool:
             raise ManifestError(f"{manifest_path}: [pack.sandbox] {field} must be a boolean")
         values[field] = value
+    raw_origins = table.get("network-origins", [])
+    if not isinstance(raw_origins, list):
+        raise ManifestError(f"{manifest_path}: [pack.sandbox] network-origins must be an array")
+    origins: list[str] = []
+    for origin in cast("list[object]", raw_origins):
+        try:
+            if not isinstance(origin, str):
+                raise ValueError("origin must be a string")
+            origins.append(normalize_egress_origin(origin))
+        except ValueError as exc:
+            raise ManifestError(
+                f"{manifest_path}: [pack.sandbox] invalid network origin {origin!r}: {exc}"
+            ) from exc
     return PackSandboxNeeds(
         gpu=values["gpu"],
-        network=values["network"],
+        network=values["network"] or bool(origins),
         writable_mounts=values["writable-mounts"],
+        network_origins=tuple(dict.fromkeys(origins)),
     )
 
 

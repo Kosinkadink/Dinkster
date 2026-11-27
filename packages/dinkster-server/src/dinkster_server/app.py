@@ -971,6 +971,8 @@ class PackInfo:
     """Validated static frontend files, served lazily outside the packs table."""
     settings_schema: PackSettingsSchema | None = None
     """Declared user settings schema; values live in the host library."""
+    network_origins: tuple[str, ...] = ()
+    """Exact HTTPS origins requested by the installed pack, not host-added grants."""
     inference_unavailable: PackInferenceUnavailable | None = None
     """Set when this pack's ``[pack.extension]`` inference surface degraded
     because no native sampling worker is live. Its other surfaces are served
@@ -1027,6 +1029,8 @@ class PackInfo:
                 }
         if self.settings_schema is not None:
             wire["settings"] = True
+        if self.network_origins:
+            wire["networkOrigins"] = list(self.network_origins)
         if self.inference_unavailable is not None:
             # One inline record per degraded pack: it is a handful of strings,
             # so it needs no lazy endpoint, and it must ride the table the

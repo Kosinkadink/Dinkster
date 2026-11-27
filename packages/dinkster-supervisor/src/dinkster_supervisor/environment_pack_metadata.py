@@ -235,8 +235,13 @@ def default_pack_bound(
                 if not isinstance(facts, dict):
                     raise ValueError("invalid execution-part binding")
                 facts = cast("dict[str, object]", facts)
-                if facts.get("baseId") != base_id:
-                    break
+                published_base = facts.get("baseId")
+                if (
+                    not isinstance(published_base, str)
+                    or re.fullmatch(r"sha256:[a-f0-9]{64}", published_base) is None
+                    or published_base != binding.get("baseId")
+                ):
+                    raise ValueError("invalid publication base binding")
                 digest, size = facts.get("digest"), facts.get("size")
                 if (
                     not isinstance(digest, str)
