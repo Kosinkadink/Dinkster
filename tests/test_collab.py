@@ -465,6 +465,9 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                 "rect": {"x": 20, "y": 40, "width": 340, "height": 240},
             }
             document["order"].append(key)
+        document["items"]["first"]["controllers"] = {input_key: "increment"}
+        document["items"]["saved"]["controllers"] = {input_key: "decrement"}
+        document["items"]["pack"]["controllers"] = {input_key: "randomize"}
         try:
             created = await client.post(
                 "/api/sessions",
@@ -487,7 +490,12 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                             "op": "replace",
                             "path": ["items", "first", "values", input_key],
                             "value": {"text": "Rain at night", "variants": [2, 5]},
-                        }
+                        },
+                        {
+                            "op": "replace",
+                            "path": ["items", "first", "controllers", input_key],
+                            "value": "fixed",
+                        },
                     ],
                 ),
             )
@@ -496,6 +504,7 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                 "text": "Rain at night",
                 "variants": [2, 5],
             }
+            document["items"]["first"]["controllers"][input_key] = "fixed"
             assert (
                 await client.put(
                     f"/api/sessions/{sid}/snapshot", json={"revision": 1, "document": document}
@@ -510,6 +519,7 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
             reopened = await (await client.get(f"/api/sessions/{sid}/snapshot")).json()
             assert reopened == {"revision": 1, "document": document}
             assert reopened["document"]["items"]["second"]["values"][input_key] == "Original"
+            assert "controllers" not in reopened["document"]["items"]["second"]
             for changes in (
                 {"source": {"kind": "library", "recordId": ""}},
                 {
@@ -521,6 +531,10 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                     }
                 },
                 {"values": []},
+                {"controllers": []},
+                {"controllers": None},
+                {"controllers": {input_key: "after_run"}},
+                {"controllers": {input_key: {"mode": "fixed"}}},
             ):
                 refused = await client.post(
                     f"/api/sessions/{sid}/ops",

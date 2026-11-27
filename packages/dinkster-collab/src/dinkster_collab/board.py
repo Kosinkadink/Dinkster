@@ -111,7 +111,7 @@ def validate_board(document_id: str, value: object) -> str | None:
         ):
             return f"Board item '{key}' has an unknown kind"
         content = (
-            {"name", "source", "values"}
+            {"name", "source", "values", "controllers"}
             if kind in {"workflow", "blueprint"}
             else {"text" if kind == "note" else "name" if kind == "section" else "asset"}
         )
@@ -140,6 +140,13 @@ def validate_board(document_id: str, value: object) -> str | None:
         if kind in {"workflow", "blueprint"}:
             if not _text(item.get("name"), 200) or not isinstance(item.get("values"), dict):
                 return f"Board card '{key}' needs a name and values object"
+            if "controllers" in item:
+                controllers = item["controllers"]
+                if not isinstance(controllers, dict) or any(
+                    mode not in ("fixed", "increment", "decrement", "randomize")
+                    for mode in cast("dict[str, object]", controllers).values()
+                ):
+                    return f"Board card '{key}' has invalid controller modes"
             raw_source = item.get("source")
             if not isinstance(raw_source, dict):
                 return f"Board card '{key}' needs a source"
