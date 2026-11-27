@@ -68,7 +68,14 @@ return 400 and changed/unverified bindings return 409
 
 ``GET /supervisor/installations`` lists each installation's root with its
 frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
-``selected`` and ``available``.
+``selected`` and ``available``. ``GET /supervisor/installations/packs`` takes
+an absolute registered ``root`` and optional ``engine`` (default ``main``).
+It reads installed pack identity and requested ``networkOrigins`` from the
+current snapshot without starting an engine. ``available: false`` with
+``packs: null`` means snapshot metadata is unavailable. Within an available
+list, an unreadable manifest retains its locked identity with
+``networkOrigins: null``; an empty list means known empty requests, not
+unknown requests. Origins include execution parts, not operator grants.
 
 ``POST /supervisor/engine/stop`` stops the open engine and keeps its
 installation open. ``GET /supervisor/engine/log`` reads the last 64 KiB of
@@ -411,30 +418,47 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
         ),
         (),
     )
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-I",
-        "-m",
-        "dinkster_supervisor.environment",
-        "--root",
-        str(target.root),
-        "start",
-        "--engine",
-        target.engine,
-        *(argument for gpu in gpus for argument in ("--gpu", gpu)),
-        "--yes",
-        "--json",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
+    launching = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            sys.executable,
+            "-I",
+            "-m",
+            "dinkster_supervisor.environment",
+            "--root",
+            str(target.root),
+            "start",
+            "--engine",
+            target.engine,
+            *(argument for gpu in gpus for argument in ("--gpu", gpu)),
+            "--yes",
+            "--json",
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+        )
     )
-    output = asyncio.ensure_future(process.communicate())
-    while not output.done():
-        with contextlib.suppress(OSError, ValueError):
-            url = await asyncio.to_thread(address)
-            if url is not None:
-                found(url)
-        await asyncio.wait((output,), timeout=0.25)
-    stdout, _ = output.result()
+    output = None
+    try:
+        # Even cancellation during spawn must recover ownership of the start CLI.
+        process = await asyncio.shield(launching)
+        output = asyncio.create_task(process.communicate())
+        while not output.done():
+            with contextlib.suppress(OSError, ValueError):
+                url = await asyncio.to_thread(address)
+                if url is not None:
+                    found(url)
+            await asyncio.wait((output,), timeout=0.25)
+        stdout, _ = output.result()
+    except asyncio.CancelledError:
+        process = await launching
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+        # Reap the writer before stop can trust an absent or previous runtime record.
+        if output is None:
+            await process.communicate()
+        else:
+            await output
+        raise
     try:
         result = cast("dict[str, object]", json.loads(stdout))
     except ValueError:
@@ -653,7 +677,10 @@ class Home:
                 self._set(state="failed", detail=str(error))
                 return
             finally:
-                starting.cancel()
+                if not starting.done():
+                    starting.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await starting
             self.link.base_url = url.rstrip("/")
             self._set(state="ready")
             log.info("engine %s of %s is open at %s", target.engine, target.root, url)
@@ -1156,6 +1183,31 @@ async def _handle_installations(request: web.Request) -> web.Response:
     return web.json_response({"installations": rows})
 
 
+async def _handle_installation_packs(request: web.Request) -> web.Response:
+    from .environment_runtime import installation_pack_metadata
+
+    root = Path(request.query.get("root", ""))
+    engine = request.query.get("engine", "main")
+    if not root.is_absolute():
+        return web.json_response(
+            {"error": "invalid-request", "message": "root must be an absolute path"}, status=400
+        )
+    try:
+        roots = await request.app[HOME_KEY].installations()
+    except ValueError as error:
+        return web.json_response(
+            {"error": "installations-unavailable", "message": str(error)}, status=503
+        )
+    root = root.resolve()
+    if root not in roots:
+        return web.json_response({"error": "unknown-installation"}, status=404)
+    try:
+        metadata = await asyncio.to_thread(installation_pack_metadata, root, engine)
+    except ValueError as error:
+        return web.json_response({"error": "invalid-request", "message": str(error)}, status=400)
+    return web.json_response(metadata)
+
+
 async def _handle_open(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -1354,6 +1406,7 @@ def create_home_app(
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_get("/supervisor/installations", _handle_installations)
+    app.router.add_get("/supervisor/installations/packs", _handle_installation_packs)
     app.router.add_post("/supervisor/engine", _handle_open)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)

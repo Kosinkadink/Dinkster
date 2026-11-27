@@ -4968,7 +4968,7 @@ def test_project_identity_fields_filters_and_remembered_deletion(tmp_path: Path)
         assert patched["uid"] == registered["uid"]
         assert patched["created"] == registered["created"]
         assert patched["revision"] == 2
-        assert patched["packs"] == {"extra": ["grain", "color"]}
+        assert patched["packs"] == {"extra": ["grain", "color"], "allInstalled": True}
         assert patched["accountProject"] == {"issuer": "https://example.test", "id": "shared-film"}
         assert first.call("projects.list", environment="editing")["items"] == [patched]
         assert first.call("projects.list", environment="other")["items"] == []

@@ -497,7 +497,7 @@ class Records:
                 "created": now,
                 "modified": now,
                 "revision": 1,
-                "packs": {"extra": []},
+                "packs": {"extra": [], "allInstalled": True},
                 "environment": None,
                 "accountProject": None,
                 "deleted": False,
@@ -774,15 +774,27 @@ class Records:
                     packs = object_value(patch["packs"], "packs patch")
                     extra = packs.get("extra")
                     if (
-                        set(packs) != {"extra"}
+                        set(packs) - {"extra", "allInstalled"}
                         or not isinstance(extra, list)
+                        or type(packs.get("allInstalled", False)) is not bool
                         or any(
                             not isinstance(pack, str) or not pack
                             for pack in cast("list[object]", extra)
                         )
                     ):
-                        raise LibraryError("invalid", "packs patch must contain an extra list")
-                    patch["packs"] = {**object_value(document["packs"], "packs"), **packs}
+                        raise LibraryError(
+                            "invalid",
+                            "packs patch requires an extra list and optional allInstalled boolean",
+                        )
+                    previous_packs = object_value(document["packs"], "packs")
+                    patch["packs"] = {
+                        **previous_packs,
+                        **packs,
+                        "allInstalled": packs.get(
+                            "allInstalled",
+                            previous_packs.get("allInstalled", not previous_packs["extra"]),
+                        ),
+                    }
                 for field, required in (
                     ("environment", {"id", "lastSnapshot", "lastRunAt"}),
                     ("accountProject", {"issuer", "id"}),

@@ -22,7 +22,7 @@ the next machine that consults it.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Literal
@@ -88,7 +88,6 @@ def acquire_need(
     receipts: PublicAcquisitionReceiptStore | None = None,
     timeout: float = DEFAULT_FETCH_TIMEOUT,
     before_publish: Callable[[AssetSource, int], None] | None = None,
-    remote_acquire: Callable[[AssetNeed], AcquisitionResult] | None = None,
 ) -> AcquisitionResult:
     """Materialize one need, verified, in cost order.
 
@@ -148,8 +147,6 @@ def acquire_need(
     if provenance is not None:
         urls.extend(url for url in provenance.sources(need.digest) if url not in urls)
     if urls:
-        if remote_acquire is not None:
-            return remote_acquire(replace(need, sources=tuple(RemoteSource(url) for url in urls)))
         if receipts is not None:
             eligible = tuple(
                 source
