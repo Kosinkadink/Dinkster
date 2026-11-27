@@ -1,9 +1,32 @@
 # Inbound authentication and capabilities
 
 Inbound authentication is off by default. Without static or identity-service
-authentication configuration, every request receives an implicit `local`
-principal with the `local` scope and all capabilities. Existing local
-deployments therefore retain their prior HTTP and WebSocket behavior.
+authentication configuration, requests without a bound native account session
+receive an implicit `local` principal with the `local` scope and all capabilities.
+Existing local deployments retain their authentication default.
+
+## Native browser accounts
+
+Starting native account sign-in binds the initiating browser with a host-only,
+HttpOnly, SameSite=Strict `dinkster_account` cookie (Secure on HTTPS). The random
+capability exists only in engine memory and the cookie, not in workflow data,
+URLs or browser-readable storage. Account-status polling cannot acquire it.
+The engine obtains the subject from authenticated `/userinfo` at its configured
+identity issuer; it never trusts a browser-supplied subject or the project gateway
+token. Older sessions lacking `openid` retain local identity.
+
+The account subject replaces only the initiating principal's identity. Its
+existing installation grants and operator/agent restrictions are not elevated;
+explicit Bearer credentials retain their own principals and grants. Requests
+using the account cookie reject foreign Origin and cross-site fetches. Account
+mutations also enforce this rule before starting native consent.
+
+Sign-out, native-session replacement, expiry and engine restart revoke the
+binding. Invalid cookies refuse ordinary requests; account status and sign-in/out
+controls remain available to recover without granting account authority. WebSocket
+tickets carry the binding revision, and live authorization checks withdraw grants
+when that binding ends. `/api/account` exposes only a non-secret
+`principalRevision` for dropping client account-bound caches.
 
 ## Static credentials
 

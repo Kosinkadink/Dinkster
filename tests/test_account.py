@@ -22,10 +22,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 import pytest
-from aiohttp import web
+from aiohttp import ClientSession, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_library import AsyncLibraryClient, LibraryClient
-from dinkster_server.auth import Principal, install_auth
+from dinkster_server.auth import Principal, handle_ws_ticket, install_auth, principal_for
 from dinkster_server.projects import PROJECTS_KEY, project_request
 
 from dinkster.account import AccountError, AccountSession, AccountSignIn
@@ -77,7 +77,7 @@ def identity():
                     return
                 self.reply(
                     {
-                        "sub": "account-id",
+                        "sub": observed.get("subject", "account-id"),
                         "name": observed.get("name", "  Test Person  "),
                         "email": observed.get("email", " person@example.test "),
                         "picture": "https://images.example.test/avatar.png",
@@ -887,11 +887,29 @@ def test_browser_account_native_flow_cancel_profile_and_local_logout(identity, t
 
 
 async def _browser_account_native_flow(identity, tmp_path):
+    legacy = bool(identity.get("scope"))
     services = resolve_services(identity_base=identity["base"], catalog_base=identity["base"])
     session = AccountSession(services, home=tmp_path)
     app = web.Application()
     install_auth(app)
     add_account_routes(app, session)
+
+    async def who(request):
+        return web.json_response({"principal": principal_for(request).principal_id})
+
+    async def events(request):
+        socket = web.WebSocketResponse()
+        await socket.prepare(request)
+        async for _ in socket:
+            principal = principal_for(request)
+            await socket.send_json(
+                {"principal": principal.principal_id, "allowed": principal.allows("history:read")}
+            )
+        return socket
+
+    app.router.add_get("/who", who)
+    app.router.add_get("/api/events", events)
+    app.router.add_post("/api/auth/ws-ticket", handle_ws_ticket)
     async with TestClient(TestServer(app)) as client:
         out = await client.get("/api/account")
         assert await out.json() == {
@@ -900,6 +918,7 @@ async def _browser_account_native_flow(identity, tmp_path):
             "signInUnavailableReason": None,
             "signedIn": False,
             "profile": None,
+            "principalRevision": "local",
             "signIn": {"state": "idle"},
         }
         start = await client.post("/api/account/sign-in", json={})
@@ -967,6 +986,23 @@ async def _browser_account_native_flow(identity, tmp_path):
             if document.get("signedIn"):
                 break
             await asyncio.sleep(0.01)
+        revision = document.pop("principalRevision")
+        assert (revision != "local") is (not legacy)
+        assert (await (await client.get("/who")).json())["principal"] == (
+            "local" if legacy else "account-id"
+        )
+        async with ClientSession() as other:
+            unbound = await other.get(client.make_url("/api/account"))
+            assert (await unbound.json())["principalRevision"] == "local"
+            assert (await (await other.get(client.make_url("/who"))).json())["principal"] == "local"
+            forged = await other.get(
+                client.make_url("/who"), headers={"Cookie": "dinkster_account=forged"}
+            )
+            assert forged.status == 401
+        refused = await client.post(
+            "/api/account/sign-out", json={}, headers={"Origin": "https://foreign.example"}
+        )
+        assert refused.status == 403
         assert document == {
             "available": True,
             "canStartSignIn": True,
@@ -993,10 +1029,63 @@ async def _browser_account_native_flow(identity, tmp_path):
             session.prepare_run, "browser-run", {"issuer": identity["base"], "id": PROJECT}
         )
         assert list(session.run_token_directory.iterdir())
+        old_cookie = client.session.cookie_jar.filter_cookies(client.make_url("/"))[
+            "dinkster_account"
+        ].value
+        ticket = (await (await client.post("/api/auth/ws-ticket")).json())["ticket"]
+        live_ticket = (await (await client.post("/api/auth/ws-ticket")).json())["ticket"]
+        socket = await client.ws_connect("/api/events", params={"ticket": live_ticket})
+        await socket.send_str("read")
+        assert await socket.receive_json() == {
+            "principal": "local" if legacy else "account-id",
+            "allowed": True,
+        }
         signed_out = await client.post("/api/account/sign-out", json={})
-        assert (await signed_out.json())["signedIn"] is False
+        out_document = await signed_out.json()
+        assert out_document["signedIn"] is False
+        assert out_document["principalRevision"] == "local"
+        assert (await (await client.get("/who")).json())["principal"] == "local"
+        stale = await client.get("/who", headers={"Cookie": f"dinkster_account={old_cookie}"})
+        assert stale.status == 401
+        await socket.send_str("read")
+        assert (await socket.receive_json())["allowed"] is legacy
+        await socket.close()
+        if not legacy:
+            old_ticket = await client.get(
+                "/api/events", params={"ticket": ticket}, headers={"Upgrade": "websocket"}
+            )
+            assert old_ticket.status == 403
         assert not session.state_path.exists()
         assert not session.token_path.exists()
+        if not legacy:
+            identity["profile_denied"] = False
+            for subject in ("other-account", "account-id"):
+                identity["subject"] = subject
+                start = await client.post("/api/account/sign-in", json={})
+                fields = parse_qs(urlsplit((await start.json())["authorizationUrl"]).query)
+                identity["challenge"] = fields["code_challenge"][0]
+                callback = (
+                    fields["redirect_uri"][0]
+                    + "?"
+                    + urlencode(
+                        {
+                            "state": fields["state"][0],
+                            "iss": identity["base"],
+                            "code": "one-use-code",
+                        }
+                    )
+                )
+                await asyncio.to_thread(finish)
+                async with asyncio.timeout(5):
+                    while True:
+                        status = await (await client.get("/api/account")).json()
+                        if status["signIn"]["state"] != "pending":
+                            break
+                        await asyncio.sleep(0.01)
+                assert (await (await client.get("/who")).json())["principal"] == subject
+                assert status["principalRevision"] not in {"local", revision}
+                revision = status["principalRevision"]
+                await client.post("/api/account/sign-out", json={})
 
 
 def test_cli_account_link_changes_only_the_named_library_project(
@@ -1222,6 +1311,7 @@ def test_unconfigured_account_routes_do_not_offer_sign_in():
                 "available": False,
                 "canStartSignIn": False,
                 "signInUnavailableReason": "account-unavailable",
+                "principalRevision": "local",
                 "signedIn": False,
                 "profile": None,
                 "signIn": {"state": "idle"},

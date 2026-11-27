@@ -220,6 +220,30 @@ class AccountSession:
             scope=_text(result, "scope"),
         )
 
+    def authenticated_identity(self) -> tuple[str, str] | None:
+        """Bind the current native session to the identity issuer's verified subject."""
+        with hold_lock(self.lock_path, timeout=20):
+            state = self._read()
+            if "openid" not in str(state.get("scope", "")).split():
+                return None
+            document = self._object("/userinfo", token=self._oauth(state))
+            return _text(state, "session_id"), _text(document, "sub")
+
+    def matches_session(self, session_id: str) -> bool:
+        """Check revocation without refreshing credentials or contacting identity."""
+        try:
+            state = self._read()
+            expiry = state.get("expires_at")
+            return (
+                state.get("session_id") == session_id
+                and isinstance(expiry, (int, float))
+                and not isinstance(expiry, bool)
+                and math.isfinite(expiry)
+                and expiry > time.time()
+            )
+        except AccountError:
+            return False
+
     def status(self) -> dict[str, object]:
         with hold_lock(self.lock_path, timeout=20):
             if not self.state_path.exists():
