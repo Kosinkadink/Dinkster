@@ -468,7 +468,7 @@ class MountService:
         tmp = self._config_path.with_name(self._config_path.name + f".tmp-{os.getpid()}")
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
         with hold_lock(self._config_path.with_suffix(".lock"), timeout=5):
-            if expected_revision is not None and self._config_path.exists():
+            if expected_revision is not None:
                 current = _mount_revision(
                     load_mounts(self._config_path), load_output_mount(self._config_path)
                 )
@@ -618,10 +618,19 @@ class MountService:
         if mount_id in self._queued_scans:
             return
         self._queued_scans.add(mount_id)
-        task = asyncio.create_task(self.scan(app, mount_id, pending_only=pending_only))
+
+        async def scan_current() -> None:
+            try:
+                await self.scan(app, mount_id, pending_only=pending_only)
+                # A settings change can replace the row while its old scan is running.
+                while mount_id in self.table.pending():
+                    await self.scan(app, mount_id, pending_only=True)
+            finally:
+                self._queued_scans.discard(mount_id)
+
+        task = asyncio.create_task(scan_current())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        task.add_done_callback(lambda _task: self._queued_scans.discard(mount_id))
 
     async def scan_all(self, app: web.Application) -> None:
         for mount_id in self.table.pending():
@@ -637,6 +646,7 @@ class MountService:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
         self._tasks.clear()
+        self._queued_scans.clear()
 
     def publish(
         self,

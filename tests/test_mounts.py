@@ -1761,11 +1761,69 @@ def test_mount_access_updates_refuse_stale_and_selected_then_persist(
                 "first": ("readwrite", 37),
                 "second": ("readwrite", 0),
             }
+            if helper is None:
+                config.unlink()
+                refused = await client.put(
+                    "/api/mounts/second/access", json={"mode": "read", "revision": revision}
+                )
+                assert refused.status == 409
+                assert not config.exists()
         finally:
             await service.close()
             await client.close()
             if helper is not None:
                 helper.close()
+
+    run_scenario(scenario())
+
+
+def test_access_change_during_scan_keeps_catalog_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_assets.library as library_module
+
+    root = tmp_path / "input"
+    seed(root, {"source.txt": b"retained contents"})
+    service = MountService(
+        MountTable(index_root=tmp_path / "indexes"), tmp_path / "mounts.toml", allow_changes=True
+    )
+    entered, release = Event(), Event()
+
+    def held_digest(path: Path):
+        entered.set()
+        assert release.wait(10)
+        return real_digest_file_with_record(path)
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        ws = await client.ws_connect("/api/events?clientId=scan-access")
+        try:
+            added = await client.post(
+                "/api/mounts", json={"id": "input", "path": str(root), "mode": "readwrite"}
+            )
+            assert added.status == 201
+            assert await asyncio.to_thread(entered.wait, 10)
+            state = await (await client.get("/api/mounts")).json()
+            changed = await client.put(
+                "/api/mounts/input/access", json={"mode": "read", "revision": state["revision"]}
+            )
+            assert changed.status == 200
+            release.set()
+            async with asyncio.timeout(10):
+                while True:
+                    state = await (await client.get("/api/mounts")).json()
+                    if state["mounts"][0]["state"] == "ready":
+                        break
+                    await ws.receive_json()
+            assert state["mounts"][0]["mode"] == "read"
+            assert service.table.ref("mounts/input/source.txt").read_bytes() == b"retained contents"
+        finally:
+            release.set()
+            await ws.close()
+            await service.close()
+            await client.close()
 
     run_scenario(scenario())
 
