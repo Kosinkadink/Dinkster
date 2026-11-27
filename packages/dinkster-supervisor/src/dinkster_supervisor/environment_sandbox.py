@@ -16,6 +16,7 @@ from .environment_state import (
     write_document,
     writer_lock,
 )
+from .home_context import installation_context
 
 
 class SandboxSettings(TypedDict):
@@ -25,6 +26,8 @@ class SandboxSettings(TypedDict):
 
 
 def read_sandbox_settings(root: Path) -> SandboxSettings:
+    if (context := installation_context(root)) is not None:
+        return cast("SandboxSettings", context.call(root, "settings"))
     with FileLock(str(root / ".pack-sandbox.lock"), timeout=30):
         return _read_sandbox_settings(root)
 
@@ -53,6 +56,10 @@ def _read_sandbox_settings(root: Path) -> SandboxSettings:
 
 
 def set_sandbox_switch(root: Path, enabled: bool) -> dict[str, object]:
+    if (context := installation_context(root)) is not None:
+        result = cast("dict[str, object]", context.call(root, "switch", enabled))
+        result["root"] = str(root)
+        return result
     with writer_lock(root):
         settings = read_sandbox_settings(root)
         settings["sandboxPacks"] = enabled
@@ -75,6 +82,11 @@ def internet_addresses(
 def change_internet_address(
     root: Path, pack: str, address: str, requested: list[str], snapshot: str, *, allow: bool
 ) -> list[dict[str, str]]:
+    if (context := installation_context(root)) is not None:
+        return cast(
+            "list[dict[str, str]]",
+            context.call(root, "internet", pack, address, requested, snapshot, allow),
+        )
     address = normalize_egress_origin(address)
     with writer_lock(root):
         if str(read_current(root)) != snapshot:

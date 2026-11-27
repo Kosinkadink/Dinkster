@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -108,6 +109,31 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
             job = await response.json()
             await started.wait()
             path = "/supervisor/setup/" + job["id"]
+            if outcome == "completed":
+                reading, release = threading.Event(), threading.Event()
+                original_read = home_setup.read_document
+
+                def held_read(progress: Path) -> dict[str, object]:
+                    reading.set()
+                    if not release.wait(timeout=30):
+                        raise AssertionError("Progress reading blocked the Home event loop")
+                    return original_read(progress)
+
+                with monkeypatch.context() as held:
+                    held.setattr(home_setup, "read_document", held_read)
+                    pending = asyncio.create_task(client.get(path))
+                    try:
+                        assert await asyncio.to_thread(reading.wait, 30)
+                        status = await client.get("/supervisor/status")
+                        assert status.status == 200
+                        release.set()
+                        assert (await pending).status == 200
+                    except BaseException:
+                        finish.set()
+                        cleanup.set()
+                        raise
+                    finally:
+                        release.set()
             assert (await (await client.get(path)).json())["progress"] == {
                 "stage": "downloading",
                 "completed": 17,

@@ -123,6 +123,74 @@ def test_frontend_and_status_answer_with_no_engine(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
+def test_home_status_answers_when_the_wsl_transport_cannot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.home_context import WslContext
+
+    context = WslContext("Dinkster-Desktop-0123456789ab", "/home/dinkster/tools/python3")
+    monkeypatch.setattr(
+        WslContext, "command", lambda *_: [str(tmp_path / "missing-wsl-executable")]
+    )
+
+    def installations() -> frozenset[Path]:
+        context.call(context.windows_path("/"), "installations")
+        raise AssertionError("The missing executable cannot return an installation list")
+
+    async def scenario() -> None:
+        home = Home(installations=installations)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            response = await client.get("/supervisor/status")
+            assert response.status == 200
+            status = await response.json()
+            assert status["role"] == "home" and status["state"] == "stopped"
+            assert "installations" not in status
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("guest_instance", ["windows-listener", "different-guest-instance"])
+def test_wsl_home_requires_the_guest_instance_at_its_windows_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guest_instance: str
+) -> None:
+    from dinkster_supervisor import home as module
+    from dinkster_supervisor.home_context import WslContext
+    from dinkster_supervisor.supervisor import EngineLink, create_supervisor_app
+
+    async def scenario() -> None:
+        root = tmp_path / "guest-installation"
+        server = TestServer(
+            create_supervisor_app(EngineLink(state="ready"), instance="windows-listener")
+        )
+        async with TestClient(server):
+            url = str(server.make_url("")).rstrip("/")
+            context = WslContext("Dinkster-Desktop-0123456789ab", "/home/dinkster/tools/python3")
+            monkeypatch.setattr(module, "installation_context", lambda _: context)
+            monkeypatch.setattr(
+                WslContext, "call", lambda *_: {"url": url, "instance": guest_instance}
+            )
+
+            async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+                return url
+
+            home = Home(installations=lambda: frozenset({root.resolve()}), start=start)
+            async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+                assert (
+                    await client.post("/supervisor/engine", json={"root": str(root)})
+                ).status == 200
+                status = await wait_for(client, lambda s: s["state"] in {"ready", "failed"})
+                if guest_instance == "windows-listener":
+                    assert status["state"] == "ready"
+                else:
+                    assert status["state"] == "failed"
+                    assert "Windows address" in status["detail"]
+                    assert (
+                        await client.post("/api/projects", json={"id": "private"})
+                    ).status == 503
+
+    run_scenario(scenario())
+
+
 def test_open_engine_receives_the_api_and_events_until_another_opens(tmp_path: Path) -> None:
     async def scenario() -> None:
         frontend = make_frontend(tmp_path / "frontend")

@@ -47,9 +47,11 @@ from .environment_state import (
     write_document,
     writer_lock,
 )
+from .home_context import installation_context
 
 __all__ = [
     "engine_assignments",
+    "engine_connection",
     "engine_status",
     "generation_runtime_lock",
     "generation_runtime_reason",
@@ -116,6 +118,8 @@ def run_generation(root: Path, command: list[str]) -> int:
 
 def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
     """Ask the selected engine's worker launcher, not the tools host, about isolation."""
+    if (context := installation_context(root)) is not None:
+        return cast("dict[str, object]", context.call(root, "readiness", generation))
     with generation_runtime_lock(root):
         target = root / "builds" / str(generation)
         Generation.read(target / "build.json")
@@ -577,6 +581,9 @@ def _startup_failure(
 
 def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None:
     """Stop only the supervisor whose live status proves its recorded identity."""
+    if (context := installation_context(root)) is not None:
+        context.call(root, "stop", name, generation)
+        return
     _validate_name(name)
     root = Path(root)
     selected = generation if generation is not None else read_current(root)
@@ -645,6 +652,8 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
 
 def engine_status(root: Path) -> tuple[dict[str, object], ...]:
     """Return the selected generation's engines without trusting a reused PID."""
+    if (context := installation_context(root)) is not None:
+        return tuple(cast("list[dict[str, object]]", context.call(root, "status")))
     runtime = Path(root) / "runtime"
     if not runtime.is_dir():
         return ()
@@ -656,6 +665,19 @@ def engine_status(root: Path) -> tuple[dict[str, object], ...]:
     for path in sorted(paths):
         rows.append(_public_row(_inspect(_parse_record(path))))
     return tuple(rows)
+
+
+def engine_connection(root: Path, name: str) -> dict[str, str]:
+    """The verified supervisor endpoint and public instance identity, never its shutdown token."""
+    _validate_name(name)
+    generation = read_current(root)
+    record = None if generation is None else _load_record(root, name, generation)
+    if record is None:
+        raise EnvironmentError("engine has no supervisor record")
+    inspected = _inspect(record)
+    if not _identity_matches(inspected):
+        raise EnvironmentError("engine supervisor identity is not verified")
+    return {key: cast("str", inspected[key]) for key in ("url", "instance")}
 
 
 def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
@@ -809,6 +831,10 @@ def installation_pack_metadata(
     root: Path, name: str, *, snapshot: int | None = None
 ) -> dict[str, object]:
     """Ask the selected snapshot for installed requests without starting an engine."""
+    if (context := installation_context(root)) is not None:
+        result = cast("dict[str, object]", context.call(root, "packs", name, snapshot))
+        result["root"] = str(root)
+        return result
     _validate_name(name)
     answer: dict[str, object] = {
         "root": str(root),
@@ -880,6 +906,8 @@ def installation_pack_metadata(
 
 def engine_log_tail(root: Path, name: str) -> dict[str, str | bool]:
     """Read at most 64 KiB of the current snapshot's engine output, even after stop."""
+    if (context := installation_context(root)) is not None:
+        return cast("dict[str, str | bool]", context.call(root, "log", name))
     _validate_name(name)
     generation = read_current(root)
     empty: dict[str, str | bool] = {"available": False, "text": "", "truncated": False}
