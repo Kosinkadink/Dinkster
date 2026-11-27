@@ -8,6 +8,7 @@ from typing import cast
 
 _ITEM_ID = re.compile(r"[a-z][a-z0-9-]{0,63}")
 _DIGEST = re.compile(r"blake3:[0-9a-f]{64}")
+_BLUEPRINT_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _MEDIA = frozenset({"picture", "video", "sound"})
 _MAX_JSON_DEPTH = 64
 _MAX_JSON_NODES = 4_000_000
@@ -101,10 +102,20 @@ def validate_board(document_id: str, value: object) -> str | None:
         if item.get("id") != key:
             return f"Board item '{key}' id must equal its key"
         kind = item.get("kind")
-        if not isinstance(kind, str) or kind not in (*_MEDIA, "note", "section"):
+        if not isinstance(kind, str) or kind not in (
+            *_MEDIA,
+            "note",
+            "section",
+            "workflow",
+            "blueprint",
+        ):
             return f"Board item '{key}' has an unknown kind"
-        content = "text" if kind == "note" else "name" if kind == "section" else "asset"
-        if item.keys() - {"id", "kind", "rect", "sectionId", content}:
+        content = (
+            {"name", "source", "values"}
+            if kind in {"workflow", "blueprint"}
+            else {"text" if kind == "note" else "name" if kind == "section" else "asset"}
+        )
+        if item.keys() - {"id", "kind", "rect", "sectionId", *content}:
             return f"Board item '{key}' contains unsupported fields"
         kinds[key] = kind
         raw_rect = item.get("rect")
@@ -126,6 +137,26 @@ def validate_board(document_id: str, value: object) -> str | None:
             return f"Board note '{key}' text exceeds 10000 characters or is not text"
         if kind == "section" and not _text(item.get("name"), 200):
             return f"Board section '{key}' name exceeds 200 characters or is not text"
+        if kind in {"workflow", "blueprint"}:
+            if not _text(item.get("name"), 200) or not isinstance(item.get("values"), dict):
+                return f"Board card '{key}' needs a name and values object"
+            raw_source = item.get("source")
+            if not isinstance(raw_source, dict):
+                return f"Board card '{key}' needs a source"
+            source = cast("dict[str, object]", raw_source)
+            if source.get("kind") == "library":
+                fields = {"recordId"}
+            elif kind == "blueprint" and source.get("kind") == "pack":
+                fields = {"packId", "blueprintId", "digest"}
+                digest = source.get("digest")
+                if not isinstance(digest, str) or not _BLUEPRINT_DIGEST.fullmatch(digest):
+                    return f"Board card '{key}' needs a sha256 blueprint digest"
+            else:
+                return f"Board card '{key}' has an invalid source kind"
+            if source.keys() - {"kind", *fields} or any(
+                not _text(source.get(field), 200) or not source.get(field) for field in fields
+            ):
+                return f"Board card '{key}' has an invalid source"
         if kind not in _MEDIA:
             continue
         raw_asset = item.get("asset")
