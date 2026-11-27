@@ -468,6 +468,7 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
         document["items"]["first"]["controllers"] = {input_key: "increment"}
         document["items"]["saved"]["controllers"] = {input_key: "decrement"}
         document["items"]["pack"]["controllers"] = {input_key: "randomize"}
+        document["runs"] = {"native-run-one": {"card": "first", "items": ["picture", "video"]}}
         try:
             created = await client.post(
                 "/api/sessions",
@@ -496,6 +497,17 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                             "path": ["items", "first", "controllers", input_key],
                             "value": "fixed",
                         },
+                        {"op": "remove", "path": ["items", "picture"]},
+                        {
+                            "op": "replace",
+                            "path": ["order"],
+                            "value": [key for key in document["order"] if key != "picture"],
+                        },
+                        {
+                            "op": "add",
+                            "path": ["runs", "native-run-two"],
+                            "value": {"card": "removed-card", "items": []},
+                        },
                     ],
                 ),
             )
@@ -505,6 +517,9 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                 "variants": [2, 5],
             }
             document["items"]["first"]["controllers"][input_key] = "fixed"
+            del document["items"]["picture"]
+            document["order"].remove("picture")
+            document["runs"]["native-run-two"] = {"card": "removed-card", "items": []}
             assert (
                 await client.put(
                     f"/api/sessions/{sid}/snapshot", json={"revision": 1, "document": document}
@@ -520,6 +535,10 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
             assert reopened == {"revision": 1, "document": document}
             assert reopened["document"]["items"]["second"]["values"][input_key] == "Original"
             assert "controllers" not in reopened["document"]["items"]["second"]
+            assert reopened["document"]["runs"] == {
+                "native-run-one": {"card": "first", "items": ["picture", "video"]},
+                "native-run-two": {"card": "removed-card", "items": []},
+            }
             for changes in (
                 {"source": {"kind": "library", "recordId": ""}},
                 {
@@ -551,7 +570,29 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                     ),
                 )
                 assert refused.status == 400
+            for runs in (
+                None,
+                [],
+                {"": {"card": "first", "items": []}},
+                {"native-run-one": None},
+                {"native-run-one": {"card": "First", "items": []}},
+                {"native-run-one": {"card": "first", "items": None}},
+                {"native-run-one": {"card": "first", "items": ["picture", "picture"]}},
+                {"native-run-one": {"card": "first", "items": [False]}},
+                {"native-run-one": {"card": "first", "items": ["bad/id"]}},
+                {"native-run-one": {"card": "first", "items": [], "extra": True}},
+            ):
+                refused = await client.post(
+                    f"/api/sessions/{sid}/ops",
+                    json=op_body(
+                        "invalid-runs",
+                        1,
+                        patch=[{"op": "replace", "path": ["runs"], "value": runs}],
+                    ),
+                )
+                assert refused.status == 400
             assert (await (await client.get(f"/api/sessions/{sid}")).json())["revision"] == 1
+            assert (await (await client.get(f"/api/sessions/{sid}/snapshot")).json()) == reopened
         finally:
             await client.close()
             store.close()

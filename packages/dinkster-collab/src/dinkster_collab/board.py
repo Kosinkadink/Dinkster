@@ -72,12 +72,36 @@ def validate_board(document_id: str, value: object) -> str | None:
     if not isinstance(value, dict):
         return "Board must be an object"
     board = cast("dict[str, object]", value)
-    if board.keys() - {"format", "formatVersion", "lineage", "items", "order"}:
+    if board.keys() - {"format", "formatVersion", "lineage", "items", "order", "runs"}:
         return "Board contains unsupported fields"
     if board.get("format") != "dinkster-board" or not _number(board.get("formatVersion"), 1, 1):
         return "Board format must be dinkster-board version 1"
     if not document_id or board.get("lineage") != document_id:
         return "Board lineage must match documentId"
+    if "runs" in board:
+        raw_runs = board["runs"]
+        if not isinstance(raw_runs, dict):
+            return "Board runs must be an object"
+        # References outlive removed cards/results, so replay cannot restore dismissed media.
+        for job, raw_run in cast("dict[str, object]", raw_runs).items():
+            if not _text(job, 2048) or not job or not isinstance(raw_run, dict):
+                return "Board runs need nonempty job references and records"
+            run = cast("dict[str, object]", raw_run)
+            card, delivered = run.get("card"), run.get("items")
+            if (
+                run.keys() != {"card", "items"}
+                or not isinstance(card, str)
+                or not _ITEM_ID.fullmatch(card)
+                or not isinstance(delivered, list)
+            ):
+                return "Board run needs a card id and delivered item ids"
+            item_ids = cast("list[object]", delivered)
+            if (
+                len(item_ids) > 2000
+                or not all(isinstance(item, str) and _ITEM_ID.fullmatch(item) for item in item_ids)
+                or len(set(item_ids)) != len(item_ids)
+            ):
+                return "Board run delivered item ids must be unique Board ids"
     raw_items, order = board.get("items"), board.get("order")
     if not isinstance(raw_items, dict) or not isinstance(order, list):
         return "Board needs an items object and an order list"
