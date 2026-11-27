@@ -220,8 +220,14 @@ def test_windows_fallback_retains_card_identity_without_inventing_driver_facts(
 def test_missing_driver_tool_does_not_hide_an_nvidia_card(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nvidia: bool
 ) -> None:
+    class PciPath(Path):
+        @property
+        def name(self) -> str:
+            # Preserve sysfs PCI names without creating invalid Windows paths.
+            return super().name.replace("_", ":")
+
     monkeypatch.setattr(hardware.sys, "platform", "linux")
-    device = tmp_path / "0000:01:00.0"
+    device = tmp_path / "0000_01_00.0"
     device.mkdir()
     (device / "vendor").write_text("0x10de" if nvidia else "0x8086")
     (device / "class").write_text("0x030000\n")
@@ -230,7 +236,7 @@ def test_missing_driver_tool_does_not_hide_an_nvidia_card(
         raise FileNotFoundError("nvidia-smi")
 
     monkeypatch.setattr(hardware.subprocess, "run", missing)
-    monkeypatch.setattr(hardware, "Path", lambda _: tmp_path)
+    monkeypatch.setattr(hardware, "Path", lambda _: PciPath(tmp_path))
     assert hardware.detect_graphics_cards() == [
         {
             "id": "0000:01:00.0",
