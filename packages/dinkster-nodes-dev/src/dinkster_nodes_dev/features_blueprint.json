@@ -7,7 +7,7 @@
     "root": {
       "id": "root",
       "name": "Node Feature Examples",
-      "boundary": {"inputs": [], "outputs": []},
+      "boundary": {"body": []},
       "nodes": {
         "slot": {"id": "slot", "type": "dev.features.slot", "values": {"source": 7}, "dynamic": {"source": {"selected": "integer"}}},
         "count": {"id": "count", "type": "dev.features.output_count", "values": {"count": 3, "start": 10}},
