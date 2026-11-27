@@ -11,11 +11,14 @@ import stat
 import subprocess
 import tempfile
 import threading
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal, cast
 
 from aiohttp import web
 from cryptography.fernet import Fernet, InvalidToken
+from dinkster_graph import Graph, RegionNode, elaborate_graph
+from dinkster_schema import NodeSchema
 from dinkster_schema.model import SECRET_NAME_PATTERN
 
 from .auth import Principal, principal_for
@@ -201,6 +204,63 @@ class SecretStore:
         """Presence and authorized fallback only; never return a credential to a client."""
         value, source, fallback = self.resolve(principal, name)
         return {"name": name, "set": value is not None, "source": source, "fallback": fallback}
+
+    def preflight(
+        self,
+        principal: Principal,
+        graph: Graph,
+        schemas: Mapping[str, NodeSchema],
+    ) -> list[dict[str, object]]:
+        """Reject missing required credentials without exporting their values.
+
+        Check the elaborated interface so inactive choice rows are ignored and
+        selected group members and nested regions receive their own diagnostics.
+        """
+        problems: list[dict[str, object]] = []
+        pending = [("", graph)]
+        while pending:
+            prefix, level = pending.pop()
+            effective, _diagnostics = elaborate_graph(level, schemas)
+            for node_id, node in level.nodes.items():
+                path = prefix + node_id
+                if isinstance(node, RegionNode):
+                    pending.append((path + "/", node.body))
+                    continue
+                schema = effective.get(node_id)
+                if schema is None:
+                    continue
+                for spec in schema.inputs:
+                    if not spec.secret:
+                        continue
+                    name = node.inputs.get(spec.id, spec.default)
+                    if name is None and not spec.required:
+                        continue
+                    invalid = name is not None and (
+                        not isinstance(name, str) or SECRET_NAME_PATTERN.fullmatch(name) is None
+                    )
+                    if invalid:
+                        problems.append(
+                            {
+                                "code": "invalid-secret-name",
+                                "message": "Choose a secret name; secret inputs cannot be wired",
+                                "nodeId": path,
+                                "inputId": spec.id,
+                            }
+                        )
+                    elif spec.required and (
+                        name is None or not self.status(principal, cast("str", name))["set"]
+                    ):
+                        problems.append(
+                            {
+                                "code": "secret-not-set",
+                                "message": "A required secret is not set",
+                                "nodeId": path,
+                                "inputId": spec.id,
+                                "action": "Set secret",
+                                **({"name": name} if name is not None else {}),
+                            }
+                        )
+        return problems
 
     def write(
         self,

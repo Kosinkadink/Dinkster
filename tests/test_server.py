@@ -25,7 +25,7 @@ from dinkster_engine import (
     EventListener,
     ExecutionRuntime,
 )
-from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, graph_to_wire
 from dinkster_memory import (
     ConsumerItem,
     MemoryGovernor,
@@ -40,10 +40,12 @@ from dinkster_protocol import (
     PackSettingsSchema,
 )
 from dinkster_schema import (
+    Choice,
     Input,
     MappingSource,
     Node,
     NodeSchema,
+    Option,
     Output,
     ReplacementCase,
     ReplacementRule,
@@ -836,6 +838,175 @@ def test_host_node_unavailability_is_visible_and_refused_before_queueing() -> No
             assert rejected["message"] == reason
             assert rejected["problems"][0]["nodeId"] == "s"
             assert app[STATE_KEY].queue.get("c1", "j1") is None
+
+    run_scenario(scenario())
+
+
+def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_rows() -> None:
+    class SecretConsumer(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.secret_consumer",
+                body=(
+                    Choice(
+                        "mode",
+                        options=(
+                            Option(
+                                "required",
+                                rows=(
+                                    Input(
+                                        "key", STRING, default="service_key", secret=True, pin=False
+                                    ),
+                                ),
+                            ),
+                            Option(
+                                "optional",
+                                rows=(
+                                    Input(
+                                        "optional_key",
+                                        STRING,
+                                        default="service_key",
+                                        secret=True,
+                                        pin=False,
+                                        required=False,
+                                    ),
+                                ),
+                            ),
+                            Option("plain"),
+                        ),
+                        default="required",
+                    ),
+                    Output("out", STRING),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, **kwargs: object) -> Mapping[str, object]:
+            return cls.outputs(out="done")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = build_schemas([SecretConsumer])
+
+        def engine(on_event: EventListener) -> Engine:
+            return Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker(build_node_types([SecretConsumer]), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        alice = Principal("alice", {"local": frozenset({"jobs:submit", "secrets:use"})})
+        bob = Principal("bob", {"local": frozenset({"jobs:submit"})})
+        admin = Principal("admin", {"local": frozenset({"settings:write"})})
+        app = create_app(
+            engine,
+            schemas,
+            authenticator=MappingAuthenticator({"alice": alice, "bob": bob, "admin": admin}),
+        )
+        app[STATE_KEY].queue.pause()
+        graph = Graph(
+            nodes={
+                "consumer": GraphNode("test.secret_consumer", slot_variants={"mode": "required"})
+            }
+        )
+        async with TestClient(TestServer(app)) as client:
+            sequence = 0
+
+            async def submit(who: str, document: Graph = graph) -> aiohttp.ClientResponse:
+                nonlocal sequence
+                sequence += 1
+                return await client.post(
+                    "/api/jobs",
+                    json=submit_body(document, list(document.nodes), jobId=str(sequence)),
+                    headers={"Authorization": "Bearer " + who},
+                )
+
+            missing = await submit("alice")
+            assert missing.status == 409
+            assert missing.headers["Cache-Control"] == "no-store"
+            absent = await missing.json()
+            assert absent == {
+                "error": "secrets-not-ready",
+                "problems": [
+                    {
+                        "code": "secret-not-set",
+                        "message": "A required secret is not set",
+                        "nodeId": "consumer",
+                        "inputId": "mode.key",
+                        "action": "Set secret",
+                        "name": "service_key",
+                    }
+                ],
+            }
+            assert app[STATE_KEY].queue.get("c1", "1") is None
+            for mode in ("optional", "plain"):
+                response = await submit(
+                    "alice",
+                    Graph(
+                        nodes={
+                            "consumer": GraphNode(
+                                "test.secret_consumer", slot_variants={"mode": mode}
+                            )
+                        }
+                    ),
+                )
+                assert response.status == 202, await response.text()
+            response = await client.put(
+                "/api/secrets/service_key",
+                json={"scope": "deployment", "value": "deployment-credential-not-public"},
+                headers={"Authorization": "Bearer admin"},
+            )
+            assert response.status == 200
+            denied = await submit("bob")
+            assert denied.status == 409
+            assert await denied.json() == absent
+            accepted = await submit("alice")
+            assert accepted.status == 202, await accepted.text()
+            response = await client.put(
+                "/api/secrets/service_key",
+                json={"value": "bob-private-credential"},
+                headers={"Authorization": "Bearer bob"},
+            )
+            assert response.status == 200
+            accepted = await submit("bob")
+            assert accepted.status == 202, await accepted.text()
+            response = await client.delete(
+                "/api/secrets/service_key", headers={"Authorization": "Bearer bob"}
+            )
+            assert response.status == 200
+            nested = Graph(
+                nodes={
+                    "group": RegionNode(
+                        kind="map",
+                        body=graph,
+                        ports={"index": TypeExpr.concrete("INT")},
+                        inputs={"index": [1]},
+                        element_ports=("index",),
+                        outputs={"result": RegionOutput(Link("consumer", "out"))},
+                    )
+                }
+            )
+            missing = await submit("bob", nested)
+            assert missing.status == 409
+            assert (await missing.json())["problems"][0]["nodeId"] == "group/consumer"
+            invalid = await submit(
+                "alice",
+                Graph(
+                    nodes={
+                        "consumer": GraphNode(
+                            "test.secret_consumer",
+                            {"mode.key": Link("consumer", "out")},
+                            slot_variants={"mode": "required"},
+                        )
+                    }
+                ),
+            )
+            assert invalid.status == 409
+            assert (await invalid.json())["problems"][0]["code"] == "invalid-secret-name"
 
     run_scenario(scenario())
 

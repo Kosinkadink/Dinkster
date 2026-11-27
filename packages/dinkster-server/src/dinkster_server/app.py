@@ -375,7 +375,7 @@ from .preflight import (
 )
 from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue, JobState
 from .redaction import PathRedactor
-from .secrets import SecretStore, add_secret_routes
+from .secrets import SECRETS_KEY, SecretStore, SecretStoreError, add_secret_routes
 from .settings import SETTINGS_CATEGORIES, RuntimeSettings, add_settings_routes
 from .training_sessions import TrainingSessionStore, add_training_routes
 
@@ -3560,6 +3560,26 @@ async def handle_submit(request: web.Request) -> web.Response:
             targets = list(compiled_graph.targets)
         else:
             preflight_graph = execution_graph
+        assert execution.schemas is not None
+        try:
+            secret_problems = await asyncio.to_thread(
+                request.app[SECRETS_KEY].preflight,
+                principal,
+                preflight_graph,
+                execution.schemas,
+            )
+        except SecretStoreError:
+            return web.json_response(
+                {"error": "secrets-unavailable", "message": "Cannot check secrets. Try again"},
+                status=503,
+                headers={"Cache-Control": "no-store"},
+            )
+        if secret_problems:
+            return web.json_response(
+                {"error": "secrets-not-ready", "problems": secret_problems},
+                status=409,
+                headers={"Cache-Control": "no-store"},
+            )
         pending = [("", preflight_graph)]
         while pending:
             prefix, level = pending.pop()
