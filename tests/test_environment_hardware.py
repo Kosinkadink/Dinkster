@@ -198,7 +198,7 @@ def test_windows_fallback_retains_card_identity_without_inventing_driver_facts(
     def command(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         if args[0] == "nvidia-smi":
             raise FileNotFoundError("nvidia-smi")
-        assert args[0] == "powershell.exe"
+        assert Path(args[0]).name == "powershell.exe"
         return subprocess.CompletedProcess(args, 0, json.dumps(rows))
 
     monkeypatch.setattr(hardware.subprocess, "run", command)

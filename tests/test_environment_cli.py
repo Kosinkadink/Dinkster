@@ -2285,6 +2285,10 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     else:
         import subprocess
 
+        windows_root = tmp_path / "Windows"
+        powershell = windows_root / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        monkeypatch.setenv("SystemRoot", str(windows_root))
+
         class PciPath(Path):
             @property
             def name(self) -> str:
@@ -2299,6 +2303,11 @@ def test_catalog_recommends_only_the_matching_graphics_build(
         )
 
         def command(arguments: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            if system == "win32":
+                if arguments[0] == "powershell.exe":
+                    raise FileNotFoundError("PowerShell is not on the restricted launcher PATH")
+                if arguments[0] == str(powershell):
+                    arguments = ["powershell.exe", *arguments[1:]]
             if system == "win32" and arguments[0] == "amd-smi":
                 raise FileNotFoundError("amd-smi is not available on native Windows")
             if arguments[0] == "powershell.exe" and "DriverVersion" not in arguments[-1]:
