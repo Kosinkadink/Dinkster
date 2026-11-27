@@ -22,7 +22,7 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -526,6 +526,7 @@ class BoundarySession:
         # Events for an id with no sink (caller passed none, or the result
         # already landed) are dropped - they are chatter by contract.
         self._event_sinks: dict[str, OnInvocationEvent] = {}
+        self._network_invocations: dict[str, Invocation] = {}
         self._run_controls: dict[str, Invocation] = {}
         self._run_control_requests: set[tuple[str, str]] = set()
         self._run_control_tasks: dict[tuple[str, str], asyncio.Task[None]] = {}
@@ -1572,6 +1573,33 @@ class BoundarySession:
             if files:
                 await self._blob_transfer.ensure_peer_holds(files)
 
+    @property
+    def active_network_nodes(self) -> tuple[str, ...]:
+        return tuple(invocation.node_id for invocation in self._network_invocations.values())
+
+    def report_network_denied(
+        self,
+        origin: str,
+        *,
+        candidates: tuple[str, ...] | None = None,
+        packs: tuple[str, ...] | None = None,
+    ) -> None:
+        nodes = candidates if candidates is not None else self.active_network_nodes
+        for invocation_id in tuple(self._network_invocations):
+            sink = self._event_sinks.get(invocation_id)
+            if sink is not None:
+                sink(
+                    InvocationEvent(
+                        "sandbox-network-denied",
+                        {
+                            "pack": self.pack,
+                            "origin": origin,
+                            "nodeIds": nodes,
+                            "candidatePacks": packs or (self.pack,),
+                        },
+                    )
+                )
+
     async def invoke(
         self,
         invocation: Invocation,
@@ -1609,6 +1637,7 @@ class BoundarySession:
             self._run_controls[invocation.invocation_id] = invocation
         if on_event is not None:
             self._event_sinks[invocation.invocation_id] = on_event
+        self._network_invocations[invocation.invocation_id] = invocation
         started_at_ns = time.time_ns()
         started = time.perf_counter()
         try:
@@ -1649,6 +1678,7 @@ class BoundarySession:
             await self._cancel_invocation(key)
             raise
         finally:
+            self._network_invocations.pop(invocation.invocation_id, None)
             self._event_sinks.pop(invocation.invocation_id, None)
             self._run_controls.pop(invocation.invocation_id, None)
             control_tasks = [
@@ -1684,7 +1714,34 @@ class BoundarySession:
                 raise
             self._forget_invocation(invocation.invocation_id)
             self._emit(invocation, input_stats, {}, execute_ms, round_trip_ms)
-            return InvocationResult(error=error_from_wire(error_wire))
+            error = error_from_wire(error_wire)
+            if any(hint.code == "sandbox-network-destination-unknown" for hint in error.hints):
+                if on_event is not None:
+                    on_event(
+                        InvocationEvent(
+                            "sandbox-network-denied",
+                            {"pack": self.pack, "origin": None, "nodeIds": (invocation.node_id,)},
+                        )
+                    )
+                    error = replace(
+                        error,
+                        hints=tuple(
+                            hint
+                            for hint in error.hints
+                            if hint.code != "sandbox-network-destination-unknown"
+                        ),
+                    )
+                else:
+                    error = replace(
+                        error,
+                        hints=tuple(
+                            replace(hint, message=f"Pack {self.pack!r}: {hint.message}")
+                            if hint.code == "sandbox-network-destination-unknown"
+                            else hint
+                            for hint in error.hints
+                        ),
+                    )
+            return InvocationResult(error=error)
 
         consumed: list[str] = []
         try:
@@ -2331,6 +2388,9 @@ class BoundarySession:
                     if future is not None and not future.done():
                         future.set_result((header, blobs))
                 elif kind == "invocationEvent":
+                    # Only the host's egress endpoint can attest a policy refusal.
+                    if header.get("name") == "sandbox-network-denied":
+                        continue
                     invocation_id = str(header.get("invocationId"))
                     if self._resumable:
                         key = InvocationKey.from_header(header)

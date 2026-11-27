@@ -47,6 +47,8 @@ class SessionStore:
                 self._conn.execute(
                     "ALTER TABLE sessions ADD COLUMN held TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "title" not in columns:
+                self._conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ops (
@@ -114,8 +116,8 @@ class SessionStore:
             self._conn.execute(
                 "INSERT INTO sessions"
                 " (session_id, scope, document_id, document_kind, snapshot,"
-                " snapshot_revision, created_at, held)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " snapshot_revision, created_at, held, title)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.session_id,
                     session.scope,
@@ -125,6 +127,7 @@ class SessionStore:
                     session.snapshot_revision,
                     session.created_at,
                     _held_json(session.held),
+                    session.title,
                 ),
             )
             self._conn.execute(
@@ -137,6 +140,12 @@ class SessionStore:
                     (session.session_id, principal_id, role)
                     for principal_id, role in session.acl.items()
                 ],
+            )
+
+    def rename(self, session_id: str, title: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET title = ? WHERE session_id = ?", (title, session_id)
             )
 
     def replace_acl(self, session_id: str, default_role: str, entries: dict[str, str]) -> None:
@@ -222,6 +231,7 @@ class SessionStore:
                     sessions.snapshot_revision,
                     sessions.created_at,
                     sessions.held,
+                    sessions.title,
                     ops.revision,
                     ops.op_id,
                     ops.actor_id,
@@ -264,6 +274,7 @@ class SessionStore:
                             dict[str, list[str]], json.loads(cast(str, row["held"]))
                         ).items()
                     },
+                    title=cast(str | None, row["title"]),
                 )
                 sessions[session_id] = session
             if row["revision"] is None:

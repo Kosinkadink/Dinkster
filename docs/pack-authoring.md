@@ -69,8 +69,9 @@ hash verification; it does not freely resolve dependencies against the index.
 Per-pack virtual environments remain isolated.
 Engine-provided packages must satisfy the pack's declared requirements and its
 private dependency wheels' requirements, not the versions recorded at publication.
-Private dependencies remain exactly locked; an unconstrained engine-provided
-dependency does not require a new pack release when the engine updates it.
+Private dependencies remain exactly locked; the install lock's base identity records
+publication provenance, so an otherwise compatible engine base or engine-provided
+dependency update does not require a new pack release.
 The schema 2 `/static/packs/index.json` catalog lists one entry per pack:
 `name`, `publisher`, `latestVersion`, `library` and a static-relative `url`
 such as `packs/my-pack/index.json`. That per-pack file has `schemaVersion: 2`,
@@ -105,9 +106,10 @@ publisher = "my-publisher"       # checkout publisher identity
 # uses-types = ["seg-pack.SEGS"] # other packs' types used without requiring them
 requires = ["numpy>=1.26"]       # pip requirements; PIN them (doctor warns)
 
-[pack.sandbox]                   # requests only; the host grants authority
+[pack.sandbox]
 gpu = false
 network = false
+network-origins = []             # exact HTTPS origins, e.g. ["https://api.example.org"]
 writable-mounts = false
 
 [pack.contracts]
@@ -320,15 +322,20 @@ the whole declaration instead of advertising assets or controls that the host
 cannot serve safely and consistently.
 
 `[pack.sandbox]` is explicit even when all needs are false; `dinkster doctor`
-warns when the table is absent. `gpu` and `network` require matching per-pack
-host grants. `writable-mounts` allows writes only to mounts the operator
+warns when the table is absent. `gpu` requires a matching per-pack host grant.
+`writable-mounts` allows writes only to mounts the operator
 configured as `readwrite`; every other configured mount remains read-only.
-`network` declares a need to reach external services, not a transport or
-destination; the host grants exact HTTPS origins and routes them through a
+`network-origins` lists the exact HTTPS origins an allowed pack needs; sandboxed
+workers receive those origins automatically. A nonempty list implies `network = true`.
+Origins cannot contain credentials, paths, queries or fragments; invalid entries
+refuse manifest loading and name the offending value. Equivalent origins are
+normalized and deduplicated. Each execution part declares its own list.
+Legacy `network = true` without a list still requires host-supplied origins.
+The host routes exact HTTPS grants through a
 per-worker Unix-socket proxy while direct networking, including loopback,
 stays blocked. `DINKSTER_EGRESS_PROXY` names that socket; clients send standard HTTP
 CONNECT requests over it and perform TLS through the resulting tunnel. The
-table never expands filesystem, network, or device authority on its own. A
+table never grants raw network access or expands filesystem or device authority. A
 sandboxed server cannot change the grants of running workers. With
 `--allow-mount-changes`, edits are saved for the next controlled server restart;
 running workers retain their original grants.

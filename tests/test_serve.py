@@ -24,6 +24,7 @@ from typing import Any
 
 import aiohttp
 import pytest
+from supervisor_subprocess import _request_snapshot
 from test_compose import write_iso_manifest
 
 from tests.async_scenarios import run_scenario
@@ -1637,15 +1638,28 @@ def test_engine_upload_staging_refuses_linked_directories(
     command = serve_with_library_command(
         port, library, "--no-default-packs", "--engine-state-root", str(state)
     )
-    process, log = start_logged_serve(command, tmp_path)
+    trace = tmp_path / "child.stack"
+    traced_command = [
+        command[0],
+        str(TESTS_DIR / "supervisor_subprocess.py"),
+        "snapshot",
+        str(trace),
+        *command[2:],
+    ]
+    process, log = start_logged_serve(traced_command, tmp_path)
     pending_error: BaseException | None = None
     try:
         wait_for_composition(process, port)
     except BaseException as error:
         pending_error = error
+        error.add_note(_request_snapshot(tmp_path))
         raise
     finally:
         stop_logged_serve(process, log, pending_error)
+        if pending_error is not None and trace.exists():
+            pending_error.add_note(
+                "server stacks:\n" + trace.read_text(encoding="utf-8", errors="replace")
+            )
     parent = library / ".engine-uploads"
     selected = parent if linked_parent else next(parent.iterdir())
     retained = tmp_path / "retained"

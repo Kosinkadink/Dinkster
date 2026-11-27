@@ -903,6 +903,10 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
 
     async def scenario() -> None:
         manifest = write_iso_manifest(tmp_path)
+        manifest.write_text(
+            manifest.read_text() + '\n[pack.sandbox]\nnetwork-origins=["https://api.example.test", '
+            '"https://mirror.example.test:8443"]\n'
+        )
         composition = await compose_serving(
             [
                 PackSpec(DEV_PACK_MANIFEST, in_process=True),
@@ -952,7 +956,12 @@ def test_composed_server_end_to_end(tmp_path: Path) -> None:
                 "mark": "\U0001f9ea",
                 "color": "#336699",
                 "source": f"local:{Path(manifest).parent.resolve()}",
+                "networkOrigins": [
+                    "https://api.example.test",
+                    "https://mirror.example.test:8443",
+                ],
             }
+            assert "networkOrigins" not in data["packs"]["dinkster-nodes-dev"]
             assert data["nodes"]["iso.chatty"]["pack"] == "isopack"
             assert data["nodes"]["dev.util.delay"]["pack"] == "dinkster-nodes-dev"
             blob_size = next(
