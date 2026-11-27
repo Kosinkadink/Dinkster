@@ -555,7 +555,7 @@ class BoundarySession:
         # result being decoded is never invisible to a concurrent release.
         self._release_guard = release_guard
         # Worker-reported measurements (reported.py): "measured" mappings
-        # from hello/memoryReport/memoryShedResult frames land here,
+        # from hello/memoryReport/memoryReleaseResult frames land here,
         # DeviceMap-translated, keyed by this session. Informational only
         # - the governor reads them for status, never admission - and the
         # snapshot dies with the session (close AND read-loop death).
@@ -1539,13 +1539,11 @@ class BoundarySession:
         if self._device_map is not None:
             values = {name: self._device_map.value(value) for name, value in values.items()}
         handoff: list[str] = []
-        if self._release_guard is not None:
-            handoff = [
-                rid
-                for value in values.values()
-                for rid in value_resource_ids(value)
-                if self._release_guard.pins.pin(rid)
-            ]
+        pins = self._release_guard.current_pins if self._release_guard is not None else None
+        if pins is not None:
+            refs = [rid for value in values.values() for rid in value_resource_ids(value)]
+            await pins.wait_for_releases(refs)
+            handoff = [rid for rid in refs if pins.pin(rid)]
         try:
             with use_produced_output_job(
                 invocation.job_ref or invocation.invocation_id, invocation.attempt_id
@@ -1564,9 +1562,9 @@ class BoundarySession:
             assert invocation.run_control is not None
             await invocation.run_control.publish_run_value(node_id, values)
         finally:
-            if self._release_guard is not None:
+            if pins is not None:
                 for rid in handoff:
-                    self._release_guard.pins.unpin(rid)
+                    pins.unpin(rid)
 
     async def _prepare_control_values(self, values: Mapping[str, Value]) -> None:
         if self._blob_transfer is not None:
@@ -1713,8 +1711,10 @@ class BoundarySession:
                 # same handoff pin as top-level ones (DESIGN 3.13).
                 refs.extend(value_resource_ids(value))
             handoff: list[str] = []
-            if self._release_guard is not None:
-                handoff = [rid for rid in refs if self._release_guard.pins.pin(rid)]
+            pins = self._release_guard.current_pins if self._release_guard is not None else None
+            if pins is not None:
+                await pins.wait_for_releases(refs)
+                handoff = [rid for rid in refs if pins.pin(rid)]
             saved_file_previews = decoded.saved_file_previews
 
             def adopt() -> None:
@@ -1752,9 +1752,9 @@ class BoundarySession:
                     with contextlib.suppress(WorkerDied):
                         await self.send({"type": "resultAck", **key.to_wire()}, [])
             finally:
-                if self._release_guard is not None:
+                if pins is not None:
                     for rid in handoff:
-                        self._release_guard.pins.unpin(rid)
+                        pins.unpin(rid)
         except asyncio.CancelledError:
             if consumed:
                 with contextlib.suppress(WorkerDied):
@@ -2498,10 +2498,6 @@ class BoundarySession:
                     if self._relay is not None and isinstance(consumers, dict):
                         self._relay.apply_report(cast("dict[str, Any]", consumers))
                     self._apply_measured(header)
-                elif kind == "memoryShedResult":
-                    if self._relay is not None:
-                        self._relay.on_shed_result(header)
-                    self._apply_measured(header)
                 elif kind in (
                     "memoryReleaseCandidates",
                     "memoryReleaseResult",
@@ -2511,6 +2507,7 @@ class BoundarySession:
                 ):
                     if self._relay is not None:
                         self._relay.on_release_reply(header)
+                    self._apply_measured(header)
                 elif kind == "blobQuery":
                     if self._blob_transfer is not None:
                         await self._blob_transfer.answer_query(header)

@@ -32,6 +32,24 @@ def project_id(value: object) -> str:
     return value
 
 
+def make_directory(path: Path, created: list[Path]) -> None:
+    missing: list[Path] = []
+    current = path
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    for directory in reversed(missing):
+        try:
+            directory.mkdir()
+        except FileExistsError:
+            if not directory.is_dir():
+                raise
+        else:
+            created.append(directory)
+    if not path.is_dir():
+        raise NotADirectoryError(str(path))
+
+
 class Records:
     def __init__(self, root: Path) -> None:
         root.mkdir(parents=True, exist_ok=True)
@@ -285,7 +303,7 @@ class Records:
                         "ON finished_history(scope,finished DESC,run_id DESC)"
                     )
                     if self.get_project("default") is None:
-                        self._register("default", "Default")
+                        self.register_project("default", "Default")
         except BaseException:
             self.close()
             raise
@@ -373,7 +391,7 @@ class Records:
         document["lastOpenedAt"] = row[1]
         return document
 
-    def _save(self, document: dict[str, object]) -> dict[str, object]:
+    def save_project(self, document: dict[str, object]) -> dict[str, object]:
         stored = {
             key: value for key, value in document.items() if key not in ("folder", "lastOpenedAt")
         }
@@ -390,8 +408,13 @@ class Records:
         )
         return document
 
-    def _register(
-        self, identifier: str, name: object, *, files_folder: object = None
+    def register_project(
+        self,
+        identifier: str,
+        name: object,
+        *,
+        files_folder: object = None,
+        created_folders: list[Path] | None = None,
     ) -> dict[str, object]:
         if not isinstance(name, str) or not name.strip():
             raise LibraryError("invalid", "project name must be nonempty")
@@ -430,7 +453,9 @@ class Records:
                     additions[mount_id] = {"path": str(folder), "mode": "readwrite"}
                     selections[f"{kind}s"] = mount_id
                 for kind in ("output", "input"):
-                    (parent / kind).mkdir(parents=True, exist_ok=True)
+                    make_directory(
+                        parent / kind, created_folders if created_folders is not None else []
+                    )
             except (OSError, ValueError) as exc:
                 raise LibraryError("invalid", f"cannot create project folders: {exc}") from exc
             values = cast("dict[str, object]", projects["values"])
@@ -464,7 +489,7 @@ class Records:
                 },
             )
         now = datetime.now(UTC).isoformat()
-        return self._save(
+        return self.save_project(
             {
                 "id": identifier,
                 "uid": str(uuid.uuid4()),
@@ -617,7 +642,8 @@ class Records:
 
             if operation == "records.get":
                 return saved(self, operation, arguments)
-            with self._references.writing():
+            with self._references.writing(), self.db:
+                self.db.execute("BEGIN IMMEDIATE")
                 return saved(self, operation, arguments)
         if operation == "compatibility.affected":
             from ._compatibility import affected
@@ -662,6 +688,13 @@ class Records:
             return {"items": page, "cursor": page[-1]["id"] if len(documents) > limit else None}
         if operation == "projects.get":
             return {"project": self.get_project(project_id(arguments.get("id")))}
+        if operation == "projects.register":
+            from ._creation import create_project
+
+            if arguments.get("startWith", {"kind": "empty"}) == {"kind": "empty"}:
+                return create_project(self, arguments)
+            with self._references.writing():
+                return create_project(self, arguments)
         if operation == "projects.opened":
             identifier = project_id(arguments.get("id"))
             with self.db:
@@ -705,7 +738,6 @@ class Records:
                 "cursor": rows[-1][0] if rows else after,
             }
         if operation not in (
-            "projects.register",
             "projects.patch",
             "projects.delete",
             "projects.restore",
@@ -715,16 +747,6 @@ class Records:
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
             document = self.get_project(identifier)
-            if operation == "projects.register":
-                return {
-                    "project": document
-                    if document is not None
-                    else self._register(
-                        identifier,
-                        arguments.get("name", identifier),
-                        files_folder=arguments.get("filesFolder"),
-                    )
-                }
             if document is None:
                 raise LibraryError("missing", "project does not exist")
             revision = arguments.get("revision")
@@ -798,4 +820,4 @@ class Records:
             document.update(patch)
             document["revision"] = revision + 1
             document["modified"] = datetime.now(UTC).isoformat()
-            return {"project": self._save(document)}
+            return {"project": self.save_project(document)}

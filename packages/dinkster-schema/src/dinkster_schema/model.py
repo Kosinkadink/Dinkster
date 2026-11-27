@@ -1424,6 +1424,9 @@ class Input:
     on_edit: tuple[Step, ...] = ()
     after_run: AfterRunMode | None = None
     visible: FlagOrFormula = True
+    read_only: FlagOrFormula = False
+    disabled: FlagOrFormula = False
+    disabled_reason: TextOrFormula = ""
     automatic: Formula | Lookup | None = None
     sent: bool = True
     """``label`` is presentation only, text or a formula; empty means "derive
@@ -1438,6 +1441,15 @@ class Input:
 
     ``visible`` shows or hides the field, by a flag or a formula; a hidden
     field is still stored and still sent to ``execute``.
+
+    ``read_only`` shows the field at full contrast but lets nobody type into
+    it; ``disabled`` dims it and lets nobody type into it, and
+    ``disabled_reason`` says why. Each is a literal or a formula the editor
+    works out; while a formula is unknown or fails the field is neither. They
+    limit the user's own edits only: the value is still sent, a wire still
+    works, and a step or an after-run write may still change it. Like
+    ``visible`` they are layout and never join signatures or execution
+    identity.
 
     ``sent=False`` keeps the field with the workflow only, like a ``State``
     with ``part_of_run=False``: it is stored and edited, but a run neither
@@ -1502,6 +1514,9 @@ class Input:
 
         check_text_or_formula(self.label, f"input {self.id} label")
         check_flag_or_formula(self.visible, f"input {self.id} visible")
+        check_flag_or_formula(self.read_only, f"input {self.id} read_only")
+        check_flag_or_formula(self.disabled, f"input {self.id} disabled")
+        check_text_or_formula(self.disabled_reason, f"input {self.id} disabled_reason")
         check_automatic(self)
         if self.after_run is not None:
             if self.after_run not in AFTER_RUN_MODES:

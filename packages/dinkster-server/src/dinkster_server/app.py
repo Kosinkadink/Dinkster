@@ -2523,7 +2523,13 @@ async def handle_nodes(request: web.Request) -> web.Response:
             *cast("list[str]", needs["extra"]),
             *(str(pack["pack"]) for pack in cast("list[dict[str, object]]", needs["packs"])),
         }
-    return web.json_response(nodes_wire(state, enabled))
+    wire = nodes_wire(state, enabled)
+    library = request.app.get(LIBRARY_KEY)
+    if library is not None:
+        cast("dict[str, object]", wire["dinkster"])["uploadLimits"] = (
+            dict(library.upload_limits) if library.upload_limits is not None else None
+        )
+    return web.json_response(wire)
 
 
 def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str, object]:
@@ -4370,6 +4376,8 @@ def _item_wire(item: ConsumerItem) -> dict[str, object]:
         "displayName": item.display_name,
         "bytesByResidency": dict(item.bytes_by_residency),
     }
+    if item.in_use is not None:
+        wire["inUse"] = item.in_use
     if item.pages is not None:
         # Geometry travels with the data: no client hardcodes a page size.
         wire["pages"] = {

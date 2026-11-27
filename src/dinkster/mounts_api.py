@@ -41,6 +41,8 @@ import asyncio
 import contextlib
 import json
 import os
+import re
+import stat
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -68,7 +70,7 @@ from dinkster_protocol import AssetFolderContext
 from dinkster_schema import core_logger
 from dinkster_server import STATE_KEY, decode_cursor, encode_cursor
 from dinkster_server.auth import principal_for, resolve_scope
-from dinkster_server.library import ASSET_GRANTS_KEY, LIBRARY_KEY, run_owned_thread
+from dinkster_server.library import ASSET_GRANTS_KEY, LIBRARY_KEY, import_file, run_owned_thread
 from dinkster_server.lookups import announce_asset_kinds
 from dinkster_server.projects import PROJECTS_KEY, validate_project
 from dinkster_values.asset_folders import use_asset_folders
@@ -650,12 +652,17 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
         return _json_error(400, "unknown or repeated location query field")
     project = request.query.get("project", "default")
     await validate_project(request, project)
-    body: dict[str, object] = {"importMount": None, "resolvePath": True}
+    body: dict[str, object] = {
+        "importMount": None,
+        "resolvePath": True,
+        "importFile": False,
+    }
     library = request.app.get(LIBRARY_KEY)
     if library is not None:
         body["vault"] = str(library.vault.root.resolve())
         if library.upload_writer is not None and library.project_folders_for is not None:
             body["importMount"] = library.import_mount_for(project)
+            body["importFile"] = service.allow_changes
     if "digest" in request.query:
         scope = resolve_scope(principal_for(request), "assets:read", request.query.get("scope"))
         try:
@@ -748,6 +755,42 @@ async def handle_mount_locations(request: web.Request) -> web.Response:
             row["path"] = str(mount.path)
     body.update(mounts=rows, activeMounts=active_rows, **service.pending_changes())
     return web.json_response(body, headers={"Cache-Control": "no-store"})
+
+
+async def handle_mount_import_file(request: web.Request) -> web.Response:
+    _require_operator(request)
+    service = request.app[MOUNTS_KEY]
+    if not service.allow_changes:
+        return _json_error(403, "mount-changes-disabled")
+    if LIBRARY_KEY not in request.app:
+        return _json_error(503, "file-import-unavailable")
+    resolve_scope(principal_for(request), "assets:write", request.query.get("scope"))
+    try:
+        body = await request.json()
+        if (
+            not isinstance(body, dict)
+            or set(body) != {"path", "mediaType"}
+            or not isinstance(body["path"], str)
+            or "\0" in body["path"]
+            or not Path(body["path"]).is_absolute()
+            or not isinstance(body["mediaType"], str)
+            or re.fullmatch(r"[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+", body["mediaType"])
+            is None
+        ):
+            return _json_error(400, "invalid-file-import")
+        descriptor = os.open(
+            body["path"],
+            os.O_RDONLY
+            | getattr(os, "O_BINARY", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        with os.fdopen(descriptor, "rb") as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                return _json_error(400, "invalid-file-import")
+            return await import_file(request, source, body["mediaType"])
+    except (ValueError, OSError):
+        return _json_error(400, "file-import-failed")
 
 
 async def handle_mount_resolve_path(request: web.Request) -> web.Response:
@@ -880,6 +923,8 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
     Cursors bind scope and ordering, with the virtual path breaking ties.
     ``path`` and ``recursive`` optionally scope a single mount's traversal.
     Repeated ``mount`` values restrict the all-mount route to enabled mounts.
+    A shallow first page includes descendant file counts for each immediate
+    folder, using the same query, kind and project visibility as the entries.
     """
     service = request.app[MOUNTS_KEY]
     mount_id = request.match_info.get("mountId")
@@ -957,19 +1002,35 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
 
     needle = query.lower()
     rows: list[tuple[AssetEntry, str]] = []
+    include_folders = mount_id is not None and not recursive and "cursor" not in request.query
+    folder_counts = (
+        {name: 0 for name in listings[mount_id].folders}
+        if include_folders and mount_id is not None
+        else {}
+    )
     with use_asset_folders(context):
         for item in mount_ids:
             mount_kind = service.table.kind(item)
             scope = f"mounts/{item}/" + (f"{path}/" if path else "")
-            entries = service.table.entries(item) if recursive else listings[item].entries
-            rows.extend(
-                (entry, mount_kind)
-                for entry in entries
-                if entry.virtual_path.startswith(scope)
-                and (not needle or needle in entry.virtual_path.lower())
-                and (not kind or _entry_kind(entry, mount_kind) == kind)
-                and not model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+            entries = (
+                service.table.entries(item)
+                if recursive or include_folders
+                else listings[item].entries
             )
+            for entry in entries:
+                if (
+                    not entry.virtual_path.startswith(scope)
+                    or (needle and needle not in entry.virtual_path.lower())
+                    or (kind and _entry_kind(entry, mount_kind) != kind)
+                    or model_ref_is_hidden(replace(entry.ref(), resolver=service.table))
+                ):
+                    continue
+                folder, separator, _ = entry.virtual_path[len(scope) :].partition("/")
+                if not recursive and separator:
+                    if include_folders:
+                        folder_counts[folder] = folder_counts.get(folder, 0) + 1
+                    continue
+                rows.append((entry, mount_kind))
     total = len(rows)
     rows.sort(key=lambda row: order_key(row[0]))
     if after is not None:
@@ -979,8 +1040,9 @@ async def handle_mount_entries(request: web.Request) -> web.Response:
         "entries": [_entry_wire(entry, mount_kind) for entry, mount_kind in page],
         "total": total,
     }
-    if mount_id is not None and not recursive and "cursor" not in request.query:
+    if include_folders and mount_id is not None:
         body["folders"] = list(listings[mount_id].folders)
+        body["folderCounts"] = folder_counts
     if remainder:
         body["cursor"] = encode_cursor(bound, order_key(page[-1][0]))
     return web.json_response(body)
@@ -1198,6 +1260,7 @@ def add_mount_routes(app: web.Application, service: MountService) -> None:
     app.router.add_get("/api/mounts/locations", handle_mount_locations)
     app.router.add_get("/api/mounts/entries", handle_mount_entries)
     app.router.add_post("/api/mounts/resolve-path", handle_mount_resolve_path)
+    app.router.add_post("/api/mounts/import-file", handle_mount_import_file)
     app.router.add_get("/api/mounts/{mountId}/list", handle_mount_folder)
     app.router.add_get("/api/mounts/{mountId}/entries", handle_mount_entries)
     app.router.add_put("/api/mounts/output", handle_output_mount_update)

@@ -901,6 +901,12 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["afterRun"] = spec.after_run
     if spec.visible is not True:
         entry["visible"] = _formula_to_wire(spec.visible)
+    if spec.read_only is not False:
+        entry["readOnly"] = _formula_to_wire(spec.read_only)
+    if spec.disabled is not False:
+        entry["disabled"] = _formula_to_wire(spec.disabled)
+    if spec.disabled_reason:
+        entry["disabledReason"] = _formula_to_wire(spec.disabled_reason)
     if spec.on_edit:
         entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
     if spec.automatic is not None:
@@ -1164,6 +1170,9 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("onEdit", None)
         entry.pop("afterRun", None)
         entry.pop("visible", None)
+        entry.pop("readOnly", None)
+        entry.pop("disabled", None)
+        entry.pop("disabledReason", None)
         # A lookup's name and arguments join no signature; the value it gives
         # does, as a stored value.
         automatic = entry.get("automatic")
@@ -1482,6 +1491,9 @@ _INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "sent",
     "afterRun",
     "visible",
+    "readOnly",
+    "disabled",
+    "disabledReason",
     "onEdit",
     "automatic",
     "hidden",
@@ -1538,6 +1550,11 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         visible=True
         if "visible" not in entry
         else cast("Any", _formula_from_wire(entry["visible"], "input.visible")),
+        read_only=cast("Any", _formula_from_wire(entry.get("readOnly", False), "input.readOnly")),
+        disabled=cast("Any", _formula_from_wire(entry.get("disabled", False), "input.disabled")),
+        disabled_reason=_text_or_formula_from_wire(
+            entry.get("disabledReason", ""), "input.disabledReason"
+        ),
         after_run=None
         if "afterRun" not in entry
         else cast("AfterRunMode", _expect_str(entry["afterRun"], "input.afterRun")),

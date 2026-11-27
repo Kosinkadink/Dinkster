@@ -906,6 +906,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                             "media/audio": 1024**3,
                             "media/video": 1024**3,
                             "media/model3d": 1024**3,
+                            "data/latent": 1024**3,
                         }
                     for streamed in (False, True):
                         for size in (63, 64, 65):
@@ -1004,6 +1005,53 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                 assert "stop all environment engines" in refused_scratch.stdout
             stop_engine(tmp_path, "main")
         if https:
+            disabled = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(tmp_path),
+                    "uploads",
+                    "--off",
+                    "--yes",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert disabled.returncode == 0, disabled.stdout + disabled.stderr
+            assert json.loads((tmp_path / "environment.json").read_text())["uploadLimits"] is None
+            start_engine(tmp_path, 1, "main", port)
+
+            async def probe_unlimited() -> None:
+                context = ssl.create_default_context(cafile=str(certificate))
+                async with aiohttp.ClientSession(trust_env=False) as client:
+                    url = f"https://127.0.0.1:{port}"
+                    options = {"ssl": context, "server_hostname": "localhost"}
+                    async with client.get(url + "/api/nodes", **options) as response:
+                        assert response.status == 200
+                        assert (await response.json())["dinkster"]["uploadLimits"] is None
+                    async with client.get(url + "/api/assets/upload-limits", **options) as response:
+                        assert response.status == 200
+                        assert await response.json() is None
+                    body = b"z" * 65
+                    async with client.post(url + "/api/assets", data=body, **options) as response:
+                        assert response.status in (200, 201)
+                    async with client.get(
+                        url + "/api/assets/" + digest_bytes(body), **options
+                    ) as response:
+                        assert await response.read() == body
+
+            asyncio.run(probe_unlimited())
+            stop_engine(tmp_path, "main")
+            project = tmp_path / "environment.json"
+            unconfigured = json.loads(project.read_text())
+            del unconfigured["uploadLimits"]
+            project.write_text(json.dumps(unconfigured))
+            start_engine(tmp_path, 1, "main", port)
+            asyncio.run(probe_unlimited())
+            stop_engine(tmp_path, "main")
             reset = subprocess.run(
                 [
                     sys.executable,
@@ -1327,6 +1375,7 @@ def test_pack_selection_refuses_invalid_settings_without_saving(
     [
         ({}, ["--generic", "0"]),
         ({}, ["--image", "-1"]),
+        ({}, ["--off", "--generic", "64"]),
         ([], []),
         ({"generic": True}, []),
         ({"media/image": "64"}, []),

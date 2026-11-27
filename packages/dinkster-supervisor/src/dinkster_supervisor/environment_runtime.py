@@ -39,11 +39,13 @@ from .environment_state import (
     read_current,
     read_document,
     read_environment_identity,
+    write_document,
     writer_lock,
 )
 
 __all__ = [
     "engine_assignments",
+    "engine_provenance",
     "engine_status",
     "generation_runtime_lock",
     "generation_runtime_reason",
@@ -365,10 +367,20 @@ def _start_engine(
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
     url = listener.url(port)
+    library = library_root(root)
+    library_path = Path(library).resolve()
+    library_path.mkdir(parents=True, exist_ok=True)
+    library_stat = library_path.stat()
     record: dict[str, object] = {
         "publicListener": listener.document(),
         "responseCompression": compression,
         "runtimeOffline": runtime_offline,
+        "environmentId": identity,
+        "library": {
+            "path": str(library_path),
+            "device": library_stat.st_dev,
+            "inode": library_stat.st_ino,
+        },
         "name": name,
         "generation": generation,
         "port": port,
@@ -402,7 +414,6 @@ def _start_engine(
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
     from dinkster_store import library_lock
 
-    library = library_root(root)
     command = [
         sys.executable,
         "-m",
@@ -462,6 +473,9 @@ def _start_engine(
     if frontend_dev is not None:
         command.extend(["--frontend-dev", frontend_dev])
     prepare_process(lifecycle, instance)
+    if activation_journal is not None:
+        # Only the supervisor can publish an address it has actually bound.
+        write_document(lifecycle / "listener.json", {"instance": instance, "port": None})
     _write_record(root, name, record)
     log_path = _runtime_path(root, name, generation).with_suffix(".log")
     with log_path.open("ab") as log:
@@ -640,6 +654,49 @@ def engine_status(root: Path) -> tuple[dict[str, object], ...]:
     for path in sorted(paths):
         rows.append(_public_row(_inspect(_parse_record(path))))
     return tuple(rows)
+
+
+def engine_provenance(root: Path, name: str) -> dict[str, object] | None:
+    """The ready local runtime's verified identity, never an HTTP claim alone."""
+    if _ENGINE_NAME.fullmatch(name) is None:
+        return None
+    generation = read_current(root)
+    if generation is None:
+        return None
+    record = _load_record(root, name, generation)
+    identity = read_environment_identity(root)
+    if record is None or identity is None or record.get("environmentId") != identity:
+        return None
+    inspected = _inspect(record)
+    library = Path(library_root(root))
+    if (
+        inspected["state"] != "ready"
+        or not _identity_matches(inspected)
+        or not isinstance(inspected["_engineInstance"], str)
+        or not inspected["_engineInstance"]
+        or not library.is_absolute()
+    ):
+        return None
+    library = library.resolve()
+    identity_stat = library.stat()
+    filesystem = {
+        "path": str(library),
+        "device": identity_stat.st_dev,
+        "inode": identity_stat.st_ino,
+    }
+    if record.get("library") != filesystem:
+        return None
+    return {
+        "installation": {"id": identity, "root": str(root.resolve())},
+        "engine": {
+            "name": name,
+            "generation": generation,
+            "instance": inspected["instance"],
+            "url": inspected["url"],
+        },
+        "library": filesystem,
+        "processInstance": inspected["_engineInstance"],
+    }
 
 
 def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
@@ -886,6 +943,7 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
     inspected = dict(record)
     inspected["_verifiedIdentity"] = False
     inspected["_engineExitCode"] = None
+    inspected["_engineInstance"] = None
     lifecycle = cast("Path", record["_processState"])
     if lifecycle.is_dir():
         state = process_state(
@@ -906,7 +964,11 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
     if listener.is_file():
         binding = read_document(listener)
         port = binding.get("port")
-        if binding.get("instance") != inspected["instance"] or type(port) is not int:
+        if binding.get("instance") != inspected["instance"] or "port" not in binding:
+            raise EnvironmentError("invalid supervisor listener record")
+        if port is None:
+            return inspected
+        if type(port) is not int:
             raise EnvironmentError("invalid supervisor listener record")
         validate_assignment(
             cast("int", inspected["generation"]),
@@ -954,6 +1016,7 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
     engine = status_document.get("engine")
     if isinstance(engine, dict):
         inspected["_engineExitCode"] = cast("dict[str, object]", engine).get("exitCode")
+        inspected["_engineInstance"] = cast("dict[str, object]", engine).get("instance")
     return inspected
 
 

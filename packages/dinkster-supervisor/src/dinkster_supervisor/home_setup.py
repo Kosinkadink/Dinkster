@@ -170,7 +170,7 @@ def setup_facts(
         raise SetupRefused("unsupported-build", str(exc)) from exc
     facts.update(selection)
     facts["refusal"] = refusal or selection["refusal"]
-    if selection["refusal"] is not None:
+    if selection["refusal"] is not None or selection["variant"] is None:
         return facts
     variant = cast("str", facts["variant"])
     facts.update(
@@ -291,6 +291,8 @@ class SetupJobs:
             if isinstance(refusal, dict):
                 refusal = cast("dict[str, str]", refusal)
                 raise SetupRefused(refusal["code"], refusal["message"])
+            if facts["variant"] is None:
+                raise SetupRefused("build-not-chosen", "Choose a build before starting setup.")
             if previous_identity != self._pack_identities[cast("str", facts["id"])] or any(
                 facts[key] != previous[key]
                 for key in ("root", "channel", "variant", "engineRelease", "baseId", "gpus")
@@ -411,6 +413,10 @@ class SetupJobs:
 
 
 SETUP_KEY = web.AppKey("home_setup", SetupJobs)
+
+
+async def handle_active_job(request: web.Request) -> web.Response:
+    return web.json_response({"activeJob": request.app[SETUP_KEY].active_job})
 
 
 async def handle_plan(request: web.Request) -> web.Response:

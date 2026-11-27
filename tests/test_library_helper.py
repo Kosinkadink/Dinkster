@@ -1088,7 +1088,21 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
         )
         assert page["digests"] == ["blake3:" + "ef" * 32]
         assert page["cursor"] is None
-        second.call("projects.register", id="unrelated")
+        second.call("projects.register", id="unrelated", startWith={"kind": "empty"})
+        for start in (
+            {"kind": "project", "project": "film"},
+            {"kind": "workflow", "name": "Scene", "content": "{}"},
+        ):
+            with pytest.raises(LibraryError) as blocked:
+                first.call(
+                    "projects.register",
+                    id="with-contents",
+                    filesFolder=str(tmp_path / "with-contents"),
+                    startWith=start,
+                )
+            assert blocked.value.code == "busy"
+        assert first.call("projects.get", id="with-contents") == {"project": None}
+        assert not (tmp_path / "with-contents").exists()
         with closing(sqlite3.connect(tmp_path / "records.sqlite", timeout=0)) as database:
             database.execute("BEGIN IMMEDIATE")
             database.rollback()

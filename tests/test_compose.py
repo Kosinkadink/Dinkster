@@ -1841,9 +1841,13 @@ def test_group_contract_conflict_refuses_before_launch(tmp_path: Path) -> None:
 # constructs IsolatedWorker by hand.
 
 
-def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> None:
+@pytest.mark.parametrize("new_engine", [False, True])
+def test_composed_worker_unloads_idle_models_and_invalidates_released_references(
+    tmp_path: Path,
+    new_engine: bool,
+) -> None:
     async def scenario() -> None:
-        governor = MemoryGovernor()
+        governor = MemoryGovernor({"vram:cuda:0": 1000, "ram": 1000})
         manifest = tmp_path / "dinkster-pack.toml"
         manifest.write_text(
             '[pack]\nname = "memorypack"\npublisher = "dinkster"\n'
@@ -1851,15 +1855,19 @@ def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> No
             'nodes = "memorypack_nodes:NODES"\ntypes = "memorypack_nodes:register_types"\n'
             'consumers = "memorypack_nodes:memory_consumers"\n'
         )
-        composition = await compose_serving(
-            [manifest],
-            include_default_packs=False,
+        composer = ServingComposer(
             worker_env=WORKER_ENV,
             governor=governor,
             reservations=GovernorReservationService(governor),
         )
         try:
-            engine = composition.make_engine(lambda event: None)
+            engine = composer.composition.make_engine(lambda event: None)
+            staged = composer.spawn_empty()
+            await staged.add_pack(manifest)
+            retired = composer.adopt(staged)
+            await retired.close()
+            if new_engine:
+                engine = composer.composition.make_engine(lambda event: None)
             graph = Graph(
                 nodes={
                     "load": GraphNode(
@@ -1876,8 +1884,39 @@ def test_compose_serving_relays_pack_consumers_to_governor(tmp_path: Path) -> No
                 while governor.footprint("vram:cuda:0") != 400:
                     await asyncio.sleep(0.02)
             assert governor.footprint("ram") == 300
+            assert governor.details()["memorypack:models"][0].in_use is False
+            entered, finish = asyncio.Event(), asyncio.Event()
+
+            async def publish(run_id: str, node_id: str, outputs: Mapping[str, object]) -> None:
+                entered.set()
+                await finish.wait()
+
+            execution = replace(engine.pin_execution(), publish_outputs=publish)
+            running = asyncio.create_task(engine.run(graph, ["load"], execution=execution))
+            try:
+                async with asyncio.timeout(10):
+                    await entered.wait()
+                    assert governor.details()["memorypack:models"][0].in_use is True
+                    assert await governor.shed("vram:cuda:0", 400) == 0
+                    finish.set()
+                    await running
+            finally:
+                finish.set()
+                if not running.done():
+                    running.cancel()
+                await asyncio.gather(running, return_exceptions=True)
+            assert governor.details()["memorypack:models"][0].in_use is False
+            assert await governor.shed("vram:cuda:0", 400) == 400
+            assert (await engine.run(graph, ["load"])).cached == ("load",)
+            assert await governor.shed("ram", 300) == 300
+            recomputed = await engine.run(graph, ["load"])
+            assert recomputed.executed == ("load",)
+            assert (
+                recomputed.outputs["load"]["model"].fingerprint
+                != result.outputs["load"]["model"].fingerprint
+            )
         finally:
-            await composition.close()
+            await composer.close()
 
     run_scenario(scenario())
 

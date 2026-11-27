@@ -225,7 +225,12 @@
   selecting one file does not scan or retire its siblings.
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
-  server failures remain distinct errors, not upload-fallback signals.
+  server failures remain distinct errors, not upload-fallback signals. With
+  mount changes enabled, a separate operator-authorized file import can copy
+  an absolute regular file into the selected project import folder using
+  bounded chunks, the engine's upload limits and byte-derived classification.
+  Latents retain their validated scoped vault storage. Native import never
+  grants the source directory or puts its host path in the returned asset.
 - Setup, environment-managed snapshot serving, and serving with mount changes
   enabled initialize a writable
   `<library-root>/imports` folder and a selected writable
@@ -238,13 +243,16 @@
   New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
 - Managed environments can persist separate generic and classified image, audio,
-  video and model3d upload byte caps through `dinkster-env uploads`. Defaults
-  remain unchanged; overrides may lower but never bypass transport/media
-  ceilings. Declared and chunked lengths enforce the effective caps, oversized
+  video and model3d upload byte caps through `dinkster-env uploads`. Engines with
+  no saved policy are uncapped; existing saved override maps remain enabled.
+  `uploads --off` disables limits, while standalone engines can enable the same
+  per-kind ceilings with `--limit-uploads`. Overrides may lower but never raise
+  enabled ceilings. Declared and chunked lengths enforce the effective caps, oversized
   requests return 413 without publishing partial assets, and restart retains
-  the policy. `GET /api/assets/upload-limits` reports the same effective caps
-  for clients. Codec, digest and decoded-media validation remain mandatory;
-  structured latent/image-document safety budgets are independent.
+  the policy. `GET /api/assets/upload-limits` and `/api/nodes`'s
+  `dinkster.uploadLimits` report null when uncapped or the effective caps when
+  enabled, including latents. Codec, digest, parser-integrity and decoded-media
+  validation remain mandatory; latent disk headroom is reserved as bytes stream.
 - Named file and classified media uploads in the managed server use original
   filenames in the configured imports folder, with collision-safe numbering and no durable
   vault duplicate. Requests can select another writable project folder and

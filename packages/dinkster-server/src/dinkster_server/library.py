@@ -73,7 +73,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import closing
-from dataclasses import InitVar, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, BinaryIO, TypeVar, cast
@@ -83,7 +83,6 @@ from aiohttp import web
 from dinkster_assets import (
     LATENT_ASSET_KIND,
     LATENT_MEDIA_TYPE,
-    MAX_LATENT_DATA_BYTES,
     AcquisitionResult,
     AssetError,
     AssetIntegrityError,
@@ -107,7 +106,6 @@ from dinkster_assets import (
     StaleRevision,
     acquire_need,
     classify_media_file,
-    digest_bytes,
     is_digest,
     new_hasher,
     open_verified,
@@ -121,6 +119,7 @@ from dinkster_protocol import AssetFolderContext, SavedArtifact
 from dinkster_schema.reporting import ImageDocumentArtifact
 from dinkster_values import (
     LATENT_UPLOAD_HEADROOM_BYTES,
+    LATENT_UPLOAD_LIMIT_BYTES,
     MEBIBYTE,
     MEDIA_AUDIO_UPLOAD_LIMIT_BYTES,
     MEDIA_IMAGE_UPLOAD_LIMIT_BYTES,
@@ -139,14 +138,18 @@ if TYPE_CHECKING:
     from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
-__all__ = ["LIBRARY_KEY", "ServerLibrary", "add_library_routes", "require_asset_read"]
+__all__ = [
+    "LIBRARY_KEY",
+    "ServerLibrary",
+    "add_library_routes",
+    "import_file",
+    "require_asset_read",
+]
 
 DIGEST_HEADER = "X-Dinkster-Digest"
 IMAGE_DOCUMENT_MEDIA_TYPE = "application/vnd.dinkster.image-document+json"
-#: Per-kind byte bounds for POST /api/assets/media, mirroring the limits the
-#: frontend asset picker surfaces so the backend enforces them instead of
-#: trusting the client. The mapping is also the authority on which media
-#: kinds the ingest endpoint accepts.
+#: Ceilings when upload size limits are enabled. The keys also define which
+#: classified media kinds the ingest endpoint accepts.
 _MEDIA_UPLOAD_LIMITS: Mapping[str, int] = MappingProxyType(
     {
         "media/image": MEDIA_IMAGE_UPLOAD_LIMIT_BYTES,
@@ -197,8 +200,8 @@ class ServerLibrary:
     upload_limit: int = 16 * MEBIBYTE
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
-    #: Operator caps may lower, never raise, the host's transport/media bounds.
-    upload_limits: InitVar[Mapping[str, int] | None] = field(default=None, kw_only=True)
+    #: None disables size limits; a map enables ceilings with per-kind lowering.
+    upload_limits: Mapping[str, int] | None = field(default=None, kw_only=True)
     #: Optional read fallback for digest GETs (e.g. filesystem mounts).
     #: Hits stream rather than buffer: a mount can hold model-sized files.
     resolver: AssetResolver | None = None
@@ -269,9 +272,11 @@ class ServerLibrary:
         default_factory=lambda: asyncio.Semaphore(1), init=False, repr=False, compare=False
     )
 
-    def __post_init__(self, upload_limits: Mapping[str, int] | None) -> None:
-        limits = upload_limits or {}
-        if set(limits) - {"generic", *_MEDIA_KINDS} or any(
+    def __post_init__(self) -> None:
+        limits = self.upload_limits
+        if limits is None:
+            return
+        if set(limits) - {"generic", LATENT_ASSET_KIND, *_MEDIA_KINDS} or any(
             type(limit) is not int or limit <= 0 for limit in limits.values()
         ):
             raise ValueError("upload limits require known kinds and positive integer byte counts")
@@ -285,6 +290,20 @@ class ServerLibrary:
                 {
                     kind: min(limit, limits.get(kind, limit))
                     for kind, limit in self.media_upload_limits.items()
+                }
+            ),
+        )
+        object.__setattr__(
+            self,
+            "upload_limits",
+            MappingProxyType(
+                {
+                    "generic": self.upload_limit,
+                    **self.media_upload_limits,
+                    LATENT_ASSET_KIND: min(
+                        LATENT_UPLOAD_LIMIT_BYTES,
+                        limits.get(LATENT_ASSET_KIND, LATENT_UPLOAD_LIMIT_BYTES),
+                    ),
                 }
             ),
         )
@@ -524,6 +543,11 @@ async def _write_media_upload_chunk(temporary: Any, hasher: Any, chunk: bytes) -
     await run_owned_thread(lambda: _spool_media_upload_chunk(temporary, hasher, chunk))
 
 
+async def _file_chunks(source: BinaryIO) -> AsyncIterator[bytes]:
+    while chunk := await run_owned_thread(lambda: source.read(_MEDIA_UPLOAD_CHUNK_SIZE)):
+        yield chunk
+
+
 def _finish_upload_spool(temporary: BinaryIO) -> None:
     temporary.flush()
     os.fsync(temporary.fileno())
@@ -564,7 +588,7 @@ def _string_labels(value: object) -> list[str] | None:
 async def handle_upload_limits(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
     return web.json_response(
-        {"generic": library.upload_limit, **library.media_upload_limits},
+        dict(library.upload_limits) if library.upload_limits is not None else None,
         headers={"Cache-Control": "no-store"},
     )
 
@@ -586,34 +610,63 @@ async def handle_upload(request: web.Request) -> web.Response:
         return _json_error(400, "upload accepts at most one scope")
     scope = resolve_scope(principal_for(request), "assets:write", request.query.get("scope"))
     library = request.app[LIBRARY_KEY]
-    if request.content_length is not None and request.content_length > library.upload_limit:
-        return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
-    received = bytearray()
-    async for chunk in request.content.iter_chunked(64 * 1024):
-        received.extend(chunk)
-        if len(received) > library.upload_limit:
-            return _json_error(413, f"upload exceeds {library.upload_limit} bytes")
-    data = bytes(received)
-    if not data:
-        return _json_error(400, "empty upload")
-    digest = await asyncio.to_thread(digest_bytes, data)
-    declared = request.headers.get(DIGEST_HEADER)
-    if declared is not None and declared != digest:
-        return _json_error(400, f"declared digest {declared} does not match bytes ({digest})")
+    limit = library.upload_limits["generic"] if library.upload_limits is not None else None
+    if limit is not None and request.content_length is not None and request.content_length > limit:
+        return _json_error(413, f"upload exceeds {limit} bytes")
+    temporary = tempfile.NamedTemporaryFile(
+        mode="w+b",
+        prefix=".media-upload-",
+        dir=library.upload_staging_root or library.vault.root,
+        delete=False,
+    )
+    temporary_path = Path(temporary.name)
+    hasher = new_hasher()
+    received = 0
+    publication_handoff = asyncio.Event()
+    try:
+        try:
+            async for chunk in request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE):
+                received += len(chunk)
+                if limit is not None and received > limit:
+                    return _json_error(413, f"upload exceeds {limit} bytes")
+                await _write_media_upload_chunk(temporary, hasher, chunk)
+        except (ConnectionError, OSError, web.RequestPayloadError):
+            return _json_error(400, "upload was interrupted")
+        finally:
+            temporary.close()
+        if not received:
+            return _json_error(400, "empty upload")
+        digest = "blake3:" + hasher.hexdigest()
+        declared = request.headers.get(DIGEST_HEADER)
+        if declared is not None and declared != digest:
+            return _json_error(400, f"declared digest {declared} does not match bytes ({digest})")
 
-    def ingest() -> bool:
-        with library.vault.writer(digest) as writer:
-            writer.write(data)
-            _path, bytes_created = writer.commit_with_result()
-        grant_created = library.store.grant_asset(scope, digest, data)
-        return bytes_created or grant_created
+        def ingest() -> bool:
+            try:
+                bytes_created = False
+                if not library.vault.has(digest):
+                    with (
+                        library.vault.writer(digest) as writer,
+                        temporary_path.open("rb") as source,
+                    ):
+                        while chunk := source.read(_MEDIA_UPLOAD_CHUNK_SIZE):
+                            writer.write(chunk)
+                        _path, bytes_created = writer.commit_with_result()
+                grant_created = library.store.grant_asset(scope, digest, temporary_path)
+                return bytes_created or grant_created
+            finally:
+                temporary_path.unlink(missing_ok=True)
 
-    stored = await asyncio.to_thread(ingest)
-    return web.json_response({"digest": digest}, status=201 if stored else 200)
+        stored = await run_media_publication(library, ingest, handoff=publication_handoff)
+        return web.json_response({"digest": digest}, status=201 if stored else 200)
+    finally:
+        temporary.close()
+        if not publication_handoff.is_set():
+            temporary_path.unlink(missing_ok=True)
 
 
 def _file_upload_query(
-    request: web.Request, *, classified: bool
+    request: web.Request, *, classified: bool, kinds: frozenset[str] = _MEDIA_KINDS
 ) -> tuple[str, str | None, str] | web.Response:
     error: Callable[[int, str, str], web.Response] = (
         _media_error if classified else lambda status, _code, message: _json_error(status, message)
@@ -641,7 +694,7 @@ def _file_upload_query(
     name = request.query["name"]
     if not scope or scope != scope.strip() or any(character.isspace() for character in scope):
         return error(400, "invalid_scope", "scope must be non-empty and whitespace-free")
-    if classified and kind not in _MEDIA_KINDS:
+    if classified and kind not in kinds:
         return error(400, "invalid_kind", "kind is not a supported media kind")
     if not _safe_asset_name(name):
         return error(
@@ -672,43 +725,46 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
     if isinstance(query, web.Response):
         return query
     scope, name = query
+    return await _ingest_latent_upload(request, scope, name)
+
+
+async def _ingest_latent_upload(
+    request: web.Request,
+    scope: str,
+    name: str,
+    *,
+    source: BinaryIO | None = None,
+    source_media_type: str | None = None,
+) -> web.Response:
     principal = principal_for(request)
     if principal is not LOCAL_PRINCIPAL and not principal.allows_in(scope, "assets:write"):
         return _media_error(403, "scope_forbidden", f"scope {scope} does not grant assets:write")
-    media_type = request.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+    media_type = (
+        (source_media_type or request.headers.get("Content-Type", ""))
+        .split(";", 1)[0]
+        .strip()
+        .lower()
+    )
     if media_type not in {LATENT_MEDIA_TYPE, "application/octet-stream"}:
         return _media_error(415, "unsupported_content_type", "unsupported latent Content-Type")
     declared = request.headers.get(DIGEST_HEADER)
     if declared is not None and not is_digest(declared):
         return _media_error(400, "invalid_digest", "X-Dinkster-Digest is not canonical")
-    if request.content_length is not None and request.content_length > MAX_LATENT_DATA_BYTES:
-        return _media_error(413, "too_large", "latent upload exceeds 1 GiB")
-
     library = request.app[LIBRARY_KEY]
+    limit = library.upload_limits[LATENT_ASSET_KIND] if library.upload_limits is not None else None
+    content_length = (
+        os.fstat(source.fileno()).st_size if source is not None else request.content_length
+    )
+    if limit is not None and content_length is not None and content_length > limit:
+        return _media_error(413, "too_large", f"latent upload exceeds {limit} bytes")
     try:
         await asyncio.wait_for(library.latent_ingest_slots.acquire(), timeout=0.001)
     except TimeoutError:
         return _media_error(429, "busy", "at most two latent uploads may run concurrently")
     handle: BinaryIO | None = None
     temp_name: str | None = None
-    reserved = False
+    reserved = 0
     try:
-        async with library.latent_reservation_lock:
-            free = await asyncio.to_thread(
-                lambda: min(
-                    shutil.disk_usage(library.vault.root).free,
-                    shutil.disk_usage(library.upload_staging_root or library.vault.root).free,
-                )
-            )
-            required = (
-                library.latent_reserved_bytes[0] + MAX_LATENT_DATA_BYTES + _LATENT_UPLOAD_HEADROOM
-            )
-            if free < required:
-                return _media_error(
-                    507, "disk_reserve", "latent upload would consume disk headroom"
-                )
-            library.latent_reserved_bytes[0] += MAX_LATENT_DATA_BYTES
-            reserved = True
         handle = cast(
             BinaryIO,
             tempfile.NamedTemporaryFile(
@@ -723,18 +779,41 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
         temporary_path = Path(temp_name)
         hasher = new_hasher()
         size = 0
+        chunks = _file_chunks(source) if source is not None else None
         try:
-            while not request.content.at_eof():
+            while source is not None or not request.content.at_eof():
                 chunk = await asyncio.wait_for(
-                    request.content.read(_MEDIA_UPLOAD_CHUNK_SIZE),
+                    anext(chunks, b"")
+                    if chunks is not None
+                    else request.content.read(_MEDIA_UPLOAD_CHUNK_SIZE),
                     timeout=_LATENT_UPLOAD_IDLE_SECONDS,
                 )
                 if not chunk:
                     break
                 size += len(chunk)
-                if size > MAX_LATENT_DATA_BYTES:
-                    return _media_error(413, "too_large", "latent upload exceeds 1 GiB")
-                await _write_media_upload_chunk(handle, hasher, chunk)
+                if limit is not None and size > limit:
+                    return _media_error(413, "too_large", f"latent upload exceeds {limit} bytes")
+                async with library.latent_reservation_lock:
+                    free = await asyncio.to_thread(
+                        lambda: min(
+                            shutil.disk_usage(library.vault.root).free,
+                            shutil.disk_usage(
+                                library.upload_staging_root or library.vault.root
+                            ).free,
+                        )
+                    )
+                    # Retain room for publication of every spool and this chunk's
+                    # staging write, even when the body has no declared length.
+                    required = (
+                        library.latent_reserved_bytes[0] + 2 * len(chunk) + _LATENT_UPLOAD_HEADROOM
+                    )
+                    if free < required:
+                        return _media_error(
+                            507, "disk_reserve", "latent upload would consume disk headroom"
+                        )
+                    library.latent_reserved_bytes[0] += len(chunk)
+                    reserved += len(chunk)
+                    await _write_media_upload_chunk(handle, hasher, chunk)
         except TimeoutError:
             return _media_error(408, "idle_timeout", "latent upload body became idle")
         except (ConnectionError, OSError, web.RequestPayloadError):
@@ -798,8 +877,7 @@ async def handle_latent_upload(request: web.Request) -> web.Response:
             handle.close()
         if temp_name is not None:
             Path(temp_name).unlink(missing_ok=True)
-        if reserved:
-            library.latent_reserved_bytes[0] -= MAX_LATENT_DATA_BYTES
+        library.latent_reserved_bytes[0] -= reserved
         library.latent_ingest_slots.release()
 
 
@@ -833,6 +911,30 @@ async def handle_transfer_upload(request: web.Request) -> web.Response:
     return await _ingest_file_upload(request, scope, None, name, transfer_from=machine)
 
 
+async def import_file(request: web.Request, source: BinaryIO, media_type: str) -> web.Response:
+    """Ingest a host-authorized open file using the upload publication contract."""
+    query = _file_upload_query(
+        request, classified="kind" in request.query, kinds=_MEDIA_KINDS | {LATENT_ASSET_KIND}
+    )
+    if isinstance(query, web.Response):
+        return query
+    scope, claimed_kind, name = query
+    if claimed_kind == LATENT_ASSET_KIND:
+        if {"mount", "folder"}.intersection(request.query):
+            return _media_error(
+                400, "invalid_destination", "latent imports do not accept a folder destination"
+            )
+        from .projects import validate_project
+
+        await validate_project(request, request.query.get("project", "default"))
+        return await _ingest_latent_upload(
+            request, scope, name, source=source, source_media_type=media_type
+        )
+    return await _ingest_file_upload(
+        request, scope, claimed_kind, name, source=source, source_media_type=media_type
+    )
+
+
 async def _ingest_file_upload(
     request: web.Request,
     scope: str,
@@ -840,6 +942,8 @@ async def _ingest_file_upload(
     name: str,
     *,
     transfer_from: str | None = None,
+    source: BinaryIO | None = None,
+    source_media_type: str | None = None,
 ) -> web.Response:
     error: Callable[[int, str, str], web.Response] = (
         _media_error
@@ -855,7 +959,10 @@ async def _ingest_file_upload(
             f"scope {scope} does not grant assets:write",
         )
 
-    raw_media_type = request.headers.get("Content-Type", "")
+    raw_media_type = (
+        source_media_type if source is not None else request.headers.get("Content-Type", "")
+    )
+    assert raw_media_type is not None
     media_type = raw_media_type.split(";", 1)[0].strip().lower() or "application/octet-stream"
     if claimed_kind is not None and media_type not in _MEDIA_TYPES:
         return error(
@@ -896,11 +1003,14 @@ async def _ingest_file_upload(
     # whose actual kind differs (kind_mismatch), so an oversized image
     # cannot ride in under a roomier video claim.
     limit = (
-        library.media_upload_limits[claimed_kind]
-        if claimed_kind is not None
-        else library.upload_limit
+        library.upload_limits[claimed_kind or "generic"]
+        if library.upload_limits is not None
+        else None
     )
-    if request.content_length is not None and request.content_length > limit:
+    content_length = (
+        os.fstat(source.fileno()).st_size if source is not None else request.content_length
+    )
+    if limit is not None and content_length is not None and content_length > limit:
         return error(413, "too_large", f"{upload_label} exceeds {limit} bytes")
     temporary = tempfile.NamedTemporaryFile(
         mode="w+b",
@@ -914,9 +1024,14 @@ async def _ingest_file_upload(
     publication_handoff = asyncio.Event()
     try:
         try:
-            async for chunk in request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE):
+            chunks = (
+                _file_chunks(source)
+                if source is not None
+                else request.content.iter_chunked(_MEDIA_UPLOAD_CHUNK_SIZE)
+            )
+            async for chunk in chunks:
                 received += len(chunk)
-                if received > limit:
+                if limit is not None and received > limit:
                     return error(
                         413,
                         "too_large",
@@ -1001,7 +1116,7 @@ async def _ingest_file_upload(
                             target,
                             source,
                             media_type=media_type,
-                            limit=limit,
+                            limit=received,
                             before_publish=prepare,
                         )
                     if grant is not None:

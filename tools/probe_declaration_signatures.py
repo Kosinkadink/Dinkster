@@ -282,6 +282,9 @@ CASES: tuple[Case, ...] = (
     Case("Input", "on_edit", {"input": {"on_edit": (Reset("prompt"),)}}, "layout"),
     Case("Input", "after_run", {"input": {"after_run": "randomize"}}, "layout"),
     Case("Input", "visible", {"input": {"visible": Formula("seed > 0")}}, "layout"),
+    Case("Input", "read_only", {"input": {"read_only": Formula("seed > 0")}}, "layout"),
+    Case("Input", "disabled", {"input": {"disabled": True}}, "layout"),
+    Case("Input", "disabled_reason", {"input": {"disabled_reason": "Set by the preset"}}, "layout"),
     Case(
         "Input",
         "automatic (a formula)",
@@ -613,7 +616,7 @@ CASES: tuple[Case, ...] = (
 
 # Fields of the plan's tables that the declaration classes do not have yet.
 NOT_BUILT = (
-    "Input: order_only, read_only, disabled, disabled_reason, validate, types",
+    "Input: order_only, validate, types",
     "Output: known, types",
     "Widgets: StringWidget.tokens",
 )

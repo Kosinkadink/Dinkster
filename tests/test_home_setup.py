@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import socket
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,6 +16,37 @@ from test_environment_runtime import free_port
 
 from tests.async_scenarios import run_scenario
 from tests.fixtures.environments.build import KEYS, build
+
+
+def test_retained_setup_job_discovery_does_not_wait_for_planning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def blocked_plan(
+            self: home_setup.SetupJobs, root: Path, channel: str, variant: str | None
+        ) -> dict[str, object]:
+            entered.set()
+            await release.wait()
+            return {"refusal": None}
+
+        monkeypatch.setattr(home_setup.SetupJobs, "plan", blocked_plan)
+        home = Home(installations=frozenset)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            planning = asyncio.ensure_future(client.get("/supervisor/setup"))
+            try:
+                await entered.wait()
+                response = await client.get("/supervisor/setup/active")
+                assert response.status == 200
+                assert await response.json() == {"activeJob": None}
+                assert not planning.done()
+            finally:
+                release.set()
+                response = await planning
+                assert response.status == 200
+
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize(
@@ -112,6 +145,9 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
                 "total": 83,
                 "unit": "bytes",
             }
+            active = await (await client.get("/supervisor/setup/active")).json()
+            assert active["activeJob"] == await (await client.get(path)).json()
+            assert active["activeJob"]["state"] == "running"
             reloaded = await (
                 await client.get("/supervisor/setup", params={"root": str(root)})
             ).json()
@@ -121,6 +157,9 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
             if cancel:
                 response = await client.delete(path)
                 assert response.status == 202 and (await response.json())["state"] == "cancelling"
+                active = await (await client.get("/supervisor/setup/active")).json()
+                assert active["activeJob"]["id"] == job["id"]
+                assert active["activeJob"]["state"] == "cancelling"
                 finish.set()
                 await asyncio.sleep(0)
                 assert (await (await client.get(path)).json())["state"] == "cancelling"
@@ -151,15 +190,21 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
                     "message": "installation registration is unavailable",
                 }
             assert opened == ([root] if outcome == "completed" else [])
+            assert await (await client.get("/supervisor/setup/active")).json() == {
+                "activeJob": final
+            }
             assert (await client.delete(path)).status == 200
 
     run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("signed_channels")
-@pytest.mark.parametrize("cancel", [None, "checking-setup", "starting-engine"])
+@pytest.mark.parametrize(
+    ("cancel", "occupied"),
+    [(None, False), (None, True), ("checking-setup", False), ("starting-engine", False)],
+)
 def test_setup_route_runs_real_cli_completion_or_cancellation_cleanup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: str | None, occupied: bool
 ) -> None:
     from dinkster_supervisor.environment_runtime import engine_status, stop_engine
     from dinkster_supervisor.environment_state import shared_library
@@ -223,6 +268,20 @@ environment.preparation_progress = progress
 
     monkeypatch.setattr(home_setup.asyncio, "create_subprocess_exec", signed_process)
     root = tmp_path / "installation"
+    competitor = socket.socket()
+    if sys.platform == "win32":
+        competitor.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    command = home_setup.environment_command
+
+    async def competing_command(root: Path, *arguments: str) -> dict[str, object]:
+        if "--yes" in arguments:
+            port = int(arguments[arguments.index("--port") + 1])
+            competitor.bind(("127.0.0.1", port))
+            competitor.listen()
+        return await command(root, *arguments)
+
+    if occupied:
+        monkeypatch.setattr(home_setup, "environment_command", competing_command)
 
     async def scenario() -> None:
         nonlocal cancel
@@ -239,6 +298,7 @@ environment.preparation_progress = progress
             assert plan["choices"] == [
                 {
                     "variant": "fixture-cpu",
+                    "vendor": None,
                     "label": "fixture-cpu",
                     "reason": plan["buildReason"],
                     "gpus": [],
@@ -412,14 +472,25 @@ environment.preparation_progress = progress
             assert refused["activeJob"]["state"] == "completed"
             assert not other.exists()
             assert engine_status(root)[0]["state"] == "ready"
+            if occupied:
+                assert engine_status(root)[0]["url"] != (
+                    f"http://127.0.0.1:{competitor.getsockname()[1]}"
+                )
             await home.shutdown()
             assert engine_status(root)[0]["state"] == "stopped"
+            if occupied:
+                competitor.setblocking(False)
+                with pytest.raises(BlockingIOError):
+                    competitor.accept()
 
     try:
         run_scenario(scenario())
     finally:
-        if (root / "current").exists():
-            stop_engine(root, "main")
+        try:
+            if (root / "current").exists():
+                stop_engine(root, "main")
+        finally:
+            competitor.close()
 
 
 @pytest.mark.usefixtures("signed_channels")
@@ -484,6 +555,7 @@ def test_held_library_preserves_read_only_facts_and_refuses_start_without_acquis
             assert refused.status == 409 and (await refused.json())["error"] == "library-held"
             for method, path in (
                 ("GET", "/supervisor/setup"),
+                ("GET", "/supervisor/setup/active"),
                 ("POST", "/supervisor/setup"),
                 ("DELETE", "/supervisor/setup/job"),
             ):
@@ -503,6 +575,82 @@ def test_held_library_preserves_read_only_facts_and_refuses_start_without_acquis
             assert (
                 await client.post("/supervisor/setup", json={"root": "/unreviewed"})
             ).status == 400
+
+    run_scenario(scenario())
+
+
+def test_repairable_card_requires_a_build_choice_before_setup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor import environment_hardware
+
+    monkeypatch.setattr(environment_hardware, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(environment_hardware.platform, "machine", lambda: "x86_64")
+    cpu = {"platform": {"os": "linux", "arch": "x86_64"}, "nvidia": None}
+    gpu = {
+        **cpu,
+        "nvidia": {
+            "minimumDriver": "580",
+            "minimumComputeCapability": "7.5",
+            "maximumExclusiveComputeCapability": None,
+        },
+    }
+    monkeypatch.setattr(
+        home_setup,
+        "discover",
+        lambda *args: SimpleNamespace(
+            bases={"linux-cpu": cpu, "linux-nvidia": gpu},
+            channel=SimpleNamespace(engine_release="release", base_for=lambda _: "base"),
+        ),
+    )
+    monkeypatch.setattr(
+        home_setup,
+        "detect_graphics_cards",
+        lambda: [
+            {
+                "id": "0",
+                "name": "NVIDIA card",
+                "driver": "570",
+                "computeCapability": "8.6",
+                "memoryMiB": 8192,
+            }
+        ],
+    )
+    estimates = []
+
+    async def command(root: Path, *arguments: str) -> dict[str, object]:
+        assert "--plan" in arguments and "--variant" in arguments
+        assert arguments[arguments.index("--variant") + 1] == "linux-cpu"
+        estimates.append(root)
+        return {"runtimeDownloadBytes": 123}
+
+    monkeypatch.setattr(home_setup, "environment_command", command)
+    root = tmp_path / "prospective"
+
+    async def scenario() -> None:
+        home = Home(installations=frozenset)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            response = await client.get("/supervisor/setup", params={"root": str(root)})
+            plan = (await response.json())["plan"]
+            assert plan["variant"] is None and plan["refusal"] is None
+            assert plan["buildLabel"] is None and plan["engineRelease"] is None
+            assert [choice["variant"] for choice in plan["choices"]] == ["linux-cpu"]
+            assert plan["unusableCards"][0]["reason"] == "driver-too-old"
+            assert estimates == []
+            response = await client.post("/supervisor/setup", json={"planId": plan["id"]})
+            assert response.status == 409
+            assert (await response.json())["error"] == "build-not-chosen"
+            assert estimates == []
+            response = await client.get(
+                "/supervisor/setup", params={"root": str(root), "variant": "linux-cpu"}
+            )
+            chosen = (await response.json())["plan"]
+            assert chosen["variant"] == "linux-cpu" and chosen["gpus"] == []
+            assert chosen["refusal"] is None
+            assert chosen["unusableCards"] == plan["unusableCards"]
+            assert chosen["runtimeDownloadBytes"] == 123
+            assert estimates == [root]
+        assert not root.exists()
 
     run_scenario(scenario())
 

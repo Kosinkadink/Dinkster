@@ -42,7 +42,7 @@ def main() -> None:
         "--release-manifest",
         required=True,
         type=Path,
-        help="published release-manifest.json whose digest matches the installed generation",
+        help="published release-manifest.json whose digest matches the installed snapshot",
     )
     parser.add_argument(
         "--starter-commit",
@@ -124,21 +124,24 @@ def main() -> None:
             or type(status.get("current")) is not int
             or status["current"] < 1
         ):
-            raise ValueError("installed status must identify a clean active generation")
+            raise ValueError("installed status must identify a clean active snapshot")
         project = Path(status["root"])
         number = status["current"]
         if not project.is_absolute() or (project / "current").read_text().strip() != str(number):
-            raise ValueError("installed status no longer matches the active generation")
-        generation = json.loads(
-            (project / "generations" / str(number) / "generation.json").read_bytes()
-        )
+            raise ValueError("installed status no longer matches the active snapshot")
+        metadata = project / "builds" / str(number) / "build.json"
+        if not (project / "environment.json").exists():
+            metadata = project / "generations" / str(number) / "generation.json"
+        generation = json.loads(metadata.read_bytes())
+        save("build.json", generation)
+        # Historical receipt readers still consume this filename.
         save("generation.json", generation)
         if (
             generation.get("format") != "dinkster.generation/1"
             or generation.get("generation") != number
             or generation.get("source", "published") != "published"
         ):
-            raise ValueError("installed generation must identify a published release")
+            raise ValueError("installed snapshot must identify a published release")
         release = generation["engine"]["release"]
         if (
             not isinstance(release, str)
@@ -146,11 +149,12 @@ def main() -> None:
             or len(release) != 71
             or any(char not in "0123456789abcdef" for char in release[7:])
         ):
-            raise ValueError("installed generation has no valid release digest")
+            raise ValueError("installed snapshot has no valid release digest")
         manifest_bytes = args.release_manifest.read_bytes()
         (output / "release-manifest.json").write_bytes(manifest_bytes)
         manifest = json.loads(manifest_bytes)
         receipt["installedCommit"] = manifest.get("commit")
+        receipt["installedSnapshot"] = number
         receipt["installedGeneration"] = number
         receipt["installedRelease"] = release
         if (
@@ -167,7 +171,7 @@ def main() -> None:
             and row.get("state") == "ready"
         ]
         if len(engines) != 1:
-            raise ValueError("installed status must bind the URL to one ready generation")
+            raise ValueError("installed status must bind the URL to one ready snapshot")
         records = [
             json.loads(path.read_bytes())
             for path in (project / "runtime" / str(number)).glob("*.json")
@@ -180,11 +184,11 @@ def main() -> None:
             and row.get("generation") == number
         ]
         if len(instances) != 1 or not isinstance(instances[0], str) or not instances[0]:
-            raise ValueError("installed generation has no unique runtime instance")
+            raise ValueError("installed snapshot has no unique runtime instance")
         supervisor = request("/supervisor/status")
         save("supervisor-status.json", supervisor)
         if supervisor.get("state") != "ready" or supervisor.get("instance") != instances[0]:
-            raise ValueError("live supervisor does not match the installed generation")
+            raise ValueError("live supervisor does not match the installed snapshot")
         receipt["installedStatusMatched"] = True
         starter = json.loads(starter_bytes)
         graph = starter["graphs"][starter["root"]]
