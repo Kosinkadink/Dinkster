@@ -78,6 +78,13 @@ effective addresses, including manifest requests. Reads take registered ``root``
 ``pack`` and optional ``engine``; writes take those fields plus ``address``.
 Mutations persist without restarting; Home restart rebuilds engine authority.
 
+``GET /supervisor/installations/update`` reviews a registered root's channel
+update without changing the installation. ``POST`` accepts only its retained
+``planId`` and refuses a changed selection or target. Setup and update share
+one process-owned job slot. ``GET/DELETE /supervisor/installations/jobs/{id}``
+observes or cooperatively cancels that job, including its cleanup. Update
+preserves engine assignments and never opens a stopped installation.
+
 ``POST /supervisor/engine/stop`` stops the open engine and keeps its
 installation open. ``GET /supervisor/engine/log`` reads the last 64 KiB of
 that engine's output, including after stop or failure; ``available`` is false
@@ -131,7 +138,7 @@ from .home_frontend import (
     is_engine_path,
     proxy_dev,
 )
-from .home_setup import SETUP_KEY, SetupJobs, handle_job, handle_plan, handle_start
+from .home_setup import SETUP_KEY, SetupJobs, SetupRefused, handle_job, handle_plan, handle_start
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -523,7 +530,27 @@ class Home:
         self._task: asyncio.Task[None] | None = None
         self._on_change: list[Callable[[], Awaitable[None]]] = []
         self._changing = asyncio.Lock()
-        self.setup = SetupJobs(lambda root: self.open(root, "main"), prepare=self._prepare_setup)
+        self.setup = SetupJobs(
+            lambda root: self.open(root, "main"),
+            prepare=self._prepare_setup,
+            installations=self._installations,
+            updated=self._updated,
+        )
+
+    async def _updated(self, root: Path) -> None:
+        from .environment_runtime import engine_status
+
+        async with self._changing:
+            if self.target is None or self.target.root != root:
+                return
+            engines = await asyncio.to_thread(engine_status, root)
+            if any(
+                row["name"] == self.target.engine and row["state"] == "ready" for row in engines
+            ):
+                await self._replace_locked(self.target)
+            else:
+                await self._cancel()
+                self._set(state="stopped", base_url="")
 
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
@@ -659,14 +686,17 @@ class Home:
 
     async def _replace(self, target: OpenTarget) -> None:
         async with self._changing:
-            await self._cancel()
-            self.target = target
-            if target not in self.opened:
-                self.opened.append(target)
-            self._set(state="starting", base_url="")
-            for callback in self._on_change:
-                await callback()
-            self._task = asyncio.create_task(self._run(target))
+            await self._replace_locked(target)
+
+    async def _replace_locked(self, target: OpenTarget) -> None:
+        await self._cancel()
+        self.target = target
+        if target not in self.opened:
+            self.opened.append(target)
+        self._set(state="starting", base_url="")
+        for callback in self._on_change:
+            await callback()
+        self._task = asyncio.create_task(self._run(target))
 
     def _set(self, *, state: str, base_url: str | None = None, detail: str = "") -> None:
         self.link.state = state
@@ -1102,6 +1132,19 @@ async def _handle_installations(request: web.Request) -> web.Response:
     return web.json_response({"installations": rows})
 
 
+async def _handle_update_plan(request: web.Request) -> web.Response:
+    root, _ = await _installation_fields(request, {"root"})
+    try:
+        jobs = request.app[SETUP_KEY]
+        plan = await jobs.plan_update(root)
+        return web.json_response({"plan": plan, "activeJob": jobs.active_job})
+    except (OSError, ValueError) as error:
+        return web.json_response(
+            {"error": getattr(error, "code", "update-unavailable"), "message": str(error)},
+            status=409 if isinstance(error, SetupRefused) else 503,
+        )
+
+
 async def _handle_installation_facts(request: web.Request) -> web.Response:
     from .environment_runtime import engine_status
     from .environment_state import EnvironmentError, Generation, read_current
@@ -1517,9 +1560,13 @@ def create_home_app(
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_get("/supervisor/engine/log", _handle_engine_log)
     app.router.add_get("/supervisor/setup", handle_plan)
+    app.router.add_get("/supervisor/installations/update", _handle_update_plan)
+    app.router.add_post("/supervisor/installations/update", handle_start)
     app.router.add_post("/supervisor/setup", handle_start)
     app.router.add_get("/supervisor/setup/{id}", handle_job)
     app.router.add_delete("/supervisor/setup/{id}", handle_job)
+    app.router.add_get("/supervisor/installations/jobs/{id}", handle_job)
+    app.router.add_delete("/supervisor/installations/jobs/{id}", handle_job)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     app.router.add_post("/supervisor/projects/{project}/folder", _handle_open_folder)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)

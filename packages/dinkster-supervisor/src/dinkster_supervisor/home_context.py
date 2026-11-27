@@ -188,6 +188,8 @@ def _dispatch(root: Path, operation: str, arguments: list[object]) -> object:
     root = root.resolve()
     if root not in home.known_installations():
         raise EnvironmentError("not an installation Dinkster knows")
+    if operation == "update-facts":
+        return home_setup.update_facts(root)
     if operation == "current":
         return read_current(root)
     if operation == "library-root":
