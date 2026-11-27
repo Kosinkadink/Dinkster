@@ -115,6 +115,7 @@ from dinkster_library.previews import PREVIEW_MEDIA_TYPE, ContentMismatch, file_
 from yarl import URL
 
 from .environment_state import dinkster_home, shared_library
+from .home_context import configured_wsl, installation_context, resolve_installation_root
 from .home_frontend import (
     FrontendSource,
     dev_session,
@@ -183,7 +184,14 @@ def known_installations() -> frozenset[Path]:
     for store in registered_stores().values():
         if Path(store).is_dir():
             roots.update(Path(project).resolve() for project in store_projects(Path(store)))
-    return frozenset(root for root in roots if (root / "environment.json").is_file())
+    roots = {root for root in roots if (root / "environment.json").is_file()}
+    if (context := configured_wsl()) is not None:
+        anchor = context.windows_path("/")
+        roots.update(
+            context.windows_path(path)
+            for path in cast("list[str]", context.call(anchor, "installations"))
+        )
+    return frozenset(roots)
 
 
 def engine_ports() -> dict[int, Path]:
@@ -192,6 +200,12 @@ def engine_ports() -> dict[int, Path]:
 
     ports: dict[int, Path] = {}
     for root in sorted(known_installations()):
+        if (context := installation_context(root)) is not None:
+            for row in cast("list[dict[str, object]]", context.call(root, "status")):
+                url = row.get("url")
+                if isinstance(url, str) and URL(url).port is not None:
+                    ports.setdefault(cast("int", URL(url).port), root)
+            continue
         records = [root / "environment.json"]
         with contextlib.suppress(OSError, ValueError):
             current = read_current(root)
@@ -231,6 +245,10 @@ def recorded_node_table(target: OpenTarget) -> dict[str, object] | None:
     from .environment_runtime import node_table_record
     from .environment_state import EnvironmentError, read_current
 
+    if (context := installation_context(target.root)) is not None:
+        return cast(
+            "dict[str, object] | None", context.call(target.root, "node-table", target.engine)
+        )
     try:
         record: object = json.loads(
             node_table_record(target.root, target.engine).read_text(encoding="utf-8")
@@ -334,7 +352,21 @@ def project_installation(project: str, known: frozenset[Path]) -> Path | None:
 
     by_identity: dict[str, Path] = {}
     libraries: set[str] = set()
+    guest_roots = [root for root in known if installation_context(root) is not None]
+    if guest_roots:
+        context = installation_context(guest_roots[0])
+        assert context is not None
+        found = context.call(
+            guest_roots[0],
+            "project-installation",
+            project,
+            [context.guest_path(str(root)) for root in guest_roots],
+        )
+        if isinstance(found, str):
+            return context.windows_path(found)
     for root in sorted(known):
+        if installation_context(root) is not None:
+            continue
         with contextlib.suppress(OSError, EnvironmentError):
             if (identity := read_environment_identity(root)) is not None:
                 by_identity[identity] = root
@@ -401,20 +433,25 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
         ),
         (),
     )
+    arguments = [
+        "--root",
+        str(target.root),
+        "start",
+        "--engine",
+        target.engine,
+        *(argument for gpu in gpus for argument in ("--gpu", gpu)),
+        "--yes",
+        "--json",
+    ]
+    context = installation_context(target.root)
+    command = (
+        [sys.executable, "-I", "-m", "dinkster_supervisor.environment", *arguments]
+        if context is None
+        else context.environment_command(*arguments)
+    )
     launching = asyncio.create_task(
         asyncio.create_subprocess_exec(
-            sys.executable,
-            "-I",
-            "-m",
-            "dinkster_supervisor.environment",
-            "--root",
-            str(target.root),
-            "start",
-            "--engine",
-            target.engine,
-            *(argument for gpu in gpus for argument in ("--gpu", gpu)),
-            "--yes",
-            "--json",
+            *command,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
         )
@@ -433,7 +470,7 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
         stdout, _ = output.result()
     except asyncio.CancelledError:
         process = await launching
-        if process.returncode is None:
+        if process.returncode is None and context is None:
             with contextlib.suppress(ProcessLookupError):
                 process.terminate()
         # Reap the writer before stop can trust an absent or previous runtime record.
@@ -441,6 +478,8 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
             await process.communicate()
         else:
             await output
+        if context is not None:
+            await asyncio.to_thread(stop_managed_engine, target)
         raise
     try:
         result = cast("dict[str, object]", json.loads(stdout))
@@ -493,7 +532,7 @@ class Home:
         return self.link.state != "starting" and (self._task is None or self._task.done())
 
     async def open(self, root: Path, engine: str) -> None:
-        resolved = root.resolve()
+        resolved = await asyncio.to_thread(resolve_installation_root, root)
         if not root.is_absolute() or resolved not in await asyncio.to_thread(self._installations):
             raise LookupError("not an installation Dinkster knows")
         await self._replace(OpenTarget(resolved, engine))
@@ -517,7 +556,9 @@ class Home:
             known = await asyncio.to_thread(self._installations)
             await self._replace(OpenTarget(self._default_installation(known), "main"))
             return
-        if await asyncio.to_thread((self.target.root / "pack-sandbox.json").exists):
+        if installation_context(self.target.root) is not None or await asyncio.to_thread(
+            (self.target.root / "pack-sandbox.json").exists
+        ):
             target = self.target
             await self.stop_open()
             await self._replace(target)
@@ -710,8 +751,15 @@ class HomeLibrary:
     starting either one.
     """
 
-    def __init__(self, root: Path, usable: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        root: Path,
+        usable: Callable[[], bool],
+        target: Callable[[], OpenTarget | None] = lambda: None,
+    ) -> None:
         self.root = root
+        self._native_root = root
+        self._target = target
         self._usable = usable
         self._client: AsyncLibraryClient | None = None
         self._lock = asyncio.Lock()
@@ -722,8 +770,23 @@ class HomeLibrary:
             if not self._usable():
                 raise _EngineOpening
             if self._client is None:
-                await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
-                self._client = await AsyncLibraryClient.start(self.root)
+                target = self._target()
+                context = None if target is None else installation_context(target.root)
+                if context is not None and target is not None:
+                    guest = await asyncio.to_thread(context.call, target.root, "library-root")
+                    self.root = context.windows_path(cast("str", guest))
+                    self._client = await AsyncLibraryClient.start(
+                        self.root,
+                        command=context.command(
+                            "dinkster_supervisor.home_context",
+                            "--library-owner",
+                            context.distribution,
+                        ),
+                    )
+                else:
+                    self.root = self._native_root
+                    await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
+                    self._client = await AsyncLibraryClient.start(self.root)
             return await self._client.call(operation, **arguments)
 
     async def close(self) -> None:
@@ -1057,7 +1120,7 @@ async def _installation_fields(
             text=json.dumps({"error": "installations-unavailable", "message": str(error)}),
             content_type="application/json",
         ) from error
-    root = Path(root_value).resolve()
+    root = await asyncio.to_thread(resolve_installation_root, Path(root_value))
     if root not in roots:
         raise web.HTTPNotFound(
             text=json.dumps({"error": "unknown-installation"}), content_type="application/json"
@@ -1081,7 +1144,12 @@ async def _handle_installation_sandbox(request: web.Request) -> web.Response:
         settings = await asyncio.to_thread(read_sandbox_settings, root)
         answer: dict[str, object] = {"root": str(root), "sandboxPacks": settings["sandboxPacks"]}
         if request.path.endswith("/readiness"):
-            current = await asyncio.to_thread(read_current, root)
+            context = installation_context(root)
+            current = (
+                await asyncio.to_thread(read_current, root)
+                if context is None
+                else cast("int | None", await asyncio.to_thread(context.call, root, "current"))
+            )
             report = (
                 await asyncio.to_thread(sandbox_readiness, root, current)
                 if current is not None
@@ -1272,7 +1340,7 @@ def create_home_app(
     app[LIBRARY_KEY] = None
     if library is not None:
         app[LIBRARY_KEY] = shared = HomeLibrary(
-            library, lambda: home.engine_absent and not home.setup.busy
+            library, lambda: home.engine_absent and not home.setup.busy, lambda: home.target
         )
         home.on_change(shared.close)
     app[LINK_KEY] = home.link
