@@ -18,6 +18,7 @@ import importlib
 import json
 import mimetypes
 import os
+import stat
 import threading
 import time
 from collections.abc import Callable, Generator, Iterable, Mapping
@@ -232,6 +233,49 @@ class LocalAssetLibrary:
         """Where this library persists digests - what a worker-facing
         snapshot must point its IndexedAssetResolver at."""
         return self._index_path
+
+    def folder_size(self, *, deadline: float) -> int | None:
+        """Observe logical file bytes without reading contents. Run off-loop.
+
+        Hidden/ignored files, partial downloads, the index and child symlinks
+        are excluded. Each regular pathname counts once, including hardlinks.
+        A failed or budget-limited traversal never reports a partial total.
+        """
+        try:
+            root = self._root.resolve(strict=True)
+            original = root.stat()
+            pending = [root]
+            total = visited = 0
+            while pending:
+                directory = pending.pop()
+                if time.monotonic() >= deadline or directory.resolve(strict=True) != directory:
+                    return None
+                with os.scandir(directory) as entries:
+                    for entry in entries:
+                        visited += 1
+                        if visited > 100_000 or time.monotonic() >= deadline:
+                            return None
+                        path = Path(entry.path)
+                        relative = path.relative_to(root).as_posix()
+                        if (
+                            entry.name.startswith(".")
+                            or self._ignore.matches(relative, entry.name)
+                            or path.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS
+                            or path == self._index_path
+                            or entry.is_symlink()
+                        ):
+                            continue
+                        metadata = entry.stat(follow_symlinks=False)
+                        if stat.S_ISDIR(metadata.st_mode):
+                            pending.append(path)
+                        elif stat.S_ISREG(metadata.st_mode):
+                            total += metadata.st_size
+            current = self._root.stat()
+            if (current.st_dev, current.st_ino) != (original.st_dev, original.st_ino):
+                return None
+            return total
+        except (OSError, RuntimeError):
+            return None
 
     def refresh_index(self) -> int:
         """Load a helper-published catalog without scanning or hashing files."""

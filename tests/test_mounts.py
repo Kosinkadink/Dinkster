@@ -912,6 +912,62 @@ async def wait_for_state(
             await asyncio.sleep(0.02)
 
 
+def test_mount_folder_sizes_observe_current_files_without_hashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    seed(root, {"one.bin": b"abc", "nested/two.bin": b"elevenbytes"})
+    table = MountTable(tmp_path / "snapshot.json")
+    table.add(MountDef("models", root))
+    table.add(MountDef("alias", root))
+    table.add(MountDef("pending", tmp_path / "pending"))
+    table.scan("models")
+    table.scan("alias")
+    (root / ".hidden").write_bytes(b"ignored")
+    (root / "partial.part").write_bytes(b"unfinished")
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"outside the grant")
+    symlink_or_skip(root / "outside.bin", outside)
+
+    def no_hash(*args: object, **kwargs: object) -> None:
+        pytest.fail("folder size observation must not hash file contents")
+
+    monkeypatch.setattr("dinkster_assets.library.digest_file_with_record", no_hash)
+
+    async def scenario() -> None:
+        client = await make_client(MountService(table))
+
+        async def sizes() -> dict[str, object]:
+            response = await client.get("/api/mounts")
+            assert response.status == 200
+            return {row["id"]: row["folderSize"] for row in (await response.json())["mounts"]}
+
+        try:
+            observed = await sizes()
+            available = observed["models"]
+            assert isinstance(available, dict)
+            assert available["status"] == "available"
+            assert available["bytes"] == 14
+            assert isinstance(available["folder"], str)
+            assert str(root) not in available["folder"]
+            assert observed["alias"] == available
+            assert observed["pending"] == {"status": "unavailable"}
+            (root / "one.bin").write_bytes(b"12345")
+            (root / "added.bin").write_bytes(b"seven!!")
+            assert (await sizes())["models"] == {**available, "bytes": 23}
+            (root / "nested/two.bin").unlink()
+            assert (await sizes())["models"] == {**available, "bytes": 12}
+            (root / "one.bin").unlink()
+            (root / "added.bin").unlink()
+            assert (await sizes())["models"] == {**available, "bytes": 0}
+            root.rename(tmp_path / "removed")
+            assert (await sizes())["models"] == {"status": "unavailable"}
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_mounts_read_surface(tmp_path: Path) -> None:
     root = tmp_path / "granted"
     seed(

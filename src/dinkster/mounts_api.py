@@ -5,9 +5,9 @@ composed in dinkster-serve, dinkster-server stays mount-agnostic, and this
 module is the seam.
 
 - GET    /api/mounts                     every mount: id, mode, source,
-                                         state, entryCount/scanProgress/error/saveError; operator
-                                         mounts include real path, semantic
-                                         model mounts include kind instead
+                                         state, entryCount, folderSize, scanProgress,
+                                         error/saveError; operator mounts include real path,
+                                         semantic model mounts include kind instead
 - GET    /api/mounts/{id}/list?path=     one level of a mount's virtual
                                          tree (file-picker navigation)
 - GET    /api/mounts/{id}/entries?q=&path=&recursive=&cursor=&limit=
@@ -34,6 +34,15 @@ and cannot be deleted here - re-point the config instead.
 Every mutation and every finished scan publishes {"type":
 "mounts_changed"} non-droppable, the schema_changed pattern: a ping to
 refetch GET /api/mounts, never a diff.
+
+folderSize is {status: "available", bytes: N, folder: "opaque identity"} or
+{status: "unavailable"}. It observes logical regular-file bytes in finished
+grants without hashing, excluding hidden/ignored files, partial downloads,
+indexes and child symlinks. Alias grants share a canonical-folder identity;
+overlapping parent/child grants are separate observations, not additive disk
+usage. Reads share a cooperative one-second budget, with at most 100,000
+entries per grant; an OS call can outlast that budget. Failed, incomplete,
+pending and restart-required observations have no byte count. Empty is zero.
 """
 
 from __future__ import annotations
@@ -148,6 +157,7 @@ class MountService:
         self.settings_table = table
         self._config_path = config_path
         self._scan_lock = asyncio.Lock()
+        self._folder_size_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
         self._queued_scans: set[str] = set()
         self._resolution_store: ResolutionStore | None = None
@@ -672,7 +682,25 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
     project = request.query.get("project", "default")
     await validate_project(request, project)
     try:
+        async with service._folder_size_lock:
+            body = service.project_response(project)
+            rows = cast(list[dict[str, object]], body["mounts"])
+            grants = {
+                str(row["id"]): service.table.get(str(row["id"]))
+                for row in rows
+                if row["state"] == "ready"
+            }
+            sizes = await run_owned_thread(lambda: service.table.folder_sizes(tuple(grants)))
+        await validate_project(request, project)
         body = service.project_response(project)
+        rows = cast(list[dict[str, object]], body["mounts"])
+        for row in rows:
+            mount_id = str(row["id"])
+            row["folderSize"] = (
+                sizes.get(mount_id, {"status": "unavailable"})
+                if row["state"] == "ready" and service.table.get(mount_id) == grants.get(mount_id)
+                else {"status": "unavailable"}
+            )
         for mount_id in service.table.pending():
             source = service.table.source(mount_id)
             if source == "shared-models" or (service.library is not None and source == "config"):
