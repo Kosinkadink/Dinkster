@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
+from dinkster_assets.privacy import protect_secret_outputs
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput
@@ -153,6 +154,69 @@ def test_run_value_wait_releases_execution_and_memory_admission(governed: bool) 
             assert Waiter.saved is not None
             with pytest.raises(RuntimeError, match="no longer active"):
                 await Waiter.saved.publish_run_value("waiter", {})
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("operation", ["publish", "override", "inhibit"])
+def test_secret_run_control_cannot_publish_or_edit_credential_text(operation: str) -> None:
+    secret = "credential-control-019"
+
+    class PrivateController(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "control.private",
+                body=(Output("value", INT),),
+                execution_context=True,
+                may_expand_graph=True,
+            )
+
+        @classmethod
+        async def execute(cls, execution_context: RunExecutionContext) -> dict[str, object]:
+            before = await execution_context.get_graph()
+            try:
+                if operation == "publish":
+                    await execution_context.publish_run_value(
+                        secret, {"value": registry.wrap("INT", 17)}
+                    )
+                elif operation == "override":
+                    await execution_context.override_node("victim", {"value": secret})
+                else:
+                    await execution_context.inhibit([secret])
+            except Exception as error:
+                assert str(error) == "Secret-bearing content cannot be saved"
+            else:
+                pytest.fail("Credential-bearing control request was accepted")
+            assert await execution_context.get_graph() == before
+            await execution_context.override_node("victim", {"value": 23})
+            return {"value": 7}
+
+    registry = TypeRegistry()
+    register_core_types(registry)
+    nodes = [PrivateController, Passthrough]
+    engine = Engine(
+        schemas=build_schemas(nodes),
+        worker=InProcessWorker(build_node_types(nodes), registry),
+        cache=MemoryLRUCache(),
+        registry=registry,
+    )
+
+    async def scenario() -> None:
+        with protect_secret_outputs([secret]):
+            result = await engine.run(
+                Graph(
+                    {
+                        "controller": GraphNode("control.private"),
+                        "victim": GraphNode("control.pass", {"value": Link("controller", "value")}),
+                        secret: GraphNode("control.pass", {"value": Link("controller", "value")}),
+                    }
+                ),
+                ["victim", secret],
+            )
+        assert not result.diagnostics
+        assert result.outputs["victim"]["value"].resolve() == 23
+        assert result.outputs[secret]["value"].resolve() == 7
 
     run_scenario(scenario())
 

@@ -36,6 +36,19 @@ from dinkster_engine import (
     InvocationResult,
     OnInvocationEvent,
 )
+from dinkster_protocol import (
+    BlockedOutput,
+    ErrorHint,
+    ExpandedReturn,
+    InvocationFailure,
+    InvocationReturn,
+    LiteralInput,
+    LocalExpansion,
+    LocalNode,
+    NodeError,
+    PresentOutput,
+    ReturnBatch,
+)
 from dinkster_schema import build_schemas
 from dinkster_values import (
     RESOURCE_ID_META_KEY,
@@ -49,7 +62,12 @@ from dinkster_values import (
     register_core_types,
 )
 from dinkster_workers import ValueCodec
-from dinkster_workers.boundary import release_segment
+from dinkster_workers.boundary import (
+    decode_result,
+    encode_invocation_outcome,
+    encode_result,
+    release_segment,
+)
 from scaffold_nodes import SCAFFOLD_NODES, register_scaffold_types
 from test_engine import InProcessWorkerFactory, image_graph
 
@@ -165,6 +183,68 @@ def test_secret_output_refused_before_transport_retains_bytes(
             received, _ = codec.decode(wire, blobs, [])
             assert received.resolve() == safe
         assert all(raw_secret not in blob for blob in blobs)
+    finally:
+        for segment in segments:
+            release_segment(segment)
+
+
+@pytest.mark.parametrize("typed", [False, True])
+@pytest.mark.parametrize("source", ["expansion", "blocked", "error", "traceback", "hint"])
+def test_secret_result_text_refused_before_any_value_is_retained(
+    tmp_path: Path, typed: bool, source: str
+) -> None:
+    secret = "credential-\u03bb-017"
+    registry = make_registry()
+    store = DiskCAS(tmp_path / "store")
+    codec = ValueCodec(registry, use_shm=False, cas_threshold=1, value_store=store)
+    codec.enable_persistent_cas()
+    safe_value = registry.wrap("STRING", "useful public output")
+    if source in ("expansion", "blocked"):
+        expansion = ExpandedReturn(
+            LocalExpansion(
+                (
+                    LocalNode(
+                        "child",
+                        "test.child",
+                        (("value", LiteralInput(secret if source == "expansion" else "public")),),
+                    ),
+                )
+            ),
+            (
+                ("a", PresentOutput(safe_value)),
+                ("b", BlockedOutput(secret if source == "blocked" else None)),
+            ),
+        )
+        result = InvocationResult(expansion=expansion)
+        outcome = InvocationReturn(ReturnBatch("scalar", (expansion,)))
+    else:
+        error = NodeError(
+            "node",
+            "test.node",
+            secret if source == "error" else "Service failed",
+            traceback=secret if source == "traceback" else "",
+            hints=(ErrorHint("service", "Replace secret", secret if source == "hint" else None),),
+        )
+        result = InvocationResult(error=error)
+        outcome = InvocationFailure(error)
+    with protect_secret_outputs([secret]):
+        with pytest.raises(AssetError, match="Secret-bearing content cannot be saved"):
+            if typed:
+                encode_invocation_outcome(codec, outcome, "invocation", 0)
+            else:
+                encode_result(codec, result, "invocation", 0)
+    assert codec.take_pending_store_blobs() == []
+    assert codec.conversation_checkpoint() == ({}, 0)
+    assert store.digests() == []
+    public_codec = ValueCodec(registry, use_shm=False)
+    with protect_secret_outputs([secret]):
+        header, blobs, segments = encode_result(
+            public_codec, InvocationResult(outputs={"value": safe_value}), "public", 0
+        )
+    try:
+        decoded, _ = decode_result(public_codec, header, blobs, [])
+        assert decoded.outputs is not None
+        assert decoded.outputs["value"].resolve() == "useful public output"
     finally:
         for segment in segments:
             release_segment(segment)

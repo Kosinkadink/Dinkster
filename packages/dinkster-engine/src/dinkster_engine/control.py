@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import cast
 
+from dinkster_assets.privacy import check_secret_data
 from dinkster_graph import Graph, LoopPair, graph_output_types, graph_to_wire
 from dinkster_schema import NodeSchema
 from dinkster_values import Value
@@ -91,6 +92,7 @@ class EngineRunContext:
         return await asyncio.shield(self._state.future(node_id))
 
     async def publish_run_value(self, node_id: str, value: Mapping[str, Value]) -> None:
+        check_secret_data((node_id, value))
         self._check_target(node_id)
         future = self._state.future(node_id)
         if future.done():
@@ -99,10 +101,12 @@ class EngineRunContext:
         future.set_result(MappingProxyType(dict(value)))
 
     async def inhibit(self, node_ids: Sequence[str]) -> None:
+        check_secret_data(node_ids)
         for node_id in node_ids:
             self._check_target(node_id)
         self._inhibit(node_ids)
 
     async def override_node(self, node_id: str, inputs: Mapping[str, object]) -> None:
+        check_secret_data((node_id, inputs))
         self._check_target(node_id)
         self._override(node_id, json.loads(json.dumps(inputs, default=dict, allow_nan=False)))

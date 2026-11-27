@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import fields, is_dataclass
 from typing import cast
 
 from .identity import AssetError
@@ -58,6 +59,9 @@ def check_secret_data(data: object) -> None:
             elif isinstance(item, Sequence):
                 for value in cast("Sequence[object]", item):
                     check(value)
+            elif is_dataclass(item) and not isinstance(item, type):
+                for field in fields(item):
+                    check(getattr(item, field.name))
 
     check(data)
 

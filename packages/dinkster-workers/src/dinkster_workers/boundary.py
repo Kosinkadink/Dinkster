@@ -1170,6 +1170,7 @@ def encode_result(
 ) -> tuple[dict[str, object], list[bytes], list[SharedMemory]]:
     from .saved_artifacts import MAX_SAVED_ARTIFACTS, validate_candidate
 
+    check_secret_data(result)
     if len(result.artifact_candidates) > MAX_SAVED_ARTIFACTS:
         raise BoundaryError(f"result artifactCandidates exceeds {MAX_SAVED_ARTIFACTS} entries")
     try:
@@ -1446,6 +1447,7 @@ def encode_invocation_outcome(
         RESULT_ALGEBRA_MAX_DOCUMENT_BYTES,
     )
 
+    check_secret_data(outcome)
     if type(invocation_id) is not str:
         raise BoundaryError("typed result invocation id must be a string")
     _finite_number(execute_ms, "typed result executeMs")
