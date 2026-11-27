@@ -290,6 +290,8 @@ class ExecutionRuntime:
     owner_alive: Callable[[str], bool] | None = None
     cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None
     """Host-side validator for external references in a cached result."""
+    secret_account_id: str | None = None
+    """Host-authenticated account partition for secret-node results, never a credential."""
     extension_snapshot: ExtensionSnapshot = ExtensionSnapshot()
     sampler_registry_snapshot: SamplerRegistrySnapshot = SamplerRegistrySnapshot()
     graph_compiler_registry: GraphCompilerRegistrySnapshot = GraphCompilerRegistrySnapshot()
@@ -1133,6 +1135,17 @@ class Engine:
         runtime = self._runtime()
         # Unpublished direct results must not satisfy a server's publication contract.
         parts: list[bytes] = [signature.encode("utf-8")]
+        if any(spec.secret for spec in schema.inputs):
+            # Coalescing uses the same key as caching, so neither can cross
+            # accounts. Without a host binding, never reuse a secret result.
+            parts.extend(
+                (
+                    b"secret-account",
+                    runtime.secret_account_id.encode("utf-8")
+                    if runtime.secret_account_id is not None
+                    else uuid.uuid4().bytes,
+                )
+            )
         if runtime.require_image_document_publication:
             parts.append(b"required-image-documents")
         if runtime.publish_image_documents is not None:

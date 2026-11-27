@@ -304,6 +304,7 @@ class JobQueue:
             execution,
             publish_image_documents=self._publish_image_documents,
             require_image_document_publication=True,
+            secret_account_id=principal_id,
         )
         assert execution.schemas is not None
         schemas = execution.schemas
@@ -366,7 +367,7 @@ class JobQueue:
         key = JobKey(client_id, job_id)
         existing = self._jobs.get(key)
         if existing is not None and existing.state not in TERMINAL_STATES:
-            if existing.fingerprint == fingerprint:
+            if existing.principal_id == principal_id and existing.fingerprint == fingerprint:
                 return existing
             raise ValueError(
                 f"job key {key} is in use by {existing.state} job with different content"

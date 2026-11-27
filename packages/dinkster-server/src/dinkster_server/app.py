@@ -3446,7 +3446,10 @@ async def handle_submit(request: web.Request) -> web.Response:
     async with state.job_admission(client_id, job_id):
         existing = state.queue.get(client_id, job_id)
         if existing is not None and existing.state not in TERMINAL_STATES:
-            if existing.fingerprint != fingerprint:
+            if (
+                existing.principal_id != principal.principal_id
+                or existing.fingerprint != fingerprint
+            ):
                 return web.json_response(
                     {
                         "error": "job-key-in-use",

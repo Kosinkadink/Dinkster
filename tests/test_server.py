@@ -966,6 +966,13 @@ def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_r
             assert await denied.json() == absent
             accepted = await submit("alice")
             assert accepted.status == 202, await accepted.text()
+            duplicate_from_bob = await client.post(
+                "/api/jobs",
+                json=submit_body(graph, list(graph.nodes), jobId=str(sequence)),
+                headers={"Authorization": "Bearer bob"},
+            )
+            assert duplicate_from_bob.status == 409
+            assert (await duplicate_from_bob.json())["error"] == "job-key-in-use"
             response = await client.put(
                 "/api/secrets/service_key",
                 json={"value": "bob-private-credential"},
