@@ -1557,6 +1557,96 @@ def test_project_facts_require_every_record_scope_and_grant(tmp_path: Path) -> N
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("helper_list", (False, True))
+def test_library_metadata_reads_require_the_record_scope(tmp_path: Path, helper_list: bool) -> None:
+    from dinkster_library import AsyncLibraryClient
+    from dinkster_library._records import Records
+    from dinkster_server.projects import PROJECTS_KEY
+
+    async def scenario() -> None:
+        capabilities = frozenset({"assets:read", "assets:write"})
+        library = ServerLibrary(
+            AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite")
+        )
+        records = Records(tmp_path)
+
+        class InProcessProjects:
+            async def call(self, operation: str, **arguments: object) -> dict[str, object]:
+                return records.dispatch(operation, arguments)
+
+        app = create_app(
+            _media_engine,
+            _MEDIA_SCHEMAS,
+            library=library,
+            authenticator=_Tokens(
+                {
+                    "a": Principal("alice", {"a": capabilities}),
+                    "viewer": Principal("viewer", {"a": frozenset({"assets:read"})}),
+                    "b": Principal("bob", {"b": capabilities}),
+                    "both": Principal("both", {"a": capabilities, "b": capabilities}),
+                    "local": LOCAL_PRINCIPAL,
+                }
+            ),
+        )
+        if helper_list:
+            app[PROJECTS_KEY] = cast("AsyncLibraryClient", InProcessProjects())
+        headers = {
+            token: {"Authorization": "Bearer " + token}
+            for token in ("a", "viewer", "b", "both", "local")
+        }
+        try:
+            async with TestClient(TestServer(app)) as client:
+                image = BytesIO()
+                Image.new("RGB", (3, 5), (19, 73, 151)).save(image, format="PNG")
+                uploaded = await client.post(
+                    "/api/assets?scope=a", data=image.getvalue(), headers=headers["a"]
+                )
+                assert uploaded.status == 201, await uploaded.text()
+                digest = (await uploaded.json())["digest"]
+                created = await client.post(
+                    "/api/library",
+                    json={
+                        "scope": "a",
+                        "name": "Private picture",
+                        "digest": digest,
+                        "mediaType": "image/png",
+                    },
+                    headers=headers["a"],
+                )
+                assert created.status == 201, await created.text()
+                record = await created.json()
+                detail = "/api/library/" + record["id"]
+                for token in ("a", "viewer", "both", "local"):
+                    listed = await client.get("/api/library?scope=a", headers=headers[token])
+                    assert listed.status == 200, await listed.text()
+                    assert await listed.json() == {"records": [record]}
+                    fetched = await client.get(detail + "?scope=a", headers=headers[token])
+                    assert fetched.status == 200, await fetched.text()
+                    assert await fetched.json() == record
+                for scope in ("a", "absent"):
+                    listed = await client.get(
+                        "/api/library",
+                        params={"scope": scope, "limit": "1", "q": "Private"},
+                        headers=headers["b"],
+                    )
+                    assert listed.status == 200, await listed.text()
+                    assert await listed.json() == {"records": []}
+                missing = await client.get("/api/library/absent?scope=b", headers=headers["b"])
+                assert missing.status == 404
+                for path in (
+                    detail + "?scope=a",
+                    "/api/library/absent?scope=a",
+                    detail + "?scope=b",
+                ):
+                    refused = await client.get(path, headers=headers["b"])
+                    assert refused.status == 404, await refused.text()
+                    assert await refused.json() == await missing.json()
+        finally:
+            records.close()
+
+    run_scenario(scenario())
+
+
 def test_library_references_require_independently_granted_bytes(tmp_path: Path) -> None:
     async def scenario() -> None:
         capabilities = frozenset({"assets:read", "assets:write"})

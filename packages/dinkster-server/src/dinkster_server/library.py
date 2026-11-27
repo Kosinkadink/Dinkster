@@ -1815,6 +1815,8 @@ async def handle_library_create(request: web.Request) -> web.Response:
 async def handle_library_list(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
     scope = _require_scope(request.query.get("scope"))
+    if not principal_for(request).allows_in(scope, "assets:read"):
+        return web.json_response({"records": []})
     text = request.query.get("q", "")
     label = request.query.get("label", "")
     try:
@@ -1858,6 +1860,8 @@ async def handle_library_list(request: web.Request) -> web.Response:
 async def handle_library_get(request: web.Request) -> web.Response:
     library = request.app[LIBRARY_KEY]
     scope = _require_scope(request.query.get("scope"))
+    if not principal_for(request).allows_in(scope, "assets:read"):
+        return _json_error(404, "no such record")
     record = await asyncio.to_thread(library.store.get, scope, request.match_info["record_id"])
     if record is None:
         return _json_error(404, "no such record")
