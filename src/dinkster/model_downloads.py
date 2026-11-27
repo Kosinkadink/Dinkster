@@ -130,12 +130,27 @@ class ModelDownloads:
         with use_asset_folders(context):
             return model_is_hidden(digest=digest)
 
-    def target(self, kind: str, project: str) -> MountDef | None:
+    def target(self, kind: str, project: str, *, location: str | None = None) -> MountDef | None:
         table = self.mounts.table
+        enabled = self.mounts.project_context(project).mounts
+        selected: set[str] | None = None
+        if location is not None:
+            settings = self.mounts.model_settings()
+            selected = (
+                {
+                    mount.id
+                    for row in settings.locations
+                    if row.id == location
+                    for mount in row.mounts(0)
+                }
+                if settings is not None
+                else set()
+            )
         candidates = [
             mount
-            for mount_id in self.mounts.project_context(project).mounts
-            if table.kind(mount_id) == kind
+            for mount_id in enabled
+            if (selected is None or mount_id in selected)
+            and table.kind(mount_id) == kind
             and (mount := table.get(mount_id)) is not None
             and mount.mode == "readwrite"
         ]
