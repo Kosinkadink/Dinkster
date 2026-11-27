@@ -305,6 +305,8 @@ class ExecutionRuntime:
     """Run-local worker attribution for placed nodes without a dispatch selection."""
     publish_outputs: Callable[[str, str, Mapping[str, Value]], Awaitable[None]] | None = None
     """Persist host ownership before exposing this runtime node's output descriptors."""
+    on_artifacts: Callable[[tuple[SavedArtifact, ...]], None] | None = None
+    """Receive validated files when the run exits, including failure or cancellation."""
     publish_preview_artifacts: (
         Callable[[str, Sequence[EncodedPreviewArtifact]], Awaitable[tuple[SavedArtifact, ...]]]
         | None
@@ -3613,7 +3615,7 @@ class Engine:
             self._run_preview_policy.pop(run_id, None)
             self._run_attention_config.pop(run_id, None)
             self._run_single_job_multi_gpu.pop(run_id, None)
-            self._run_artifacts.pop(run_id, None)
+            artifacts = tuple(self._run_artifacts.pop(run_id, ()))
             self._run_prepared_types.pop(run_id, None)
             self._run_prepare_locks.pop(run_id, None)
             self._run_blocked_origins.pop(run_id, None)
@@ -3621,8 +3623,12 @@ class Engine:
             self._run_expansion_origins.pop(run_id, None)
             _execution_runtime.reset(runtime_token)
             try:
-                if runtime.run_finished is not None:
-                    runtime.run_finished(run_id)
+                try:
+                    if runtime.on_artifacts is not None:
+                        runtime.on_artifacts(artifacts)
+                finally:
+                    if runtime.run_finished is not None:
+                        runtime.run_finished(run_id)
             finally:
                 run_context.close()
 
