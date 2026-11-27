@@ -48,6 +48,7 @@ from .model import TypeExpr
 __all__ = [
     "AssetCoercionPlan",
     "CoercionProviders",
+    "TypeAcceptanceProvider",
     "TypeEquivalenceProvider",
     "combo_type_mismatch_is_error",
     "plan_asset_coercion",
@@ -98,6 +99,15 @@ class TypeEquivalenceProvider(Protocol):
     """Registry surface needed to plan an explicit atom equivalence."""
 
     def equivalent_type(self, type_id: str) -> str | None: ...
+
+
+@runtime_checkable
+class TypeAcceptanceProvider(CoercionProviders, TypeEquivalenceProvider, Protocol):
+    """Enumerable validation facts, including declarations from cold packs."""
+
+    def type_ids(self) -> tuple[str, ...]: ...
+
+    def asset_decoder_targets(self) -> tuple[str, ...]: ...
 
 
 def plan_type_equivalence(

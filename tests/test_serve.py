@@ -3870,7 +3870,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         )
         for entry in sys.path:
             root = Path(entry)
-            if root.name == "src" and root.is_dir():
+            if root.name in {"src", "shared"} and root.is_dir():
                 shutil.copytree(root, site_packages, dirs_exist_ok=True)
         (site_packages / "runtime-dependencies.pth").write_text(
             str(

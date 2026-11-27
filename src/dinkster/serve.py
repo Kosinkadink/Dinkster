@@ -1172,6 +1172,11 @@ def main(argv: list[str] | None = None) -> None:
         "origin through the host proxy; repeatable",
     )
     parser.add_argument(
+        "--sandbox-network-policy",
+        metavar="JSON",
+        help="authoritative per-pack HTTPS origin lists from the managed installation",
+    )
+    parser.add_argument(
         "--max-running-jobs",
         type=int,
         default=None,
@@ -1947,7 +1952,11 @@ def _serve(
             "--allow-mount-changes requires a library root "
             "(granted mounts persist to <library-root>/mounts.toml)"
         )
-    if (args.sandbox_grant_gpu or args.sandbox_grant_network) and not args.sandbox_packs:
+    if (
+        args.sandbox_grant_gpu
+        or args.sandbox_grant_network
+        or args.sandbox_network_policy is not None
+    ) and not args.sandbox_packs:
         parser.error("sandbox pack grants require --sandbox-packs")
     for name in args.sandbox_grant_gpu:
         if problem := validate_name(name):
@@ -1968,6 +1977,23 @@ def _serve(
     sandbox_network_grants = {
         name: tuple(dict.fromkeys(origins)) for name, origins in mutable_network_grants.items()
     }
+    sandbox_network_policy = None
+    if args.sandbox_network_policy is not None:
+        try:
+            policy = json.loads(args.sandbox_network_policy)
+            if not isinstance(policy, dict):
+                raise ValueError("policy must map pack names to origin lists")
+            sandbox_network_policy = {}
+            for name, origins in policy.items():
+                if validate_name(name) or not isinstance(origins, list):
+                    raise ValueError("policy must map pack names to origin lists")
+                if any(not isinstance(origin, str) for origin in origins):
+                    raise ValueError("policy origins must be strings")
+                sandbox_network_policy[canonical_name(name)] = tuple(
+                    normalize_egress_origin(origin) for origin in origins
+                )
+        except ValueError as exc:
+            parser.error(f"invalid sandbox network policy: {exc}")
 
     # Roots whose absolute paths must never reach wire payloads: each
     # becomes a stable token in redacted error/log text (see PathRedactor).
@@ -2382,6 +2408,7 @@ def _serve(
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,
+            sandbox_network_policy=sandbox_network_policy,
             sandbox_writable_mounts=sandbox_writable_mounts,
             pack_scratch_root=(
                 scratch_root / "packs"

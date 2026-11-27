@@ -74,6 +74,12 @@
   governance, cache trim/export; asset library and history routes when a
   library root is configured, including classified bounded latent upload
 - The node catalog and native job submission use `/api/nodes` and `/api/jobs`.
+  The catalog's `dinkster.typeAcceptance` describes each input atom's accepted
+  source atoms, asset decoder targets and batch-merge types from the run's
+  validation authority, including cold pack declarations. Exact structural
+  matching still follows the port's type expression; atom equivalences do not
+  lift through wrappers. Hosts without enumerable validation facts omit this
+  metadata, rather than advertising compatibility from a different registry.
   There is no separate ComfyUI schema catalog or prompt submission endpoint.
 - A development snapshot's node catalog carries `dinkster.development` with
   `mode: development`, `reproducible: false` and an explanation. Captured runtime

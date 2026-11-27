@@ -118,6 +118,20 @@ def installation_frontend(root: Path, engine: str = "main") -> InstallationFront
     """Read an installation's frontend facts from disk; no engine needs to run."""
     from .environment_runtime import development_frontend
     from .environment_state import read_current, read_document
+    from .home_context import installation_context
+
+    if (context := installation_context(root)) is not None:
+        value = cast("dict[str, object]", context.call(root, "frontend", engine))
+        source = cast("dict[str, str] | None", value["source"])
+        found = None
+        if source is not None:
+            location = source["location"]
+            if source["kind"] != "dev":
+                location = str(context.windows_path(location))
+            found = FrontendSource(cast("FrontendKind", source["kind"]), location)
+        return InstallationFrontend(
+            cast("int | None", value["wire"]), cast("Selection | None", value["selected"]), found
+        )
 
     current = read_current(root)
     if current is None:
