@@ -63,6 +63,10 @@ unknown requests. Origins include execution parts, not operator grants.
 ``GET /supervisor/installations/history`` takes an absolute registered ``root``
 and returns ``root``, ``current`` and the recorded ``history``, including entries
 whose build trees were collected. Unreadable history answers 503, not an empty list.
+``GET /supervisor/installations/facts`` returns the registered root's selected
+``current`` generation, recorded ``build`` identity and observed ``engines``.
+No selected generation means ``build: null``. Unreadable or changing selected
+metadata answers 503; this read never migrates or starts the installation.
 ``internetAddresses`` lists effective exact HTTPS origins with ``source`` of
 ``pack`` or ``user``; ``graphicsCard`` reports nullable ``requested`` and
 ``granted`` booleans. These describe next-start sandbox policy, not live devices.
@@ -1015,6 +1019,39 @@ async def _handle_installations(request: web.Request) -> web.Response:
     return web.json_response({"installations": rows})
 
 
+async def _handle_installation_facts(request: web.Request) -> web.Response:
+    from .environment_runtime import engine_status
+    from .environment_state import EnvironmentError, Generation, read_current
+
+    root, _ = await _installation_fields(request, {"root"})
+
+    def observe() -> dict[str, object]:
+        if not root.is_dir():
+            raise FileNotFoundError("the installation folder is missing")
+        current = read_current(root)
+        build = None
+        if current is not None:
+            recorded = Generation.read(root / "builds" / str(current) / "build.json")
+            if recorded.number != current:
+                raise EnvironmentError("snapshot directory and recorded number disagree")
+            build = {
+                "version": recorded.engine_version,
+                "release": recorded.engine_release,
+                "variant": recorded.variant,
+                "baseId": recorded.base,
+                "source": recorded.source,
+            }
+        engines = list(engine_status(root))
+        if read_current(root) != current:
+            raise EnvironmentError("the selected snapshot changed while reading installation facts")
+        return {"root": str(root), "current": current, "build": build, "engines": engines}
+
+    try:
+        return web.json_response(await asyncio.to_thread(observe))
+    except (OSError, ValueError) as error:
+        return web.json_response({"error": "facts-unavailable", "message": str(error)}, status=503)
+
+
 async def _handle_installation_history(request: web.Request) -> web.Response:
     from .environment_history import history
     from .environment_state import read_current
@@ -1378,6 +1415,7 @@ def create_home_app(
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_get("/supervisor/installations", _handle_installations)
+    app.router.add_get("/supervisor/installations/facts", _handle_installation_facts)
     app.router.add_get("/supervisor/installations/history", _handle_installation_history)
     app.router.add_get("/supervisor/installations/packs", _handle_installation_packs)
     app.router.add_get("/supervisor/installations/sandbox", _handle_installation_sandbox)
