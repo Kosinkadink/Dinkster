@@ -2130,6 +2130,7 @@ def test_installation_cancellation_rolls_back_candidate_and_preserves_previous_s
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
     monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "library"))
+    before_selection = None
     if operation == "update":
         code, installed = _run(
             root,
@@ -2148,9 +2149,11 @@ def test_installation_cancellation_rolls_back_candidate_and_preserves_previous_s
         )
         assert code == 0 and installed["current"] == 1, installed
         assert _run(root, "stop", "--yes")[0] == 0
-        settings = (root / "environment.json").read_bytes()
-        previous = (root / "builds/1/build.json").read_bytes()
-        registration = registered_stores()
+        before_selection = (
+            (root / "environment.json").read_bytes(),
+            (root / "builds/1/build.json").read_bytes(),
+            registered_stores(),
+        )
         (Path(fixture["mirror"]) / "channels/nightly.json").write_bytes(
             Path(fixture["updatedChannel"]).read_bytes()
         )
@@ -2192,6 +2195,8 @@ def test_installation_cancellation_rolls_back_candidate_and_preserves_previous_s
         assert not (root / "builds/1").exists()
         assert store_projects(store) == [] and registered_stores() == {}
     else:
+        assert before_selection is not None
+        settings, previous, registration = before_selection
         assert (root / "current").read_text() == "1\n"
         assert (root / "environment.json").read_bytes() == settings
         assert (root / "builds/1/build.json").read_bytes() == previous
