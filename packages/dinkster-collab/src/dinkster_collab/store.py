@@ -88,6 +88,10 @@ class SessionStore:
                 self._conn.execute(
                     "ALTER TABLE ops ADD COLUMN actor_kind TEXT NOT NULL DEFAULT 'human'"
                 )
+            if "numeric_corrections" not in op_columns:
+                self._conn.execute(
+                    "ALTER TABLE ops ADD COLUMN numeric_corrections TEXT NOT NULL DEFAULT '[]'"
+                )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS session_acl (
@@ -170,8 +174,8 @@ class SessionStore:
             self._conn.execute(
                 "INSERT INTO ops"
                 " (session_id, revision, op_id, actor_id, base_revision, patch, timestamp,"
-                " principal_id, actor_kind)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " principal_id, actor_kind, numeric_corrections)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_id,
                     op.revision,
@@ -182,6 +186,7 @@ class SessionStore:
                     op.timestamp,
                     principal_id,
                     op.actor_kind,
+                    json.dumps(op.numeric_corrections),
                 ),
             )
 
@@ -239,7 +244,8 @@ class SessionStore:
                     ops.patch,
                     ops.timestamp,
                     ops.principal_id,
-                    ops.actor_kind
+                    ops.actor_kind,
+                    ops.numeric_corrections
                 FROM sessions
                 LEFT JOIN ops ON ops.session_id = sessions.session_id
                 ORDER BY sessions.session_id, ops.revision
@@ -289,6 +295,7 @@ class SessionStore:
                 timestamp=cast(float, row["timestamp"]),
                 principal_id=cast(str, row["principal_id"]),
                 actor_kind=cast(str, row["actor_kind"]),
+                numeric_corrections=tuple(json.loads(cast(str, row["numeric_corrections"]))),
             )
             session.ops.append(op)
             session.ops_by_id[op.op_id] = op
