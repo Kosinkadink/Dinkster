@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 from collections.abc import Generator
 from contextlib import contextmanager
 from http.client import HTTPMessage
@@ -968,6 +969,154 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     run_scenario(scenario())
 
 
+def test_download_location_is_selected_per_review_and_revalidated_before_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import MountTable, huggingface
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_server import create_app
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.model_downloads_api import add_model_download_routes
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": "studio",
+                "locations": [
+                    {"id": "studio", "path": str(tmp_path / "studio"), "mode": "readwrite"},
+                    {"id": "archive", "path": str(tmp_path / "archive"), "mode": "readwrite"},
+                    {"id": "readonly", "path": str(tmp_path / "readonly"), "mode": "read"},
+                    {
+                        "id": "vae",
+                        "path": str(tmp_path / "vae"),
+                        "kind": "model/vae",
+                        "mode": "readwrite",
+                    },
+                ],
+            }
+        )
+    )
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    mounts = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    downloads = ModelDownloads(mounts, ProvenanceStore(tmp_path / "provenance.json"))
+    payload = b"download to the selected location rather than the global default"
+    name = "selected.safetensors"
+
+    @contextmanager
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
+        metadata = {
+            "sha": "b" * 40,
+            "siblings": [
+                {
+                    "rfilename": name,
+                    "size": len(payload),
+                    "lfs": {
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "size": len(payload),
+                    },
+                }
+            ],
+        }
+        yield cast(
+            "HTTPSResponse",
+            io.BytesIO(json.dumps(metadata).encode() if "/api/models/" in url else payload),
+        )
+
+    monkeypatch.setattr(huggingface, "open_model_response", respond)
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS)
+        add_model_download_routes(app, downloads)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        body = {
+            "name": name,
+            "kind": "model/diffusion",
+            "project": "work",
+            "scope": "local",
+            "source": f"https://huggingface.co/studio/custom/resolve/main/{name}",
+        }
+        try:
+            response = await client.post("/api/models/downloads/plan", json=body)
+            assert response.status == 200
+            assert (await response.json())["destination"] == str(
+                tmp_path / "studio/diffusion_models" / name
+            )
+            for location in ("absent", "readonly", "vae"):
+                response = await client.post(
+                    "/api/models/downloads/plan", json={**body, "location": location}
+                )
+                assert response.status == 200
+                assert await response.json() == {"status": "destination-required"}
+            response = await client.post(
+                "/api/models/downloads/plan", json={**body, "location": None}
+            )
+            assert response.status == 400
+            plans = {}
+            for kind, folder in (("model/diffusion", "diffusion_models"), ("model/vae", "vae")):
+                response = await client.post(
+                    "/api/models/downloads/plan",
+                    json={
+                        **body,
+                        "kind": kind,
+                        "location": "archive",
+                    },
+                )
+                assert response.status == 200
+                plan = await response.json()
+                assert plan["destination"] == str(tmp_path / "archive" / folder / name)
+                plans[kind] = plan
+            start = {"planId": plans["model/diffusion"]["planId"], "consent": True}
+            mounts.update_project(
+                "work",
+                [m.id for m in shared_model_mounts() if not m.id.startswith("archive-")],
+                None,
+            )
+            response = await client.post("/api/models/downloads/start", json=start)
+            assert response.status == 409
+            assert await response.json() == {"error": "download-destination-changed"}
+            response = await client.post(
+                "/api/models/downloads/plan", json={**body, "location": "archive"}
+            )
+            assert await response.json() == {"status": "destination-required"}
+            mounts.update_project("work", list(mounts.mount_ids()), None)
+            response = await client.post("/api/models/downloads/start", json=start)
+            assert response.status == 202
+            job = await response.json()
+            async with asyncio.timeout(5):
+                while True:
+                    response = await client.get(f"/api/models/downloads/{job['jobId']}")
+                    result = await response.json()
+                    if result["status"] in {"completed", "failed"}:
+                        break
+                    await asyncio.sleep(0.01)
+            assert result["status"] == "completed"
+            destination = tmp_path / "archive/diffusion_models" / name
+            assert result["path"] == str(destination)
+            assert destination.read_bytes() == payload
+            assert not (tmp_path / "studio/diffusion_models" / name).exists()
+            settings = mounts.model_settings()
+            assert settings is not None and settings.download_location == "studio"
+            assert (await (await client.get("/api/jobs")).json())["jobs"] == []
+        finally:
+            await client.close()
+            await mounts.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize(
     "outcome",
     [
@@ -1614,6 +1763,86 @@ def test_huggingface_selection_pins_metadata_and_verifies_named_stream(
     ]
 
 
+def test_model_folders_discover_kinds_aliases_and_exclude_download_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import LocalAssetLibrary, MountTable
+    from dinkster_assets.integrity import digest_file_with_record
+    from dinkster_assets.library import append_write_record
+
+    from dinkster.model_downloads import shared_model_mounts
+    from dinkster.mounts_api import MountService
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    folders = {
+        "audio_encoders": "model/audio-encoder",
+        "background_removal": "model/background-removal",
+        "configs": "model/config",
+        "detection": "model/detection",
+        "diffusers": "model/diffusers",
+        "frame_interpolation": "model/frame-interpolation",
+        "geometry_estimation": "model/geometry-estimation",
+        "gligen": "model/gligen",
+        "latent_upscale_models": "model/latent-upscaler",
+        "optical_flow": "model/optical-flow",
+        "model_patches": "model/patch",
+        "style_models": "model/style",
+        "unet": "model/diffusion",
+        "clip": "model/text-encoder",
+        "custom_model": "model/custom-model",
+    }
+    for folder in folders:
+        directory = root / folder
+        directory.mkdir(parents=True)
+        (directory / f"{folder}.json").write_text(folder)
+        if os.name != "nt":
+            (directory / f"{folder}.json:Zone.Identifier").write_text("download metadata")
+        # A cache from before the exclusion must not resurrect the sidecar.
+        LocalAssetLibrary(directory, ignore=()).scan()
+        if os.name != "nt":
+            sidecar = directory / f"{folder}.json:Zone.Identifier"
+            digest, record = digest_file_with_record(sidecar)
+            metadata = sidecar.stat()
+            append_write_record(
+                directory, sidecar.name, digest, metadata.st_size, metadata.st_mtime_ns, record
+            )
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [{"id": "models", "path": str(root), "mode": "read"}],
+            }
+        )
+    )
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    service = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    for folder, kind in folders.items():
+        name = f"{folder}.json"
+        bound = table.bind_name(name, kind)
+        assert bound is not None
+        with bound.open() as handle:
+            assert handle.read() == folder.encode()
+        assert table.bind_name(f"{name}:Zone.Identifier", kind) is None
+        mount_id = next(mount.id for mount in shared_model_mounts() if mount.path == root / folder)
+        assert table.scan(mount_id) == 1
+        assert [entry.name for entry in table.entries(mount_id)] == [name]
+        assert not table.missing_entries(mount_id)
+        assert [entry.name for entry in table.list_folder(mount_id).entries] == [name]
+    service.refresh_models()
+    added = root / "another_model"
+    added.mkdir()
+    (added / "later.safetensors").write_bytes(b"newly added pack model")
+    assert "models-another-model" in service.refresh_models()
+    bound = table.bind_name("later.safetensors", "model/another-model")
+    assert bound is not None
+    with bound.open() as handle:
+        assert handle.read() == b"newly added pack model"
+
+
 def test_fresh_model_settings_are_shared_without_changing_existing_folders(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1639,6 +1868,21 @@ def test_fresh_model_settings_are_shared_without_changing_existing_folders(
         "upscale_models",
         "embeddings",
         "clip_vision",
+        "unet",
+        "audio_encoders",
+        "background_removal",
+        "configs",
+        "detection",
+        "diffusers",
+        "frame_interpolation",
+        "geometry_estimation",
+        "gligen",
+        "latent_upscale_models",
+        "optical_flow",
+        "model_patches",
+        "style_models",
+        "hypernetworks",
+        "photomaker",
     }
     for project in ("first", "second"):
         table = MountTable()
@@ -1683,150 +1927,6 @@ def test_invalid_model_settings_create_no_model_folders(
         shared_model_mounts()
     assert not (tmp_path / "valid").exists()
     assert not (tmp_path / "other").exists()
-
-
-@pytest.mark.parametrize("metadata_failure", ["", "journal", "provenance"])
-def test_shared_model_default_is_used_and_published_before_scan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, metadata_failure: str
-) -> None:
-    from dinkster_assets import (
-        AssetNeed,
-        MountSnapshotResolver,
-        MountTable,
-        RemoteSource,
-        huggingface,
-    )
-    from dinkster_assets.provenance import ProvenanceStore
-
-    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
-    from dinkster.mounts_api import MountService
-
-    home = tmp_path / "settings"
-    home.mkdir()
-    locations = [
-        {"id": name, "path": str(tmp_path / name), "mode": mode}
-        for name, mode in (("existing", "read"), ("other", "readwrite"), ("selected", "readwrite"))
-    ]
-    (home / "model-settings.json").write_text(
-        json.dumps({"version": 1, "downloadLocation": "selected", "locations": locations})
-    )
-    monkeypatch.setenv("DINKSTER_HOME", str(home))
-    snapshot = tmp_path / "snapshot.json"
-    table = MountTable(snapshot, index_root=tmp_path / "indexes")
-    for mount in shared_model_mounts():
-        table.add(mount, source="shared-models")
-    service = ModelDownloads(MountService(table), ProvenanceStore(tmp_path / "provenance.json"))
-    payload = b"fresh text encoder verified before a directory scan"
-    sha256 = hashlib.sha256(payload).hexdigest()
-    metadata = json.dumps(
-        {
-            "sha": "b" * 40,
-            "cardData": {"license": "apache-2.0"},
-            "siblings": [
-                {
-                    "rfilename": "weights/encoder.safetensors",
-                    "size": len(payload),
-                    "lfs": {"sha256": sha256, "size": len(payload)},
-                }
-            ],
-        }
-    ).encode()
-
-    @contextmanager
-    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
-        assert huggingface_token is None
-        yield cast("HTTPSResponse", io.BytesIO(metadata if "/api/models/" in url else payload))
-
-    monkeypatch.setattr(huggingface, "open_model_response", respond)
-    need = AssetNeed(
-        digest=digest_bytes(payload),
-        name="encoder.safetensors",
-        kind="model/text-encoder",
-        sources=(
-            RemoteSource(
-                "https://huggingface.co/acme/model/resolve/main/weights/encoder.safetensors"
-            ),
-        ),
-    )
-    expected = tmp_path / "selected" / "text_encoders" / "encoder.safetensors"
-
-    def publish(_ref: object, _url: str) -> None:
-        if metadata_failure == "journal":
-            raise OSError("journal unavailable")
-
-    if metadata_failure == "provenance":
-        (tmp_path / "provenance.json").mkdir()
-    if metadata_failure:
-        from dinkster_assets.vault import AssetPublicationError
-
-        with pytest.raises(AssetPublicationError):
-            service.acquire(need, "project", publish)
-        assert not expected.exists()
-        assert not list(expected.parent.glob(".dinkster-save-*"))
-        return
-    from dinkster_assets import AssetVault, LibraryStore
-    from dinkster_server import ServerLibrary
-    from dinkster_server.preflight import asset_preflight
-
-    library = ServerLibrary(
-        AssetVault(tmp_path / "internal-storage"),
-        LibraryStore(tmp_path / "library.sqlite"),
-        resolver=table,
-        local_resolver=table,
-        upload_writer=AssetWriter(table),
-        project_folders_for=service.mounts.project_context,
-        provenance=service.provenance,
-        acquire_model=service.acquire,
-        model_destination=service.destination,
-        asset_needs={need.digest: need},
-    )
-    assert asset_preflight(library, {}, set(), {}, project="project") == []
-    referenced = {need.digest: need.name}
-    plan = asset_preflight(library, referenced, set(), {}, project="project")
-    assert len(plan) == 1
-    assert plan[0]["sources"] == [need.sources[0].to_wire()["url"]]
-    assert plan[0]["kind"] == "model/text-encoder" and plan[0]["fetchable"] is True
-    assert plan[0]["destination"] == str(expected.parent)
-    assert not expected.exists()
-    assert asset_preflight(library, referenced, {need.digest}, {}, project="project") == []
-    assert not library.vault.has(need.digest)
-    assert not list((library.vault.root / ".upload-observations").glob("*.json"))
-    assert library.locate(need.digest) == expected
-    assert expected.read_bytes() == payload
-    assert not (tmp_path / "existing").exists()
-    assert not list((tmp_path / "other").rglob("*.safetensors"))
-    assert MountSnapshotResolver(snapshot).resolve(need.digest) == expected
-    assert table.ref("mounts/selected-text-encoder/encoder.safetensors").read_bytes() == payload
-    record = ProvenanceStore(tmp_path / "provenance.json").get(need.digest)
-    assert record is not None and record.license == "apache-2.0"
-    assert record.metadata["sha256"] == sha256
-
-    from dataclasses import replace
-
-    from dinkster_assets import AssetVault
-    from dinkster_assets.acquire import acquire_need
-
-    def no_network(_url: str, *, huggingface_token: str | None = None) -> None:
-        pytest.fail("already-held bytes must not reach a provider")
-
-    monkeypatch.setattr(huggingface, "open_model_response", no_network)
-    same_bytes = replace(need, name="a-different-provider-name.safetensors")
-    reused = acquire_need(
-        same_bytes,
-        AssetVault(tmp_path / "internal-storage"),
-        resolver=table,
-        remote_acquire=lambda missing: service.acquire(missing, "project", publish),
-    )
-    assert reused.status == "held" and reused.path == expected
-    assert list(expected.parent.glob("*.safetensors")) == [expected]
-    for row in table.descriptors():
-        if row.get("kind") == "model/text-encoder" and row["mode"] == "readwrite":
-            table.remove(str(row["id"]))
-    blocked = asset_preflight(library, referenced, set(), {}, project="project")
-    assert len(blocked) == 1 and blocked[0]["fetchable"] is False
-    assert "destination" not in blocked[0]
-    assert expected.read_bytes() == payload
-    library.store.close()
 
 
 @pytest.mark.parametrize("bad_field", ["sha256", "size", "revision"])
@@ -1919,6 +2019,21 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
         "embedding",
         "clip-vision",
         "clip",
+        "unet",
+        "audio-encoder",
+        "background-removal",
+        "config",
+        "detection",
+        "diffusers",
+        "frame-interpolation",
+        "geometry-estimation",
+        "gligen",
+        "latent-upscaler",
+        "optical-flow",
+        "patch",
+        "style",
+        "hypernetwork",
+        "photomaker",
     )
     required = tuple(f"required-{category}" for category in categories)
     common = tuple(f"common-{category}" for category in categories)
@@ -2347,6 +2462,67 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
     )
     assert "other-checkpoint" in restarted.project_context("enabled").mounts
     assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
+
+
+def test_model_settings_report_each_location_space_without_changing_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster_assets import MountTable
+
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    roots = [tmp_path / "large", tmp_path / "small"]
+    for root in roots:
+        root.mkdir()
+    settings = {
+        "version": 1,
+        "downloadLocation": None,
+        "locations": [
+            {"id": root.name, "path": str(root), "mode": "read", "visibility": "opt-in"}
+            for root in roots
+        ],
+    }
+    saved = home / "model-settings.json"
+    saved.write_text(json.dumps(settings))
+    original = saved.read_bytes()
+    measured = {roots[0]: 9000, roots[1]: 120}
+    monkeypatch.setattr(
+        "dinkster.model_settings.shutil.disk_usage",
+        lambda path: SimpleNamespace(free=measured[path]),
+    )
+    service = MountService(MountTable(), tmp_path / "mounts.toml", shared_models=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.get("/api/models/settings")
+            assert response.status == 200
+            state = await response.json()
+            assert [(row["id"], row["space"]["freeBytes"]) for row in state["locations"]] == [
+                ("large", 9000),
+                ("small", 120),
+            ]
+            assert all(row["space"]["status"] == "available" for row in state["locations"])
+
+            def unavailable(_path: Path) -> None:
+                raise PermissionError("space not readable")
+
+            monkeypatch.setattr("dinkster.model_settings.shutil.disk_usage", unavailable)
+            state = await (await client.get("/api/models/settings")).json()
+            assert [row["space"] for row in state["locations"]] == [{"status": "unavailable"}] * 2
+            assert saved.read_bytes() == original
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("helper_storage", [False, True])

@@ -164,6 +164,190 @@ def test_session_lifecycle_over_http() -> None:
     run_scenario(scenario())
 
 
+def test_session_titles_reach_peers_and_reconnect_without_changing_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def scenario() -> None:
+        store = SessionStore(tmp_path / "sessions.sqlite")
+        service = SessionService(store=store)
+        client = await make_authenticated_client(service)
+        owner = {"X-Principal": "alice"}
+        editor = {"X-Principal": "bob"}
+        viewer = {"X-Principal": "carol"}
+        document = board_snapshot()
+        try:
+            response = await client.post(
+                "/api/sessions",
+                headers=owner,
+                json={
+                    "scope": "team",
+                    "documentId": "board-one",
+                    "documentKind": "board",
+                    "snapshot": document,
+                    "title": "Film A",
+                },
+            )
+            assert response.status == 201
+            original = await response.json()
+            sid = original["sessionId"]
+            assert original["title"] == "Film A"
+            service.replace_acl(
+                sid,
+                principal_id="alice",
+                default_role="viewer",
+                entries={"alice": "owner", "bob": "editor"},
+            )
+            sockets = [
+                await client.ws_connect(f"/api/sessions/{sid}/events", headers=headers)
+                for headers in (owner, editor)
+            ]
+            for socket in sockets:
+                assert (await socket.receive_json())["title"] == "Film A"
+            before = service.get(sid)
+            refusal = await client.put(
+                f"/api/sessions/{sid}/title", headers=viewer, json={"title": "Not permitted"}
+            )
+            assert refusal.status == 403
+            for invalid in (None, 23, "", " \n", "x" * 201):
+                refusal = await client.put(
+                    f"/api/sessions/{sid}/title", headers=editor, json={"title": invalid}
+                )
+                assert refusal.status == 400
+            assert service.get(sid) == before
+
+            title = "Edited by Bob " + "b" * 186
+            response = await client.put(
+                f"/api/sessions/{sid}/title", headers=editor, json={"title": title}
+            )
+            assert response.status == 200
+            assert await response.json() == {**original, "title": title}
+            for socket in sockets:
+                assert await socket.receive_json() == {"type": "session_title", "title": title}
+                await socket.close()
+            listed = await (await client.get("/api/sessions?scope=team", headers=viewer)).json()
+            assert listed["sessions"] == [{**original, "title": title, "canEdit": False}]
+            original_prepare = web.WebSocketResponse.prepare
+
+            async def rename_during_handshake(
+                ws: web.WebSocketResponse, request: web.Request
+            ) -> Any:
+                result = await original_prepare(ws, request)
+                if not ws.prepared:
+                    return result
+                response = await client.put(
+                    f"/api/sessions/{sid}/title", headers=editor, json={"title": "During handshake"}
+                )
+                assert response.status == 200
+                return result
+
+            with monkeypatch.context() as patch:
+                patch.setattr(web.WebSocketResponse, "prepare", rename_during_handshake)
+                reconnected = await client.ws_connect(f"/api/sessions/{sid}/events", headers=viewer)
+                assert (await reconnected.receive_json())["title"] == "During handshake"
+            title = "During handshake"
+            await reconnected.close()
+            assert await (
+                await client.get(f"/api/sessions/{sid}/snapshot", headers=viewer)
+            ).json() == {
+                "revision": 0,
+                "document": document,
+            }
+            assert service.ops_after(sid, 0) == []
+        finally:
+            await client.close()
+            store.close()
+
+        reopened = SessionStore(tmp_path / "sessions.sqlite")
+        try:
+            restored = SessionService(store=reopened).get(sid)
+            assert restored.title == title
+            assert restored.revision == 0 and restored.snapshot == document
+        finally:
+            reopened.close()
+
+    run_scenario(scenario())
+
+
+def test_session_edit_permission_tracks_role_and_scope_without_exposing_acl() -> None:
+    class Principal(StubPrincipal):
+        def allows_in(self, scope: str, capability: str) -> bool:
+            return not (self.principal_id == "read-only" and capability == "sessions:write")
+
+    async def scenario() -> None:
+        client = await make_client(
+            principal_for=lambda request: Principal(request.headers["X-Principal"]),
+            resolve_scope=lambda _principal, _capability, explicit: str(explicit or "team"),
+        )
+        owner = {"X-Principal": "alice"}
+        editor = {"X-Principal": "bob"}
+        reader = {"X-Principal": "read-only"}
+        try:
+            response = await client.post(
+                "/api/sessions",
+                headers=owner,
+                json={
+                    "scope": "team",
+                    "documentId": "board-one",
+                    "documentKind": "board",
+                    "snapshot": board_snapshot(),
+                },
+            )
+            original = await response.json()
+            assert response.status == 201 and original["canEdit"] is True
+            sid = original["sessionId"]
+            sockets = [
+                await client.ws_connect(f"/api/sessions/{sid}/events", headers=headers)
+                for headers in (editor, reader)
+            ]
+            for socket, allowed in zip(sockets, (True, False), strict=True):
+                assert (await socket.receive_json())["canEdit"] is allowed
+            for role, allowed in (("viewer", False), ("editor", True)):
+                response = await client.put(
+                    f"/api/sessions/{sid}/acl",
+                    headers=owner,
+                    json={
+                        "defaultRole": "viewer",
+                        "entries": {"alice": "owner", "bob": role, "read-only": "editor"},
+                    },
+                )
+                assert response.status == 200
+                for socket, permitted in zip(sockets, (allowed, False), strict=True):
+                    assert await socket.receive_json() == {
+                        "type": "session_permissions",
+                        "canEdit": permitted,
+                    }
+                for headers, permitted in ((editor, allowed), (reader, False)):
+                    descriptor = await (
+                        await client.get(f"/api/sessions/{sid}", headers=headers)
+                    ).json()
+                    assert descriptor == {**original, "canEdit": permitted}
+                    listed = await (
+                        await client.get("/api/sessions?scope=team", headers=headers)
+                    ).json()
+                    assert listed["sessions"] == [descriptor]
+                renamed = await client.put(
+                    f"/api/sessions/{sid}/title", headers=editor, json={"title": "Bob's Board"}
+                )
+                assert renamed.status == (200 if allowed else 403)
+                if allowed:
+                    assert (await renamed.json())["canEdit"] is True
+                    for socket in sockets:
+                        assert await socket.receive_json() == {
+                            "type": "session_title",
+                            "title": "Bob's Board",
+                        }
+                refused = await client.put(
+                    f"/api/sessions/{sid}/title", headers=reader, json={"title": "Forbidden"}
+                )
+                assert refused.status == 404
+            for socket in sockets:
+                await socket.close()
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_image_session_kind_and_snapshot_validation_over_http() -> None:
     def validator(document_kind: str, document_id: str, snapshot: object) -> str | None:
         if document_kind == "image" and snapshot != {"lineage": document_id}:

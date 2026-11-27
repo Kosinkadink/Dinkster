@@ -1201,6 +1201,7 @@ def _installed_pack_spec(
         docs=manifest_info.docs,
         locale_catalogs=manifest_info.locale_catalogs,
         templates=manifest_info.templates,
+        network_origins=manifest_info.network_origins,
     )
     return PackSpec(
         manifest=manifest,
@@ -2847,6 +2848,13 @@ class ServingComposer:
         network_requesters = frozenset(
             canonical_name(manifest.name) for manifest in manifests if manifest.sandbox.network
         )
+        network_grants = dict(self._sandbox_network_grants)
+        for manifest in manifests:
+            name = canonical_name(manifest.name)
+            network_grants[name] = (
+                *network_grants.get(name, ()),
+                *manifest.sandbox.network_origins,
+            )
         if any(manifest.sandbox.writable_mounts for manifest in manifests):
             writable_mounts = {
                 os.path.realpath(os.path.abspath(path)) for path in self._sandbox_writable_mounts
@@ -2891,9 +2899,7 @@ class ServingComposer:
         missing_network_grants = {
             requester
             for requester in network_requesters
-            if not global_egress
-            and not implicit_egress
-            and not self._sandbox_network_grants.get(requester)
+            if not global_egress and not implicit_egress and not network_grants.get(requester)
         }
         if missing_network_grants:
             denied = ", ".join(
@@ -2915,7 +2921,7 @@ class ServingComposer:
                     *(
                         origin
                         for requester in sorted(network_requesters)
-                        for origin in self._sandbox_network_grants.get(requester, ())
+                        for origin in network_grants.get(requester, ())
                     ),
                 )
             )

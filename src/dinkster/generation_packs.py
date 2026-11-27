@@ -108,6 +108,38 @@ def _validate_execution_locks(generation: Path, manifest: PackManifest) -> None:
         )
 
 
+def generation_pack_metadata(generation: Path) -> list[dict[str, object]]:
+    """Read installed requests without importing pack code or provisioning workers."""
+    from .packs import pack_info_from_manifest
+
+    generation = generation.resolve()
+    lock = Lockfile.from_record_json((generation / "dinkster.lock").read_text(encoding="utf-8"))
+    rows: list[dict[str, object]] = []
+    for entry in lock.packs:
+        row: dict[str, object] = {
+            "pack": entry.pack,
+            "version": entry.version,
+            "displayName": entry.pack,
+            "available": False,
+            "networkOrigins": None,
+        }
+        try:
+            root = generation / "pack-sources" / entry.pack
+            if not root.resolve().is_relative_to(generation / "pack-sources"):
+                raise CompositionError(f"snapshot pack {entry.pack!r} source escapes snapshot")
+            manifest = _manifest(root, entry)
+            info = pack_info_from_manifest(manifest)
+            row.update(
+                displayName=info.display_name,
+                available=True,
+                networkOrigins=list(info.network_origins),
+            )
+        except (OSError, ValueError, ManifestError, CompositionError) as exc:
+            row["message"] = str(exc)
+        rows.append(row)
+    return rows
+
+
 def stage_generation_packs(generation: Path, lock: Lockfile, artifacts: Mapping[str, Path]) -> None:
     """Admit verified sources after dependency rebuild, before the owner seals the target."""
     if any(

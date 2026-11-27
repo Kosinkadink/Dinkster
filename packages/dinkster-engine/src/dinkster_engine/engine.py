@@ -68,6 +68,7 @@ from dinkster_protocol import (
     CachedResult,
     CacheStore,
     CurrentOutputRef,
+    ErrorHint,
     ExportSnapshot,
     ExtensionSnapshot,
     ExternalOutputRef,
@@ -590,6 +591,9 @@ class Engine:
         self._run_prepared_types: dict[str, set[str]] = {}
         self._run_prepare_locks: dict[str, asyncio.Lock] = {}
         self._run_blocked_origins: dict[str, set[str]] = {}
+        self._run_network_problems: dict[
+            str, dict[tuple[str, str | None], dict[str, ErrorHint]]
+        ] = {}
         self._run_expansion_origins: dict[str, dict[str, tuple[str, str]]] = {}
         self._compiling_run_ids: set[str] = set()
 
@@ -868,6 +872,73 @@ class Engine:
         it as a node_event with run/node provenance the worker cannot know.
         The blob rides in detail as bytes - listeners that serialize to JSON
         must lift it out (the server's binary frame path does)."""
+        if event.name == "sandbox-network-denied":
+            pack = event.data.get("pack")
+            origin = event.data.get("origin")
+            raw_candidates = event.data.get("nodeIds")
+            candidates = (
+                tuple(
+                    node
+                    for node in cast("Sequence[object]", raw_candidates)
+                    if isinstance(node, str)
+                )
+                if isinstance(raw_candidates, (list, tuple))
+                else (node_id,)
+            )
+            problems = self._run_network_problems.get(run_id)
+            if (
+                not isinstance(pack, str)
+                or (origin is not None and not isinstance(origin, str))
+                or problems is None
+            ):
+                return
+            reported = problems.setdefault((pack, origin), {})
+            if node_id in reported:
+                return
+            attribution = "This node"
+            if len(candidates) > 1:
+                attribution = f"One of these nodes ({', '.join(candidates)})"
+            raw_packs = event.data.get("candidatePacks")
+            packs = (
+                tuple(name for name in cast("Sequence[object]", raw_packs) if isinstance(name, str))
+                if isinstance(raw_packs, (list, tuple))
+                else (pack,)
+            )
+            pack_detail = f"sandboxed pack {pack!r}"
+            if len(packs) > 1:
+                pack_detail = f"sandboxed packs {', '.join(repr(name) for name in packs)}"
+            hint = ErrorHint(
+                "sandbox-network-denied",
+                f"{attribution} in {pack_detail} was refused access to {origin}."
+                if origin is not None
+                else (
+                    f"{attribution} in {pack_detail} was refused internet access; "
+                    "destination unknown."
+                ),
+            )
+            reported[node_id] = hint
+            self._emit(
+                EngineEvent(
+                    "value_diagnostics",
+                    run_id,
+                    node_id,
+                    {
+                        "diagnostics": [
+                            {
+                                "severity": "warning",
+                                "code": hint.code,
+                                "message": hint.message,
+                                "nodeId": node_id,
+                                "pack": pack,
+                                "origin": origin,
+                                "candidateNodeIds": candidates,
+                                "candidatePacks": packs,
+                            }
+                        ]
+                    },
+                )
+            )
+            return
         detail: dict[str, object] = {"name": event.name, "data": dict(event.data)}
         if event.blob is not None:
             detail["blob"] = event.blob
@@ -2087,6 +2158,12 @@ class Engine:
             duration_ms = (time.perf_counter() - started) * 1000.0
 
             if result.error is not None:
+                network_hints = tuple(
+                    nodes[label]
+                    for nodes in self._run_network_problems[run_id].values()
+                    if label in nodes
+                )
+                error = replace(result.error, hints=(*result.error.hints, *network_hints))
                 self._emit(
                     EngineEvent(
                         "node_failed",
@@ -2095,11 +2172,11 @@ class Engine:
                         self._execution_detail(
                             label,
                             selection,
-                            message=result.error.message,
+                            message=error.message,
                         ),
                     )
                 )
-                raise ExecutionError(result.error)
+                raise ExecutionError(error)
             if result.artifact_candidates:
                 message = (
                     "untrusted saved artifact candidates reached the engine without host validation"
@@ -3409,6 +3486,7 @@ class Engine:
         self._run_prepared_types[run_id] = set()
         self._run_prepare_locks[run_id] = asyncio.Lock()
         self._run_blocked_origins[run_id] = set()
+        self._run_network_problems[run_id] = {}
         self._run_expansion_origins[run_id] = {}
         if preview_policy is not None:
             self._run_preview_policy[run_id] = preview_policy
@@ -3519,7 +3597,12 @@ class Engine:
                 outputs=outputs,
                 executed=tuple(executed),
                 cached=tuple(cached),
-                diagnostics=tuple(diagnostics),
+                diagnostics=tuple(diagnostics)
+                + tuple(
+                    Diagnostic("warning", hint.code, hint.message, node_id)
+                    for nodes in self._run_network_problems[run_id].values()
+                    for node_id, hint in nodes.items()
+                ),
                 skipped=tuple(skipped),
                 artifacts=tuple(self._run_artifacts[run_id]),
             )
@@ -3534,6 +3617,7 @@ class Engine:
             self._run_prepared_types.pop(run_id, None)
             self._run_prepare_locks.pop(run_id, None)
             self._run_blocked_origins.pop(run_id, None)
+            self._run_network_problems.pop(run_id, None)
             self._run_expansion_origins.pop(run_id, None)
             _execution_runtime.reset(runtime_token)
             try:

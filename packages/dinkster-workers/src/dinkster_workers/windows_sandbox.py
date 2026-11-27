@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from ._pipe_transport import bridge_process, pipe_command
 from .egress import EGRESS_PROXY_ENV, EgressProxy
 from .interpreter import module_command
-from .launch import HOST_OWNED_ENVIRONMENT, LaunchSpec
+from .launch import HOST_OWNED_ENVIRONMENT, SANDBOX_NETWORK_ENV, LaunchSpec
 from .sandbox import (
     SandboxError,
     SandboxPolicy,
@@ -164,6 +164,7 @@ def build_windows_policy(
         environment.update(
             {EGRESS_PROXY_ENV: proxy_url, "HTTP_PROXY": proxy_url, "HTTPS_PROXY": proxy_url}
         )
+    environment[SANDBOX_NETWORK_ENV] = "1"
     return {
         "version": "1.0.0",
         "containment": "processcontainer",
@@ -278,7 +279,9 @@ class WindowsProcessLauncher:
         try:
             if self.policy.egress_allowlist:
                 proxy = await EgressProxy.start_tcp(
-                    self.policy.egress_allowlist, secrets.token_hex(32)
+                    self.policy.egress_allowlist,
+                    secrets.token_hex(32),
+                    on_denied=spec.on_network_denied,
                 )
             configuration, endpoints = build_windows_policy(
                 spec, self.policy, proxy_url=proxy.url if proxy is not None else None

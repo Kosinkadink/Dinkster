@@ -134,8 +134,9 @@
   updates return their owner; project-filtered library browsing selects only
   that owner's workflows, and its cursor binds the project and media type.
 - Saved workflows can belong to a project; putting one in another project
-  requires a copy. Project pack needs combine packs actually used by saved
-  workflows with explicitly added packs. Engines recompute needs from verified
+  requires a copy. New and Default projects enable every installed pack unless
+  the user explicitly selects a narrower set. Project pack needs combine packs
+  actually used by saved workflows with the selected packs. Engines recompute needs from verified
   workflow bytes, using saved node attribution or installed host attribution for
   unstamped nodes. Unrecognized workflows remain unknown rather than guessed.
   Project needs also report the running environment's installed pack IDs and

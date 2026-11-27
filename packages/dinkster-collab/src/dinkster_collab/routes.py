@@ -7,10 +7,13 @@ Surface (all JSON; scope discipline mirrors /api/history - explicit
 non-empty scope, single-user mode is the reserved scope "local"):
 
 - POST   /api/sessions                    open a session:
-                                          {scope, documentId, documentKind?, snapshot}
+                                          {scope, documentId, documentKind?, snapshot, title?}
                                           -> 201 session descriptor
 - GET    /api/sessions?scope=             list one scope's sessions
 - GET    /api/sessions/{sessionId}        session descriptor; 404 gone
+- PUT    /api/sessions/{sessionId}/title  replace {title}, editor required;
+                                          descriptor response, session_title
+                                          event to all subscribers
 - DELETE /api/sessions/{sessionId}        close (session_closed to
                                           subscribers, sockets closed;
                                           owner role required)
@@ -178,6 +181,7 @@ class _Subscriber:
     sender: asyncio.Task[None]
     principal_id: str
     authorized: Callable[[], bool]
+    can_edit: Callable[[], bool]
     authorization_reason: Callable[[], str] = lambda: "authorization-expired"
 
 
@@ -297,7 +301,8 @@ async def _json_body(request: web.Request) -> dict[str, Any]:
     return cast(dict[str, Any], body)
 
 
-def _session_wire(session: DocumentSession) -> dict[str, object]:
+def _session_wire(session: DocumentSession, request: web.Request) -> dict[str, object]:
+    principal = _principal(request)
     return {
         "protocolVersion": PROTOCOL_VERSION,
         "sessionId": session.session_id,
@@ -307,6 +312,11 @@ def _session_wire(session: DocumentSession) -> dict[str, object]:
         "revision": session.revision,
         "snapshotRevision": session.snapshot_revision,
         "createdAt": session.created_at,
+        "canEdit": principal.allows_in(session.scope, "sessions:write")
+        and _can_access(
+            request.app[SESSIONS_KEY], session.session_id, principal.principal_id, "editor"
+        ),
+        **({"title": session.title} if session.title is not None else {}),
     }
 
 
@@ -360,7 +370,7 @@ def _can_access(
 ) -> bool:
     try:
         service.require_role(session_id, principal_id, minimum_role)
-    except SessionRoleError:
+    except (SessionRoleError, UnknownSessionError):
         return False
     return True
 
@@ -436,6 +446,8 @@ async def handle_create_session(request: web.Request) -> web.Response:
         raise _bad_request(f"'documentKind' must be one of {list(DOCUMENT_KINDS)}")
     if "snapshot" not in body:
         raise _bad_request("'snapshot' is required (the document at revision 0)")
+    if "title" in body and not isinstance(body["title"], str):
+        raise _bad_request("'title' must be a string")
     try:
         session = service.create(
             scope=scope,
@@ -443,10 +455,11 @@ async def handle_create_session(request: web.Request) -> web.Response:
             document_kind=document_kind,
             snapshot=body["snapshot"],
             principal_id=_principal(request).principal_id,
+            title=body.get("title"),
         )
     except ValueError as exc:
         raise _bad_request(str(exc)) from exc
-    return web.json_response(_session_wire(session), status=201)
+    return web.json_response(_session_wire(session, request), status=201)
 
 
 async def handle_list_sessions(request: web.Request) -> web.Response:
@@ -465,7 +478,7 @@ async def handle_list_sessions(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "sessions": [
-                _session_wire(session)
+                _session_wire(session, request)
                 for scope in scopes
                 for session in service.sessions(scope)
                 if _can_access(service, session.session_id, principal.principal_id, "viewer")
@@ -476,7 +489,24 @@ async def handle_list_sessions(request: web.Request) -> web.Response:
 
 async def handle_get_session(request: web.Request) -> web.Response:
     session = _get_session(request.app[SESSIONS_KEY], request, "sessions:read", "viewer")
-    return web.json_response(_session_wire(session))
+    return web.json_response(_session_wire(session, request))
+
+
+async def handle_put_title(request: web.Request) -> web.Response:
+    service = request.app[SESSIONS_KEY]
+    body = await _json_body(request)
+    session = _get_session(service, request, "sessions:write", "editor")
+    title = body.get("title")
+    if not isinstance(title, str):
+        raise _bad_request("'title' must be a string")
+    try:
+        updated = service.rename(
+            session.session_id, title, principal_id=_principal(request).principal_id
+        )
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
+    await _broadcast(request, session.session_id, {"type": "session_title", "title": updated.title})
+    return web.json_response(_session_wire(updated, request))
 
 
 async def handle_close_session(request: web.Request) -> web.Response:
@@ -674,6 +704,11 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
     # Capture before registration. Appends may run while ws.prepare
     # yields; the replay below closes that window before live delivery.
     captured_revision = session.revision
+    try:
+        # Titles have no operation log to replay after the handshake.
+        session.title = service.get(session.session_id).title
+    except UnknownSessionError:
+        pass
     # Registration, the descriptor frame, the gap-free replay, and the
     # closed-in-the-window check form ONE synchronous block - no awaits -
     # so a concurrent DELETE is strictly ordered against it: running
@@ -692,6 +727,10 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
         sender=placeholder,
         principal_id=principal_id,
         authorized=lambda: _principal(request).allows_in(session.scope, "sessions:read"),
+        can_edit=lambda: (
+            _principal(request).allows_in(session.scope, "sessions:write")
+            and _can_access(service, session.session_id, principal_id, "editor")
+        ),
         authorization_reason=lambda: (
             (
                 f"delegation-revoked:{getattr(_principal(request), 'delegation_id', '')}"
@@ -703,7 +742,7 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
     )
     subscriber.sender = asyncio.create_task(_send_frames(subscriber, subscribers))
     subscribers.add(subscriber)
-    queue.put_nowait(json.dumps({"type": "session", **_session_wire(session)}))
+    queue.put_nowait(json.dumps({"type": "session", **_session_wire(session, request)}))
     closed_in_window = False
     try:
         try:
@@ -852,10 +891,17 @@ async def handle_put_acl(request: web.Request) -> web.Response:
         return _error(409, {"error": "acl-invalid", "message": str(exc)})
     subscribers = request.app[_SUBSCRIBERS_KEY].get(session.session_id, set())
     for subscriber in list(subscribers):
-        if not _can_access(service, session.session_id, subscriber.principal_id, "viewer"):
-            subscribers.discard(subscriber)
-            subscriber.sender.cancel()
-            asyncio.create_task(subscriber.ws.close())
+        if _can_access(service, session.session_id, subscriber.principal_id, "viewer"):
+            try:
+                subscriber.queue.put_nowait(
+                    json.dumps({"type": "session_permissions", "canEdit": subscriber.can_edit()})
+                )
+                continue
+            except asyncio.QueueFull:
+                pass
+        subscribers.discard(subscriber)
+        subscriber.sender.cancel()
+        asyncio.create_task(subscriber.ws.close())
     return web.json_response({"defaultRole": updated.default_role, "entries": updated.acl})
 
 
@@ -884,6 +930,7 @@ def add_session_routes(
     app.router.add_get("/api/sessions", handle_list_sessions)
     app.router.add_get("/api/sessions/{session_id}", handle_get_session)
     app.router.add_delete("/api/sessions/{session_id}", handle_close_session)
+    app.router.add_put("/api/sessions/{session_id}/title", handle_put_title)
     app.router.add_get("/api/sessions/{session_id}/acl", handle_get_acl)
     app.router.add_put("/api/sessions/{session_id}/acl", handle_put_acl)
     app.router.add_post("/api/sessions/{session_id}/actors", handle_bind_actor)
