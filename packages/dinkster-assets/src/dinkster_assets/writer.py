@@ -50,6 +50,7 @@ from .integrity import digest_file_with_record, verification_record_for_publicat
 from .library import INDEX_NAME, append_write_record, load_write_records
 from .model import AssetRef, model_is_hidden
 from .mounts import MOUNT_NAMESPACE, ModelFileSelection
+from .privacy import SecretOutputStream, check_secret_text
 from .revision import open_local_file, windows_file_revision
 from .save_target import SaveTarget, coerce_save_target
 
@@ -674,6 +675,8 @@ class AssetWriter:
     def _writable_folder(
         self, parsed: SaveTarget, *, expected_root: Path | None = None
     ) -> tuple[Path, Path]:
+        check_secret_text(parsed.prefix)
+        check_secret_text(parsed.mount or "")
         root = self._authority.writable_root(_mount(parsed))
         if expected_root is not None and root.resolve() != expected_root.resolve():
             raise AssetError(f"mount {parsed.mount!r} changed its root during batch save")
@@ -704,8 +707,11 @@ class AssetWriter:
         expected_digest: str = "",
         progress: Callable[[str, int], None] | None = None,
     ) -> tuple[AssetRef, int]:
-        root, folder = self._writable_folder(parsed, expected_root=expected_root)
         stem = parsed.stem if stem is None else stem
+        for text in (parsed.prefix, parsed.mount or "", stem, suffix, media_type):
+            check_secret_text(text)
+        guard = SecretOutputStream()
+        root, folder = self._writable_folder(parsed, expected_root=expected_root)
         tmp = folder / f".dinkster-save-{uuid.uuid4().hex}"
         final: Path | None = None
         used_counter: int | None = None
@@ -733,9 +739,10 @@ class AssetWriter:
                     hasher.update(chunk)
                     if provider_hasher is not None:
                         provider_hasher.update(chunk)
-                    output.write(chunk)
+                    output.write(guard.write(chunk))
                     if progress is not None:
                         progress("downloading", size)
+                output.write(guard.finish())
                 if progress is not None:
                     progress("verifying", size)
                 output.flush()
