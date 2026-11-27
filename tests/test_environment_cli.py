@@ -2219,6 +2219,84 @@ def test_installation_cancellation_rolls_back_candidate_and_preserves_previous_s
             assert _run(root, "stop", "--yes")[0] == 0
 
 
+@pytest.mark.parametrize("operation", ["restore", "restore-previous"])
+@pytest.mark.parametrize("cancel_stage", ["building-installation", "checking-restore"])
+def test_restore_cancellation_recovers_before_reporting_and_can_be_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    operation: str,
+    cancel_stage: str,
+) -> None:
+    from dinkster_supervisor import environment, environment_restore
+    from dinkster_supervisor.environment_history import history
+    from dinkster_supervisor.environment_runtime import engine_status
+
+    from tests.fixtures.environments.build import build
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, store = tmp_path / "installation", tmp_path / "store"
+    progress = tmp_path / "progress.json"
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "library"))
+    code, installed = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--port",
+        str(free_port()),
+        "--yes",
+    )
+    assert code == 0, installed
+    try:
+        (Path(fixture["mirror"]) / "channels/nightly.json").write_bytes(
+            Path(fixture["updatedChannel"]).read_bytes()
+        )
+        code, updated = _run(root, "update", "--yes")
+        assert code == 0 and updated["current"] == 2, updated
+        settings = (root / "environment.json").read_bytes()
+        previous = (root / "builds/2/build.json").read_bytes()
+        entries, engines = history(root), list(engine_status(root))
+        observe = environment_restore.preparation_progress
+        checks = 0
+
+        def cancel(stage: str, completed: int = 0, total: int = 0) -> None:
+            nonlocal checks
+            if stage == "checking-restore":
+                checks += 1
+            if stage == cancel_stage and (stage != "checking-restore" or checks == 2):
+                progress.with_name(progress.name + ".cancel").touch()
+            observe(stage, completed, total)
+
+        monkeypatch.setattr(environment_restore, "preparation_progress", cancel)
+        command = [operation, *(["1"] if operation == "restore" else [])]
+        args = environment.argument_parser().parse_args(
+            ["--root", str(root), *command, "--progress", str(progress), "--yes", "--json"]
+        )
+        assert environment.run(args) == 1
+        result = json.loads(capsys.readouterr().out)
+        assert result["status"] == "cancelled" and result["error"] == f"{operation} cancelled"
+        assert (root / "current").read_text() == "2\n"
+        assert (root / "environment.json").read_bytes() == settings
+        assert (root / "builds/2/build.json").read_bytes() == previous
+        assert history(root) == entries and list(engine_status(root)) == engines
+        assert not (root / "builds/3").exists()
+        assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).stage == "rolled-back"
+        progress.with_name(progress.name + ".cancel").unlink()
+        code, restored = _run(root, *command, "--progress", str(progress), "--yes")
+        assert code == 0 and restored["current"] == 3, restored
+        assert history(root)[-1]["snapshot"] == entries[0]["snapshot"]
+        assert json.loads(progress.read_text())["sequence"] > 1
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
+
+
 def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ):

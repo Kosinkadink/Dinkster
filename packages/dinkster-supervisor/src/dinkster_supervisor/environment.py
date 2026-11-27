@@ -2756,6 +2756,10 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     )
     restore = commands.add_parser("restore", help="rebuild a recorded software snapshot")
     restore.add_argument("entry", type=int)
+    for command in (rollback, restore):
+        command.add_argument(
+            "--progress", type=Path, help="observe progress; sibling .cancel requests cancellation"
+        )
     fork = commands.add_parser("fork", help="rebuild a snapshot in a new stopped environment")
     fork.add_argument("entry", type=int)
     fork.add_argument("destination", type=Path)
@@ -2900,9 +2904,14 @@ def _run(args: argparse.Namespace) -> int:
             from .environment_runtime import run_generation
 
             return run_generation(args.root, args.command)
-        if args.operation in {"packs-plan", "setup", "update"} or (
-            args.operation == "security" and args.security_action in {"fix-one", "fix-all"}
-        ):
+        if args.operation in {
+            "packs-plan",
+            "setup",
+            "update",
+            "restore",
+            "restore-previous",
+            "rollback",
+        } or (args.operation == "security" and args.security_action in {"fix-one", "fix-all"}):
             sequence = 0
             last_write = 0.0
             last_stage = ""
@@ -2912,9 +2921,9 @@ def _run(args: argparse.Namespace) -> int:
                 sequence += 1
                 if args.progress is not None:
                     if args.progress.with_name(args.progress.name + ".cancel").exists():
-                        if args.operation in {"setup", "update"}:
-                            raise PreparationCancelled(f"{args.operation} cancelled")
-                        raise EnvironmentError("pack preparation cancelled")
+                        if args.operation in {"packs-plan", "security"}:
+                            raise EnvironmentError("pack preparation cancelled")
+                        raise PreparationCancelled(f"{args.operation} cancelled")
                     now = monotonic()
                     if stage == last_stage and now - last_write < 0.25 and completed != total:
                         return
@@ -2936,6 +2945,13 @@ def _run(args: argparse.Namespace) -> int:
                     preparation_progress(f"planning-{args.operation}")
                     with acquired_source_engine(args) as selected:
                         code = _install(selected, result)
+                elif args.operation in {"restore", "restore-previous", "rollback"}:
+                    preparation_progress(f"planning-{args.operation}")
+                    code = (
+                        _restore(args, result, args.entry)
+                        if args.operation == "restore"
+                        else _rollback(args, result)
+                    )
                 elif args.operation == "security":
                     code = _security(args, result)
                 else:
@@ -2974,9 +2990,7 @@ def _run(args: argparse.Namespace) -> int:
 
             with acquired_development_sources(args) as selected:
                 code = _install(selected, result)
-        elif args.operation in {"restore-previous", "rollback"}:
-            code = _rollback(args, result)
-        elif args.operation in {"restore", "fork"}:
+        elif args.operation == "fork":
             code = _restore(args, result, args.entry)
         elif args.operation == "import":
             code = _import(args, result)
