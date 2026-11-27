@@ -27,10 +27,10 @@ from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_library import LibraryClient, LibraryError
 from dinkster_protocol import SavedArtifact
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -61,8 +61,7 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -75,8 +74,7 @@ class Boom(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.boom",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -587,6 +585,45 @@ def test_terminal_jobs_are_recorded_with_source_document(tmp_path: Path) -> None
     run_scenario(scenario())
 
 
+def test_runs_keep_the_workflow_name_they_were_submitted_under(tmp_path: Path) -> None:
+    """The name sent with a run is echoed on the job and kept in its history
+    record; a later run under a new name leaves the earlier record as it was,
+    and a run sent without a name has none."""
+
+    async def scenario() -> None:
+        client, _store = await make_client(tmp_path)
+        try:
+            graph = Graph(nodes={"e": GraphNode("test.echo", {"text": "hi"})})
+            resp = await client.post(
+                "/api/jobs", json=submit_body(graph, ["e"], workflowName="  Portrait pass  ")
+            )
+            assert resp.status == 202
+            assert (await resp.json())["workflowName"] == "Portrait pass"
+            first = (await wait_for_history(client, count=1))[0]
+            assert first["workflowName"] == "Portrait pass"
+
+            # The workflow is renamed and run again: the first run keeps its name.
+            renamed = submit_body(graph, ["e"], jobId="j2", workflowName="Portrait final")
+            assert (await client.post("/api/jobs", json=renamed)).status == 202
+            unnamed = submit_body(graph, ["e"], jobId="j3")
+            resp = await client.post("/api/jobs", json=unnamed)
+            assert resp.status == 202
+            assert "workflowName" not in await resp.json()
+            by_job = {r["jobId"]: r for r in await wait_for_history(client, count=3)}
+            assert by_job["j2"]["workflowName"] == "Portrait final"
+            assert "workflowName" not in by_job["j3"]
+            resp = await client.get(f"/api/history/{first['runId']}", params={"scope": "local"})
+            assert (await resp.json())["workflowName"] == "Portrait pass"
+
+            for bad in (7, "x" * 1025):
+                body = submit_body(graph, ["e"], jobId="bad", workflowName=bad)
+                assert (await client.post("/api/jobs", json=body)).status == 400
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_history_endpoint_query_contract(tmp_path: Path) -> None:
     """Query-first paging: scope required, cursor bound to its query,
     tampering is a loud 400."""
@@ -789,7 +826,7 @@ def test_recover_interrupted_distinguishes_queued_from_running(tmp_path: Path) -
     db = tmp_path / "history.sqlite"
     store = HistoryStore(db)
     execution = make_engine().pin_execution()
-    queued = make_job("r-queued")
+    queued = make_job("r-queued", workflow_name="Queued flow")
     started = make_job("r-started", execution=execution)
     store.job_accepted(queued)
     store.job_accepted(started)
@@ -810,6 +847,8 @@ def test_recover_interrupted_distinguishes_queued_from_running(tmp_path: Path) -
     assert "before this job started" in q.error["message"]
     assert "resubmit" in q.error["message"]
     assert q.error["fingerprint"] == "fp-r-queued"
+    assert q.workflow_name == "Queued flow"
+    assert q.to_wire()["workflowName"] == "Queued flow"
     s = by_run["r-started"]
     assert s.state == "interrupted"
     assert s.started_at == 9.0
@@ -818,12 +857,40 @@ def test_recover_interrupted_distinguishes_queued_from_running(tmp_path: Path) -
     assert "while this job was running" in s.error["message"]
     assert s.error["extensionSnapshotDigest"] == execution.extension_snapshot_digest
     assert "extensionSnapshotDigest" not in q.error  # no pinned execution recorded
+    assert s.workflow_name == "" and "workflowName" not in s.to_wire()
     # Served through the existing query surface, no new API needed.
     listed = reopened.query("local", state="interrupted")
     assert {r.run_id for r in listed} == {"r-queued", "r-started"}
     # Idempotent: the sweep consumed the table.
     assert reopened.recover_interrupted() == ()
     assert read_accepted(db) == []
+    reopened.close()
+
+
+def test_stores_from_before_workflow_names_read_and_record_runs_without_one(
+    tmp_path: Path,
+) -> None:
+    """History and accepted tables written before workflow names existed gain
+    the column on open: their runs read as unnamed, and new runs keep names."""
+    db = tmp_path / "history.sqlite"
+    store = HistoryStore(db)
+    store.put(make_record("old"))
+    store.job_accepted(make_job("old-queued"))
+    store.close()
+    conn = sqlite3.connect(str(db))
+    with conn:
+        conn.execute("ALTER TABLE history DROP COLUMN workflow_name")
+        conn.execute("ALTER TABLE accepted DROP COLUMN workflow_name")
+    conn.close()
+
+    reopened = HistoryStore(db)
+    old = reopened.get("local", "old")
+    assert old is not None and "workflowName" not in old.to_wire()
+    (recovered,) = reopened.recover_interrupted()
+    assert recovered.run_id == "old-queued" and "workflowName" not in recovered.to_wire()
+    reopened.put(make_record("new", workflow_name="New flow"))
+    new = reopened.get("local", "new")
+    assert new is not None and new.to_wire()["workflowName"] == "New flow"
     reopened.close()
 
 
@@ -881,7 +948,9 @@ def test_helper_history_keeps_engine_work_until_publication_and_never_resurrects
             skipped=1,
             node_receipts=({"nodeId": "sample", "disposition": "cached"},),
             asset_digests=(SOURCE_DIGEST,),
+            workflow_name="Rich flow",
         )
+        assert rich.to_wire()["workflowName"] == "Rich flow"
         raw = dict(rich.to_wire(), assetDigests=[SOURCE_DIGEST], futureField={"keep": True})
         first.call("history.append", scope="local", record=raw)
         assert peer.get("local", "rich") == rich

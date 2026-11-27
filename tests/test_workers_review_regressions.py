@@ -16,10 +16,10 @@ from dinkster_protocol import (
     LazyStatusInvocation,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -48,7 +48,7 @@ class SlowSyncNode(Node):
             node_type="review.slow",
             display_name="Slow",
             category="test",
-            outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+            body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
         )
 
     @classmethod
@@ -64,8 +64,7 @@ class ComboListAdmissionNode(Node):
         combo_list = TypeExpr.list_of(TypeExpr.concrete(CORE_COMBO))
         return NodeSchema(
             node_type="review.combo_list_admission",
-            inputs=(InputSpec("values", combo_list),),
-            outputs=(OutputSpec("values", combo_list),),
+            body=(Input("values", combo_list), Output("values", combo_list)),
         )
 
     @classmethod
@@ -79,7 +78,7 @@ class ExecutionContextProbe(Node):
         string = TypeExpr.concrete(CORE_STRING)
         return NodeSchema(
             node_type="review.execution_context",
-            outputs=(OutputSpec("value", string),),
+            body=(Output("value", string),),
         )
 
     @classmethod
@@ -195,11 +194,11 @@ def test_async_lazy_hooks_await_in_pack_and_execution_contexts() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.async-lazy",
-                inputs=(
-                    InputSpec("selector", TypeExpr.concrete(CORE_BOOLEAN)),
-                    InputSpec("value", TypeExpr.concrete(CORE_INT), lazy=True),
+                body=(
+                    Input("selector", TypeExpr.concrete(CORE_BOOLEAN)),
+                    Input("value", TypeExpr.concrete(CORE_INT), lazy=True),
+                    Output("value", TypeExpr.concrete(CORE_INT)),
                 ),
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_INT)),),
             )
 
         @classmethod

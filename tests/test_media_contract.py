@@ -11,10 +11,10 @@ from dinkster_engine import Engine
 from dinkster_engine.events import EngineEvent
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -44,7 +44,7 @@ MASK = TypeExpr.concrete("MASK")
 class AlphaSource(Node):
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type="test.alpha-source", outputs=(OutputSpec("image", IMAGE),))
+        return NodeSchema(node_type="test.alpha-source", body=(Output("image", IMAGE),))
 
     @classmethod
     def execute(cls):
@@ -56,8 +56,7 @@ class AlphaDrop(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="test.alpha-drop",
-            inputs=(InputSpec("image", IMAGE),),
-            outputs=(OutputSpec("image", IMAGE),),
+            body=(Input("image", IMAGE), Output("image", IMAGE)),
         )
 
     @classmethod
@@ -131,7 +130,7 @@ def test_heterogeneous_list_alpha_loss_is_reported_and_cached(nested: bool) -> N
         @classmethod
         def define_schema(cls):
             return NodeSchema(
-                node_type="test.mixed-alpha-source", outputs=(OutputSpec("image", input_type),)
+                node_type="test.mixed-alpha-source", body=(Output("image", input_type),)
             )
 
         @classmethod
@@ -144,8 +143,10 @@ def test_heterogeneous_list_alpha_loss_is_reported_and_cached(nested: bool) -> N
         def define_schema(cls):
             return NodeSchema(
                 node_type="test.mixed-alpha-drop",
-                inputs=(InputSpec("image", input_type, alpha_policy="create_if_missing"),),
-                outputs=(OutputSpec("image", IMAGE),),
+                body=(
+                    Input("image", input_type, alpha_policy="create_if_missing"),
+                    Output("image", IMAGE),
+                ),
             )
 
         @classmethod
@@ -324,10 +325,11 @@ def test_asset_coercion_loss_is_reported_and_cached_without_manufacturing_loss(
             schema = super().define_schema()
             return replace(
                 schema,
-                inputs=(
-                    InputSpec(
+                body=(
+                    Input(
                         "image", IMAGE, alpha_policy="create_if_missing" if create else "preserve"
                     ),
+                    *schema.outputs,
                 ),
             )
 
@@ -402,7 +404,7 @@ class SemanticSource(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="test.semantic-source",
-            outputs=(OutputSpec("image", IMAGE), OutputSpec("mask", MASK)),
+            body=(Output("image", IMAGE), Output("mask", MASK)),
         )
 
     @classmethod
@@ -426,8 +428,12 @@ class SemanticPass(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="test.semantic-pass",
-            inputs=(InputSpec("image", IMAGE), InputSpec("mask", MASK, mask_polarity="coverage")),
-            outputs=(OutputSpec("image", IMAGE), OutputSpec("mask", MASK)),
+            body=(
+                Input("image", IMAGE),
+                Input("mask", MASK, mask_polarity="coverage"),
+                Output("image", IMAGE),
+                Output("mask", MASK),
+            ),
         )
 
     @classmethod

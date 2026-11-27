@@ -6,33 +6,69 @@
   source-signature guards refuse unrelated historical shapes. Saving a migrated
   graph records successor IDs so reopening does not apply the rule again.
   Admission refuses replacements that would drop live connections instead of
-  silently executing downstream defaults. Stored dynamic choices participate in
-  value guards and mappings; new count-bound outputs use the mapped count.
+  silently executing downstream defaults. Stored choices participate in value
+  guards and mappings. A copy between groups whose members are named
+  differently is refused when the pack loads; a wire to a member the target
+  lacks is reported on the node it feeds.
   Multiple declared rules for one retired ID are tried in declaration order;
   the first applicable mapping wins, including when an earlier target is absent.
   Currently served IDs are never reinterpreted. Native input reordering and
   defaulted additions need no replacement because values are keyed by input ID.
 
-- The optional development pack provides CPU-only examples for dynamic slots,
-  count-bound outputs, conditional rows, multi-combo, Markdown, palette, list
-  and button widgets, switchable widget forms, editable output descriptors,
-  and image mirror estimates. It also supplies help, a guide, a blueprint
+- The optional development pack provides CPU-only examples for type choices,
+  counted output groups, rows shown by a formula, multi-combo, Markdown,
+  palette, list and button widgets, switchable widget forms, described outputs,
+  automatic values from a formula or a lookup, and image mirror estimates. It also supplies help, a guide, a blueprint
   that inserts an independent boundary subgraph, a saved pack preference,
   Chinese labels, and a separate template. See
   [Try optional node features](../dev-node-features.md).
 - Input types: concrete, union, wildcard, variable, list, asset;
-  scalar/list cardinality; required/advanced/hidden/lazy input flags
-- Backend dynamic choices can declare hidden presentation while retaining
-  optionality, their complete option trees and omitted defaults. The flag
-  round-trips through schema declarations without changing execution choices.
-  Frontend descendant visibility is not claimed here.
-- Backend input families can require only the initial declared positions,
-  leaving later members optional. Missing initial required slots remain
-  validation errors even when later slots are connected. Ordinary families
-  retain their stored order and uniform requiredness. Frontend support is
-  not claimed here.
+  scalar/list cardinality; required/hidden/lazy input flags
+- Node schemas declare one body: a tree of inputs, outputs, states, sections,
+  rows, groups, choices, type choices, described rows, notes, buttons and
+  editor rows, checked when the pack loads and flattened into the inputs and
+  outputs a run uses. Every row may declare its visibility as a boolean or a
+  formula over stored values; the schema wire carries it, and frontend
+  evaluation is not claimed here. An input may also declare itself read-only
+  or disabled, with a reason, each a literal or a formula; these are layout
+  only, so they never change a schema signature, a cache key or what a run
+  receives.
+- A button's `Call` step runs a pack function its node type declares, through
+  `POST /api/node-functions/call`, with only the declared `writes` or file
+  name. Arguments are checked against the function's annotations; an
+  `AssetRef` parameter receives the picked file with the same verified-byte
+  access as a lookup. The
+  function runs in the pack's worker under its declared time limit (30 s by
+  default, at most 600 s) and may report progress and a note and see Cancel
+  through `CallContext`. An answer is at most 1 MiB and may set only the
+  declared fields; a file is at most 64 MiB. Each user has 8 press calls under
+  way and 60 new ones a minute on a backend. A pack function with a secret
+  parameter is refused when the pack loads. A `Randomize` step names a number,
+  a yes or no field, or a choice whose options the declaration writes; only a
+  number takes `low` and `high`. Running a button's other steps is the
+  frontend's and is not claimed here.
+- An input may declare `automatic`: a formula or a lookup that works out its
+  value while nothing is stored for it. It needs a default and a field type
+  (whole number, decimal, text, choice or yes or no), and may not read values
+  outside the run or another automatic field in a circle. When a run is
+  queued the engine works each such value out before any cache lookup, uses
+  the default when it cannot, and records the value used and whether it was
+  worked out in the job and history. Its lookups go to the owning pack's
+  worker side by side, equal calls once, within 10 seconds in all; a lookup
+  that fails or has not answered by then gives the default. A lookup argument
+  that names a file field is handed the picked file as an `AssetRef`, bound as
+  the lookup route binds it; with no file picked the default is used. It never
+  blocks a run.
+- Backend choices can declare hidden presentation while retaining optionality
+  and their complete option trees. The flag round-trips through the schema
+  wire without changing execution choices. An optional choice declares no
+  default. Frontend descendant visibility is not claimed here.
+- Backend input groups can require only their first declared members, leaving
+  later members optional. Missing initial required members remain validation
+  errors even when later members are connected. Other groups retain their
+  stored order and uniform requiredness. Frontend support is not claimed here.
 - Replacement input-family copies can declare historical template input IDs
-  and a flat member-port path without retaining a predecessor schema. Existing
+  without retaining a predecessor schema. Existing
   mappings without that metadata retain their wire shape. Historical same-type
   templates are distinct from the current node interface. This describes the
   backend declaration contract, not frontend migration support.
@@ -61,10 +97,9 @@
   sparse or out-of-order member names. Its canonical `input0` minimum and
   optional growth slots retain their authored identities. GetItemFromList
   selects an original typed child using a scalar index or the first list index.
-- Backend schemas describe fixed positional tuples, derive tuple outputs from
-  independently typed input families in document order, and select a position's
+- Backend schemas describe fixed positional tuples and select a position's
   type using a stored integer index. Tuple declarations round-trip through the
-  schema wire contract; ordinary list families retain homogeneous binding.
+  schema wire contract.
   Tuple values retain independently typed child envelopes across worker and
   persistent-cache boundaries, including nested lists and tuples. Resource
   invalidation and device metadata projection inspect every position; persistent
@@ -74,21 +109,19 @@
   rejects non-tuple sources and out-of-range indices at any region depth. Host
   preparation and COMBO checks inspect every position. This does not claim
   frontend editor or importer support.
-- Required closed dynamic slots can bind their selected variant type to shared
-  input and output variables, including list and asset element types
+- Required type choices with a closed variant list can bind their chosen
+  variant type to shared input and output variables, including list and asset
+  element types
 - Widgets: asset, save-target, combo and multi-combo with optional labels,
   per-option info, and folder paths; static combo choices preserve strings,
   booleans, JSON-safe integers and finite floats without conversion. Integer
   choices outside -(2^53 - 1) to 2^53 - 1 are rejected. Multi-combo choices
-  remain strings. Combo options derived from dynamic input
-  family members with stable stored IDs and separately editable labels;
-  boolean; number (number/slider/knob/gradientslider displays), string, color,
+  remain strings; boolean; number (number/slider/knob/gradientslider displays), string, color,
   curve editor and graph-native image compositor,
   pack-declared custom widget types with JSON parameters for frontend extensions;
   representations with schema defaults and optional user switching;
-  schema-declared static and dynamic-family text completions; conditional
-  visibility groups for top-level widgets;
-  after-generate modes fixed/increment/decrement/randomize;
+  schema-declared static text completions;
+  after-run modes fixed/increment/decrement/randomize;
   exact integer bounds from signed 64-bit minimum through unsigned 64-bit maximum
 - Backend schemas accept number, string, boolean, and combo widgets on one-level
   lists of their matching primitive type, retaining numeric constraints and wire
@@ -126,10 +159,6 @@
   FLOAT, in either order, with FLOAT constraint and rounding semantics. Socket
   types and numeric defaults remain unchanged, including with named widget
   representations. This does not claim frontend numeric-union editor support.
-- Forced-input FLOATS sockets accept numeric presentation with FLOAT constraint
-  semantics, retaining their canonical socket type and default on the wire,
-  including named representations. This does not change runtime values or
-  provide frontend FLOATS editing.
 - Node schemas can declare presentation-only editor roles and JSON-safe custom
   widget descriptors. Clients use these declarations without matching node IDs;
   native video trim and crop declare their exact `VIDEO_EDIT` features.
@@ -156,9 +185,11 @@
   with numeric epsilon; lazy typed selection;
   variadic boolean logic; clamping; range remapping with easing curves; and
   deterministic seeded integer or float random values
-- Native `ComfySwitchNode` uses ComfyUI's `switch`, `on_false`, and `on_true`
-  inputs. Only the selected branch executes; an unconnected selected input
-  produces an absent output. The two arms share one type template.
+- ComfyUI's If/Else Switch (`ComfySwitchNode`) opens as the Switch: a wired
+  `switch` moves to Pick, a stored true picks the `on_true` branch and anything
+  else the `on_false` branch, and the `output` wires move to Value. Only the
+  selected branch executes; an unconnected selected input produces an absent
+  output.
 - Loop boundary validation rejects unmatched starts or ends, ambiguous nesting,
   body escape paths, and accumulation controls fed from their own body,
   including boundaries inside region bodies. Boundaries use

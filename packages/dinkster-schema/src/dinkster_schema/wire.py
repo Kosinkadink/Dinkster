@@ -8,53 +8,44 @@ type expressions, and an explicit schemaVersion field.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, Literal, cast
+from typing import Any, Final, Literal, cast
 
 from dinkster_values import CustomWidgetDescriptor, JsonValue
 
+from . import body
+from .formula import FORMULA_LANGUAGE_VERSION
 from .model import (
-    CONTROL_AFTER_GENERATE,
+    KNOWN_VALUE_LIMITS,
     AbsentPolicy,
+    AfterRunMode,
     AssetWidget,
     BooleanWidget,
     ColorWidget,
     ComboOption,
     ComboWidget,
     CompositorWidget,
-    ConditionalWidgetCondition,
-    ConditionalWidgetGroup,
-    ControlAfterGenerate,
     CurveWidget,
     Deprecation,
-    DynamicComboOption,
-    DynamicComboSpec,
-    DynamicEntry,
-    DynamicSlotSpec,
-    InputFamilyOptionSource,
-    InputFamilySpec,
-    InputSpec,
+    Input,
     MirrorSpec,
     MirrorTolerance,
     MountWidget,
     MultiComboWidget,
     NodeSchema,
     NumberWidget,
-    OutputCountSpec,
-    OutputDescriptorsSpec,
-    OutputFamilySpec,
+    Output,
     OutputKnownValue,
     OutputProbeSpec,
     OutputRepresents,
-    OutputSpec,
     SaveTargetWidget,
     SearchVisibility,
     SelectorSpec,
-    SlotVariant,
     SourceFilenameSpec,
     StringWidget,
     TextCompletionItem,
@@ -67,11 +58,16 @@ from .model import (
 )
 from .replace import rule_from_wire, rule_to_wire
 
-SCHEMA_WIRE_VERSION = 1
+SCHEMA_WIRE_VERSION = 2
+"""Version 2 carries the node body tree and speaks formula language version 1."""
+
+if FORMULA_LANGUAGE_VERSION != 1:
+    raise ImportError("a new formula language version needs a new SCHEMA_WIRE_VERSION")
 _JSON_SAFE_INT = 2**53 - 1
 _DECIMAL_WIRE_INT_MIN = -(2**63)
 _DECIMAL_WIRE_INT_MAX = 2**64 - 1
 _CANONICAL_DECIMAL_INT = re.compile("^-?(?:0|[1-9][0-9]*)$")
+_WIRE_STRIP_COLOR = re.compile("#[0-9a-f]{6}")
 
 
 def _number_constraint_to_wire(value: int | float, wire_version: int) -> int | float | str | None:
@@ -120,10 +116,13 @@ def _widget_descriptor_to_wire(
     widget: WidgetDescriptor, wire_version: int
 ) -> dict[str, object] | None:
     if isinstance(widget, CustomWidgetDescriptor):
-        return {
-            "type": widget.widget_type,
-            **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
-        }
+        return _editor_names_to_wire(
+            widget,
+            {
+                "type": widget.widget_type,
+                **{key: _json_value_to_wire(value) for key, value in widget.params.items()},
+            },
+        )
     if isinstance(widget, AssetWidget):
         asset_wire: dict[str, object] = {"type": "ASSET", "accept": list(widget.accept)}
         if widget.kind:
@@ -137,12 +136,14 @@ def _widget_descriptor_to_wire(
         combo_wire: dict[str, object] = {"type": "COMBO"}
         if widget.editable_options:
             combo_wire["editableOptions"] = True
-        if widget.options:
+        if widget.options_input:
+            combo_wire["optionsInput"] = widget.options_input
+        if isinstance(widget.options, (body.Formula, body.Lookup)):
+            combo_wire["options"] = _formula_to_wire(widget.options)
+        elif widget.options:
             combo_wire["options"] = [
-                _combo_option_to_wire(option, wire_version) for option in widget.options
+                _combo_option_to_wire(option, wire_version) for option in widget.static_options
             ]
-        if widget.option_source is not None:
-            combo_wire["optionSource"] = {"inputFamily": widget.option_source.input_family}
         if widget.remote_route:
             remote: dict[str, object] = {"route": widget.remote_route}
             if widget.refresh_button:
@@ -156,8 +157,6 @@ def _widget_descriptor_to_wire(
             if widget.remote_refresh_ms is not None:
                 remote["refreshMs"] = widget.remote_refresh_ms
             combo_wire["remote"] = remote
-        if widget.control_after_generate is not None:
-            combo_wire["controlAfterGenerate"] = widget.control_after_generate
         return combo_wire
     if isinstance(widget, MultiComboWidget):
         multi_wire: dict[str, object] = {"type": "MULTI_COMBO"}
@@ -192,19 +191,27 @@ def _widget_descriptor_to_wire(
         return boolean_wire
     if isinstance(widget, NumberWidget):
         number_wire: dict[str, object] = {"type": "NUMBER"}
-        for field in ("min", "max", "step"):
+        for field in ("min", "max", "step", "offset"):
             constraint = getattr(widget, field)
             if constraint is None:
+                continue
+            if isinstance(constraint, (body.Formula, body.Lookup)):
+                number_wire[field] = _formula_to_wire(constraint)
                 continue
             encoded = _number_constraint_to_wire(constraint, wire_version)
             if encoded is not None:
                 number_wire[field] = encoded
         if widget.round is not None:
             number_wire["round"] = widget.round
-        if widget.control_after_generate is not None:
-            number_wire["controlAfterGenerate"] = widget.control_after_generate
         if widget.display is not None:
             number_wire["display"] = widget.display
+        if widget.special:
+            number_wire["special"] = [
+                [_number_constraint_to_wire(value, wire_version), label]
+                for value, label in widget.special.items()
+            ]
+        if widget.reason is not None:
+            number_wire["reason"] = widget.reason
         if len(number_wire) == 1:
             return None
         return number_wire
@@ -216,7 +223,9 @@ def _widget_descriptor_to_wire(
             string_wire["placeholder"] = widget.placeholder
         if widget.dynamic_prompts is not None:
             string_wire["dynamicPrompts"] = widget.dynamic_prompts
-        if widget.completions is not None:
+        if isinstance(widget.completions, (body.Formula, body.Lookup)):
+            string_wire["completions"] = _formula_to_wire(widget.completions)
+        elif widget.completions is not None:
             completions: dict[str, object] = {}
             if widget.completions.items:
                 completions["items"] = [
@@ -229,18 +238,27 @@ def _widget_descriptor_to_wire(
                     }
                     for item in widget.completions.items
                 ]
-            if widget.completions.input_families:
-                completions["inputFamilies"] = list(widget.completions.input_families)
             string_wire["completions"] = completions
         if len(string_wire) == 1:
             return None
         return string_wire
     if isinstance(widget, ColorWidget):
-        return {"type": "COLOR"}
+        return {"type": "COLOR", **({"alpha": True} if widget.alpha else {})}
     if isinstance(widget, CurveWidget):
-        return {"type": "CURVE"}
+        curve_wire: dict[str, object] = {"type": "CURVE"}
+        if widget.input_strip is not None:
+            curve_wire["inputStrip"] = list(widget.input_strip)
+        if widget.output_strip is not None:
+            curve_wire["outputStrip"] = list(widget.output_strip)
+        if widget.histogram:
+            curve_wire["histogram"] = widget.histogram
+        if not widget.histogram_visible:
+            curve_wire["histogramVisible"] = False
+        if widget.interpolations != CurveWidget().interpolations:
+            curve_wire["interpolations"] = list(widget.interpolations)
+        return curve_wire
     if isinstance(widget, CompositorWidget):
-        return {"type": "COMPOSITOR"}
+        return _editor_names_to_wire(widget, {"type": "COMPOSITOR"})
     if isinstance(widget, MountWidget):
         return {"type": "MOUNT"}
     remaining = cast("object", widget)
@@ -248,7 +266,7 @@ def _widget_descriptor_to_wire(
         wire: dict[str, object] = {"type": "SAVE_TARGET"}
         if remaining.suffix:
             wire["suffix"] = remaining.suffix
-        return wire
+        return _editor_names_to_wire(remaining, wire)
     raise TypeError(f"unsupported widget descriptor {widget!r}")
 
 
@@ -345,44 +363,38 @@ def _widget_descriptor_from_wire(
         return MountWidget()
     if kind == "SAVE_TARGET":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type", "suffix"}), "SAVE_TARGET widget")
+            _reject_unknown_fields(
+                widget_data, frozenset({"type", "suffix", "writes", "reads"}), "SAVE_TARGET widget"
+            )
         suffix = widget_data.get("suffix", "")
         if not isinstance(suffix, str):
             raise ValueError("SAVE_TARGET widget suffix must be a string")
-        return SaveTargetWidget(suffix=suffix)
+        return SaveTargetWidget(
+            suffix=suffix, **_editor_names_from_wire(widget_data, "SAVE_TARGET widget")
+        )
     if kind == "COMBO":
         if strict:
             allowed = {"type", "options", "remote"}
-            allowed.add("controlAfterGenerate")
-            allowed.add("optionSource")
-            allowed.add("editableOptions")
+            allowed.update({"editableOptions", "optionsInput"})
             _reject_unknown_fields(widget_data, frozenset(allowed), "COMBO widget")
         options = widget_data.get("options", [])
-        if not isinstance(options, list):
-            raise ValueError("COMBO widget options must be a list")
-        option_values = cast("list[object]", options)
-        decoded_options = tuple(
-            (
-                _combo_option_from_wire(
-                    value, wire_version, subject=f"COMBO widget options[{index}]"
-                )
-                for index, value in enumerate(option_values)
+        decoded_options: Any
+        if isinstance(options, dict):
+            decoded_options = _formula_from_wire(
+                cast("dict[str, object]", options), "COMBO widget options"
             )
-        )
-        option_source = None
-        raw_option_source = widget_data.get("optionSource")
-        if raw_option_source is not None:
-            if not isinstance(raw_option_source, dict):
-                raise ValueError("COMBO widget optionSource must be an object")
-            source_data = cast("dict[str, object]", raw_option_source)
-            if strict:
-                _reject_unknown_fields(
-                    source_data, frozenset({"inputFamily"}), "COMBO widget optionSource"
+        elif not isinstance(options, list):
+            raise ValueError("COMBO widget options must be a list, a formula or a lookup")
+        else:
+            option_values = cast("list[object]", options)
+            decoded_options = tuple(
+                (
+                    _combo_option_from_wire(
+                        value, wire_version, subject=f"COMBO widget options[{index}]"
+                    )
+                    for index, value in enumerate(option_values)
                 )
-            input_family = source_data.get("inputFamily")
-            if not isinstance(input_family, str):
-                raise ValueError("COMBO widget optionSource inputFamily must be a string")
-            option_source = InputFamilyOptionSource(input_family)
+            )
         remote_route = ""
         refresh_button = False
         control_after_refresh: object = None
@@ -427,22 +439,16 @@ def _widget_descriptor_from_wire(
             remote_timeout_ms = remote_data.get("timeoutMs")
             remote_max_retries = remote_data.get("maxRetries")
             remote_refresh_ms = remote_data.get("refreshMs")
-        control = widget_data.get("controlAfterGenerate")
-        if "controlAfterGenerate" in widget_data and (
-            type(control) is not str or control not in CONTROL_AFTER_GENERATE
-        ):
-            raise ValueError(
-                f"COMBO widget controlAfterGenerate must be one of {sorted(CONTROL_AFTER_GENERATE)}"
-            )
         return ComboWidget(
             options=decoded_options,
-            option_source=option_source,
             editable_options=_expect_bool(
                 widget_data.get("editableOptions", False), "COMBO widget editableOptions"
             ),
+            options_input=_expect_str(
+                widget_data.get("optionsInput", ""), "COMBO widget optionsInput"
+            ),
             remote_route=remote_route,
             refresh_button=refresh_button,
-            control_after_generate=cast("ControlAfterGenerate | None", control),
             control_after_refresh=cast("Literal['first', 'last'] | None", control_after_refresh),
             remote_timeout_ms=cast("int | None", remote_timeout_ms),
             remote_max_retries=cast("int | None", remote_max_retries),
@@ -548,15 +554,18 @@ def _widget_descriptor_from_wire(
         return BooleanWidget(label_on=label_on, label_off=label_off)
     if kind == "NUMBER":
         if strict:
-            allowed = {"type", "min", "max", "step", "controlAfterGenerate"}
-            allowed.add("display")
-            allowed.add("round")
+            allowed = {"type", "min", "max", "step"}
+            allowed.update(("display", "round", "offset", "special", "reason"))
             _reject_unknown_fields(widget_data, frozenset(allowed), "NUMBER widget")
-        bounds: dict[str, int | float | None] = {}
-        for field in ("min", "max", "step"):
+        bounds: dict[str, Any] = {}
+        for field in ("min", "max", "step", "offset"):
             raw = widget_data.get(field)
             bounds[field] = (
-                None if raw is None else _number_constraint_from_wire(raw, field, wire_version)
+                None
+                if raw is None
+                else _formula_from_wire(cast("dict[str, object]", raw), f"NUMBER widget {field}")
+                if isinstance(raw, dict)
+                else _number_constraint_from_wire(raw, field, wire_version)
             )
         round_value = widget_data.get("round")
         if (
@@ -565,25 +574,33 @@ def _widget_descriptor_from_wire(
             and type(round_value) not in (int, float)
         ):
             raise ValueError("NUMBER widget round must be False or a number")
-        control = widget_data.get("controlAfterGenerate")
-        if control is not None and (
-            not isinstance(control, str) or control not in CONTROL_AFTER_GENERATE
-        ):
-            raise ValueError(
-                "NUMBER widget controlAfterGenerate must be one of "
-                f"{sorted(CONTROL_AFTER_GENERATE)}"
-            )
         display = widget_data.get("display")
         if "display" in widget_data:
             if type(display) is not str:
                 raise ValueError("NUMBER widget display must be a string")
+        special: dict[int | float, str] = {}
+        raw_special = widget_data.get("special", [])
+        if not isinstance(raw_special, list):
+            raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+        for pair in cast("list[object]", raw_special):
+            if not isinstance(pair, list) or len(cast("list[object]", pair)) != 2:
+                raise ValueError("NUMBER widget special must be a list of [value, label] pairs")
+            raw_value, label = cast("list[object]", pair)
+            if not isinstance(label, str):
+                raise ValueError("NUMBER widget special label must be a string")
+            special[_number_constraint_from_wire(raw_value, "special", wire_version)] = label
+        reason = widget_data.get("reason")
+        if "reason" in widget_data and not isinstance(reason, str):
+            raise ValueError("NUMBER widget reason must be a string")
         return NumberWidget(
             min=bounds["min"],
             max=bounds["max"],
             step=bounds["step"],
             round=cast("int | float | Literal[False] | None", round_value),
-            control_after_generate=cast("ControlAfterGenerate | None", control),
             display=cast("Any", display),
+            offset=bounds["offset"],
+            special=special,
+            reason=cast("str | None", reason),
         )
     if kind == "STRING":
         if strict:
@@ -600,24 +617,25 @@ def _widget_descriptor_from_wire(
         dynamic_prompts = widget_data.get("dynamicPrompts")
         if "dynamicPrompts" in widget_data and type(dynamic_prompts) is not bool:
             raise ValueError("STRING widget dynamicPrompts must be a boolean")
-        completions = None
-        if "completions" in widget_data:
+        completions: Any = None
+        completion_wire = widget_data.get("completions")
+        if isinstance(completion_wire, dict) and (
+            "formula" in completion_wire or "lookup" in completion_wire
+        ):
+            completions = _formula_from_wire(
+                cast("dict[str, object]", completion_wire), "STRING widget completions"
+            )
+        elif "completions" in widget_data:
             completion_data = widget_data["completions"]
             if not isinstance(completion_data, dict):
                 raise ValueError("STRING widget completions must be an object")
             completion_data = cast("dict[str, object]", completion_data)
             _reject_unknown_fields(
-                completion_data, frozenset({"items", "inputFamilies"}), "STRING widget completions"
+                completion_data, frozenset({"items"}), "STRING widget completions"
             )
             raw_items = completion_data.get("items", [])
-            raw_families = completion_data.get("inputFamilies", [])
             if not isinstance(raw_items, list):
                 raise ValueError("STRING widget completion items must be an array")
-            if not isinstance(raw_families, list):
-                raise ValueError("STRING widget completion inputFamilies must be a string array")
-            families = cast("list[object]", raw_families)
-            if any(not isinstance(family, str) for family in families):
-                raise ValueError("STRING widget completion inputFamilies must be a string array")
             items: list[TextCompletionItem] = []
             for raw_item in cast("list[object]", raw_items):
                 if not isinstance(raw_item, dict):
@@ -648,9 +666,7 @@ def _widget_descriptor_from_wire(
                         kind=kind_value,
                     )
                 )
-            completions = TextCompletions(
-                items=tuple(items), input_families=tuple(cast("list[str]", families))
-            )
+            completions = TextCompletions(items=tuple(items))
         return StringWidget(
             multiline=cast("bool | None", multiline),
             placeholder=cast("str | None", placeholder),
@@ -659,25 +675,100 @@ def _widget_descriptor_from_wire(
         )
     if kind == "COLOR":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "COLOR widget")
-        return ColorWidget()
+            _reject_unknown_fields(widget_data, frozenset({"type", "alpha"}), "COLOR widget")
+        alpha = widget_data.get("alpha", False)
+        if not isinstance(alpha, bool):
+            raise ValueError("COLOR widget alpha must be a boolean")
+        return ColorWidget(alpha=alpha)
     if kind == "CURVE":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "CURVE widget")
-        return CurveWidget()
+            _reject_unknown_fields(
+                widget_data,
+                frozenset(
+                    {
+                        "type",
+                        "inputStrip",
+                        "outputStrip",
+                        "histogram",
+                        "histogramVisible",
+                        "interpolations",
+                    }
+                ),
+                "CURVE widget",
+            )
+        histogram = _expect_str(widget_data.get("histogram", ""), "CURVE widget histogram")
+        if "histogram" in widget_data and not histogram:
+            raise ValueError("CURVE widget histogram must name an input")
+        histogram_visible = widget_data.get("histogramVisible", True)
+        if type(histogram_visible) is not bool:
+            raise ValueError("CURVE widget histogramVisible must be a boolean")
+        interpolations = widget_data.get("interpolations", list(CurveWidget().interpolations))
+        if not isinstance(interpolations, list):
+            raise ValueError("CURVE widget interpolations must be a list")
+        strips: dict[str, tuple[str, str]] = {}
+        for key, name in (("inputStrip", "input_strip"), ("outputStrip", "output_strip")):
+            if key not in widget_data:
+                continue
+            colors = widget_data[key]
+            # The wire is canonical: two lower-case #rrggbb colors.
+            if not (
+                isinstance(colors, list)
+                and len(cast("list[object]", colors)) == 2
+                and all(
+                    isinstance(color, str) and _WIRE_STRIP_COLOR.fullmatch(color)
+                    for color in cast("list[object]", colors)
+                )
+            ):
+                raise ValueError(f"CURVE widget {key} must be two lower-case #rrggbb colors")
+            strips[name] = (cast("str", colors[0]), cast("str", colors[1]))
+        return CurveWidget(
+            **strips,
+            histogram=histogram,
+            histogram_visible=histogram_visible,
+            interpolations=cast(
+                "tuple[Literal['linear', 'monotone_cubic', 'step'], ...]",
+                tuple(cast("list[object]", interpolations)),
+            ),
+        )
     if kind == "COMPOSITOR":
         if strict:
-            _reject_unknown_fields(widget_data, frozenset({"type"}), "COMPOSITOR widget")
-        return CompositorWidget()
+            _reject_unknown_fields(
+                widget_data, frozenset({"type", "writes", "reads"}), "COMPOSITOR widget"
+            )
+        return CompositorWidget(**_editor_names_from_wire(widget_data, "COMPOSITOR widget"))
     if not isinstance(kind, str) or not kind:
         raise ValueError("custom widget type must be a non-empty string")
     return CustomWidgetDescriptor(
         kind,
         cast(
             "Mapping[str, JsonValue]",
-            {key: value for key, value in widget_data.items() if key != "type"},
+            {
+                key: value
+                for key, value in widget_data.items()
+                if key not in ("type", "writes", "reads")
+            },
         ),
+        **_editor_names_from_wire(widget_data, "custom widget"),
     )
+
+
+def _editor_names_to_wire(
+    widget: CustomWidgetDescriptor | CompositorWidget | SaveTargetWidget, wire: dict[str, object]
+) -> dict[str, object]:
+    """The rows an editor writes and reads, each only when it names one."""
+    if widget.writes:
+        wire["writes"] = dict(widget.writes)
+    if widget.reads:
+        wire["reads"] = dict(widget.reads)
+    return wire
+
+
+def _editor_names_from_wire(data: Mapping[str, object], what: str) -> dict[str, Any]:
+    names: dict[str, Any] = {}
+    for name in ("writes", "reads"):
+        if name in data:
+            names[name] = _expect_object(data[name], f"{what}.{name}")
+    return names
 
 
 def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
@@ -755,7 +846,7 @@ def type_expr_to_wire(expr: TypeExpr, wire_version: int = SCHEMA_WIRE_VERSION) -
     return wire
 
 
-def _media_policy_to_wire(spec: InputSpec | OutputSpec, wire_version: int) -> dict[str, object]:
+def _media_policy_to_wire(spec: Input | Output, wire_version: int) -> dict[str, object]:
     result: dict[str, object] = {}
     if spec.alpha_policy != "preserve":
         result["alphaPolicy"] = spec.alpha_policy
@@ -778,7 +869,7 @@ def _media_policy_from_wire(entry: dict[str, Any], wire_version: int) -> dict[st
     }
 
 
-def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object]:
+def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
     entry: dict[str, object] = {
         "id": spec.id,
         "type": type_expr_to_wire(spec.type, wire_version),
@@ -796,18 +887,30 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
             raise ValueError(f"input {spec.id!r}: {exc}") from exc
         if widget_wire is not None:
             entry["widget"] = widget_wire
-    if spec.doc:
-        entry["doc"] = spec.doc
-    if spec.display_name:
-        entry["displayName"] = spec.display_name
-    if spec.adjacent_to is not None:
-        entry["adjacentTo"] = spec.adjacent_to
-    if spec.force_input:
-        entry["forceInput"] = True
-    if spec.socketless:
-        entry["socketless"] = True
-    if spec.advanced:
-        entry["advanced"] = True
+    if spec.tooltip:
+        entry["tooltip"] = spec.tooltip
+    if spec.label:
+        entry["label"] = _formula_to_wire(spec.label)
+    if spec.pin_first:
+        entry["pinFirst"] = True
+    if not spec.pin:
+        entry["pin"] = False
+    if not spec.sent:
+        entry["sent"] = False
+    if spec.after_run is not None:
+        entry["afterRun"] = spec.after_run
+    if spec.visible is not True:
+        entry["visible"] = _formula_to_wire(spec.visible)
+    if spec.read_only is not False:
+        entry["readOnly"] = _formula_to_wire(spec.read_only)
+    if spec.disabled is not False:
+        entry["disabled"] = _formula_to_wire(spec.disabled)
+    if spec.disabled_reason:
+        entry["disabledReason"] = _formula_to_wire(spec.disabled_reason)
+    if spec.on_edit:
+        entry["onEdit"] = _steps_to_wire(spec.on_edit, wire_version)
+    if spec.automatic is not None:
+        entry["automatic"] = _formula_to_wire(spec.automatic)
     if spec.hidden:
         entry["hidden"] = True
     if spec.lazy:
@@ -826,91 +929,38 @@ def _input_entry_to_wire(spec: InputSpec, wire_version: int) -> dict[str, object
     return entry
 
 
-def _dynamic_entry_to_wire(
-    spec: DynamicEntry, wire_version: int = SCHEMA_WIRE_VERSION
-) -> dict[str, object]:
-    if isinstance(spec, InputSpec):
-        return {"role": "input", **_input_entry_to_wire(spec, wire_version)}
-    if isinstance(spec, InputFamilySpec):
-        entry: dict[str, object] = {
-            "role": "inputFamily",
-            "id": spec.id,
-            "template": [_dynamic_entry_to_wire(item, wire_version) for item in spec.template],
-            "minMembers": spec.min_members,
-            "required": spec.required,
-        }
-        if spec.independent_types:
-            entry["independentTypes"] = True
-        if spec.optional_after_minimum:
-            entry["optionalAfterMinimum"] = True
-        if spec.member_prefix is not None:
-            entry["memberPrefix"] = spec.member_prefix
-        if spec.member_names is not None:
-            entry["memberNames"] = list(spec.member_names)
-        elif spec.max_members is not None:
-            entry["maxMembers"] = spec.max_members
-        if spec.doc:
-            entry["doc"] = spec.doc
-        if spec.display_name:
-            entry["displayName"] = spec.display_name
-        return entry
-    if isinstance(spec, DynamicComboSpec):
-        entry = {
-            "role": "dynamicCombo",
-            "id": spec.id,
-            "options": [
-                {
-                    "key": option.key,
-                    "inputs": [
-                        _dynamic_entry_to_wire(item, wire_version) for item in option.inputs
-                    ],
-                }
-                for option in spec.options
-            ],
-            "required": spec.required,
-        }
-        if spec.default is not None:
-            entry["default"] = spec.default
-        if spec.hidden:
-            entry["hidden"] = True
-        if spec.doc:
-            entry["doc"] = spec.doc
-        if spec.display_name:
-            entry["displayName"] = spec.display_name
-        return entry
-    if not isinstance(cast("object", spec), DynamicSlotSpec):
-        raise TypeError(f"unsupported dynamic entry: {type(spec).__name__}")
-    entry = {
-        "role": "dynamicSlot",
-        "id": spec.id,
-        "required": spec.required,
-        "inputs": [_dynamic_entry_to_wire(item, wire_version) for item in spec.inputs],
+def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
+    out_entry: dict[str, object] = {
+        "id": out.id,
+        "type": type_expr_to_wire(out.type, wire_version),
     }
-    if spec.variants is not None:
-        entry["variants"] = [_variant_to_wire(variant, wire_version) for variant in spec.variants]
-    else:
-        assert spec.slot_type is not None
-        entry["slotType"] = type_expr_to_wire(spec.slot_type, wire_version)
-        if spec.force_input:
-            entry["forceInput"] = True
-    if spec.type_template_id:
-        entry["typeTemplateId"] = spec.type_template_id
-    if spec.doc:
-        entry["doc"] = spec.doc
-    if spec.display_name:
-        entry["displayName"] = spec.display_name
-    return entry
-
-
-def _variant_to_wire(variant: SlotVariant, wire_version: int) -> dict[str, object]:
-    wire: dict[str, object] = {
-        "key": variant.key,
-        "type": type_expr_to_wire(variant.type, wire_version),
-        "inputs": [_dynamic_entry_to_wire(dep, wire_version) for dep in variant.inputs],
-    }
-    if variant.doc:
-        wire["doc"] = variant.doc
-    return wire
+    out_entry.update(_media_policy_to_wire(out, wire_version))
+    if out.optional:
+        out_entry["optional"] = True
+    if out.tooltip:
+        out_entry["tooltip"] = out.tooltip
+    if out.label:
+        out_entry["label"] = _formula_to_wire(out.label)
+    if out.visible is not True:
+        out_entry["visible"] = _formula_to_wire(out.visible)
+    if out.preview:
+        out_entry["preview"] = True
+    if out.represents is not None:
+        represents: dict[str, object] = {
+            "input": out.represents.input,
+            "rendition": out.represents.rendition,
+        }
+        if out.represents.applies is not None:
+            represents["applies"] = {
+                combo_id: list(values) for combo_id, values in out.represents.applies.items()
+            }
+        out_entry["represents"] = represents
+    if out.known_value is not None:
+        known_value: dict[str, object] = {"input": out.known_value.input}
+        if out.known_value.limits:
+            known_value["limits"] = dict(out.known_value.limits)
+        out_entry["knownValue"] = known_value
+    return out_entry
 
 
 def schema_to_wire(
@@ -922,83 +972,15 @@ def schema_to_wire(
     if type(wire_version) is not int or wire_version != SCHEMA_WIRE_VERSION:
         raise ValueError(f"unsupported schemaVersion: {wire_version!r}")
     interface: list[dict[str, object]] = []
-    for spec in schema.input_entries:
+    # A declared schema always carries its body, rows or not; an elaborated one is flat.
+    has_body = not schema.effective
+    for spec in () if has_body else schema.inputs:
         try:
-            interface.append(_dynamic_entry_to_wire(spec, wire_version))
+            interface.append({"role": "input", **_input_entry_to_wire(spec, wire_version)})
         except ValueError as exc:
             raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
-    for out in schema.outputs:
-        out_entry: dict[str, object] = {
-            "role": "output",
-            "id": out.id,
-            "type": type_expr_to_wire(out.type, wire_version),
-        }
-        out_entry.update(_media_policy_to_wire(out, wire_version))
-        if out.optional:
-            out_entry["optional"] = True
-        if out.doc:
-            out_entry["doc"] = out.doc
-        if out.display_name:
-            out_entry["displayName"] = out.display_name
-        if out.preview:
-            out_entry["preview"] = True
-        if out.represents is not None:
-            represents: dict[str, object] = {
-                "input": out.represents.input,
-                "rendition": out.represents.rendition,
-            }
-            if out.represents.applies is not None:
-                represents["applies"] = {
-                    combo_id: list(values) for combo_id, values in out.represents.applies.items()
-                }
-            out_entry["represents"] = represents
-        if out.known_value is not None:
-            out_entry["knownValue"] = {"input": out.known_value.input}
-        interface.append(out_entry)
-    for out_fam in schema.output_families:
-        out_fam_entry: dict[str, object] = {
-            "role": "outputFamily",
-            "id": out_fam.id,
-            "type": type_expr_to_wire(out_fam.type, wire_version),
-            "minMembers": out_fam.min_members,
-        }
-        if out_fam.max_members is not None:
-            out_fam_entry["maxMembers"] = out_fam.max_members
-        if out_fam.doc:
-            out_fam_entry["doc"] = out_fam.doc
-        if out_fam.preview:
-            out_fam_entry["preview"] = True
-        if out_fam.count is not None:
-            out_fam_entry["count"] = {"input": out_fam.count.input, "suffix": out_fam.count.suffix}
-        interface.append(out_fam_entry)
-    descriptors = schema.output_descriptors
-    if descriptors is not None:
-        descriptor_entry: dict[str, object] = {
-            "role": "outputDescriptors",
-            "input": descriptors.input,
-            "minEntries": descriptors.min_entries,
-            "maxEntries": descriptors.max_entries,
-            "fixedIds": descriptors.fixed_ids,
-            "choices": [
-                {
-                    "id": choice.id,
-                    "type": type_expr_to_wire(choice.type, wire_version),
-                    **({"displayName": choice.display_name} if choice.display_name else {}),
-                    **({"doc": choice.doc} if choice.doc else {}),
-                    **({"optional": True} if choice.optional else {}),
-                    **({"preview": True} if choice.preview else {}),
-                    **_media_policy_to_wire(choice, wire_version),
-                }
-                for choice in descriptors.choices
-            ],
-        }
-        if descriptors.probe is not None:
-            descriptor_entry["probe"] = {
-                "input": descriptors.probe.input,
-                "kind": descriptors.probe.kind,
-                "revision": descriptors.probe.revision,
-            }
-        interface.append(descriptor_entry)
+    for out in () if has_body else schema.outputs:
+        interface.append({"role": "output", **_output_entry_to_wire(out, wire_version)})
     wire: dict[str, object] = {
         "schemaVersion": wire_version,
         "nodeType": schema.node_type,
@@ -1009,6 +991,13 @@ def schema_to_wire(
         "idempotent": schema.idempotent,
         "interface": interface,
     }
+    if schema.effective:
+        wire["effective"] = True
+    if has_body:
+        try:
+            _body_fields_to_wire(schema, wire, wire_version)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"node {schema.node_type!r}, {exc}") from exc
     if schema.editor_role is not None:
         wire["editorRole"] = schema.editor_role
     if schema.additional_inputs is not None:
@@ -1036,8 +1025,6 @@ def schema_to_wire(
         replacements = schema.replacements
         if replacements:
             wire["replacements"] = [rule_to_wire(rule) for rule in replacements]
-    if schema.aliases:
-        wire["aliases"] = list(schema.aliases)
     if schema.output_node:
         wire["outputNode"] = True
     if schema.chunk_safe is not None:
@@ -1064,21 +1051,6 @@ def schema_to_wire(
         wire["executionContext"] = True
     if schema.input_values:
         wire["inputValues"] = True
-    if schema.widget_groups:
-        groups: list[dict[str, object]] = []
-        for group in schema.widget_groups:
-            encoded: dict[str, object] = {
-                "input": group.input,
-                "values": list(group.values),
-                "members": list(group.members),
-            }
-            if group.requires:
-                encoded["requires"] = [
-                    {"input": condition.input, "values": list(condition.values)}
-                    for condition in group.requires
-                ]
-            groups.append(encoded)
-        wire["widgetGroups"] = groups
     if schema.mirror is not None:
         mirror: dict[str, object] = {
             "kind": schema.mirror.kind,
@@ -1101,10 +1073,10 @@ def schema_to_wire(
             }
         wire["mirror"] = mirror
     if schema.selector is not None:
-        wire["selector"] = {
-            "input": schema.selector.input,
-            "branches": dict(schema.selector.branches),
-        }
+        selector_wire = {"input": schema.selector.input, "group": schema.selector.group}
+        if schema.selector.names is not None:
+            selector_wire["names"] = schema.selector.names
+        wire["selector"] = selector_wire
     return wire
 
 
@@ -1119,10 +1091,9 @@ def schema_signature(schema: NodeSchema) -> str:
     searchTerms, replacements) is excluded for the same reason: deprecating
     or hiding a node, adding search keywords, or shipping migration advice
     for its predecessors, changes how documents evolve or how the node is
-    found, never what this node computes. Resolution/targeting
-    metadata (aliases, outputNode) is excluded too: what names resolve to a
-    node and whether submission formats target it by default never change
-    what it computes. Capability metadata (emitsPreviews, mayExpandGraph) is
+    found, never what this node computes. Targeting metadata (outputNode)
+    is excluded too: whether submission formats target a node by default
+    never changes what it computes. Capability metadata (emitsPreviews, mayExpandGraph) is
     excluded for the same reason: whether a node ships live previews while
     running, or whether its execution may return a runtime graph expansion
     payload, never changes what it computes. Mirror, output representation,
@@ -1136,82 +1107,25 @@ def schema_signature(schema: NodeSchema) -> str:
     dynamicPrompts state is the sole widget exception because it changes
     client serialization before submission."""
 
-    def strip_editor_widget(entry: DynamicEntry) -> DynamicEntry:
-        if isinstance(entry, InputSpec):
-            if (
-                isinstance(entry.widget, (CurveWidget, CompositorWidget))
-                or (
-                    isinstance(entry.widget, ComboWidget) and entry.widget.option_source is not None
-                )
-                or (
-                    isinstance(entry.widget, WidgetRepresentations)
-                    and any(
-                        isinstance(representation.widget, (CurveWidget, CompositorWidget))
-                        or (
-                            isinstance(representation.widget, ComboWidget)
-                            and representation.widget.option_source is not None
-                        )
-                        for representation in entry.widget.representations
-                    )
-                )
-            ):
-                return replace(entry, widget=None)
-            return entry
-        if isinstance(entry, InputFamilySpec):
-            template = tuple(strip_editor_widget(item) for item in entry.template)
-            if template == entry.template:
-                return entry
-            return InputFamilySpec(
-                entry.id,
-                template,
-                min_members=entry.min_members,
-                max_members=None if entry.member_names is not None else entry.max_members,
-                doc=entry.doc,
-                display_name=entry.display_name,
-                required=entry.required,
-                member_prefix=entry.member_prefix,
-                member_names=entry.member_names,
-                independent_types=entry.independent_types,
-                optional_after_minimum=entry.optional_after_minimum,
-            )
-        if isinstance(entry, DynamicComboSpec):
-            options = tuple(
-                replace(option, inputs=tuple(strip_editor_widget(item) for item in option.inputs))
-                for option in entry.options
-            )
-            if options == entry.options:
-                return entry
-            return replace(entry, options=options)
-        inputs = tuple(strip_editor_widget(item) for item in entry.inputs)
-        variants = (
-            tuple(
-                replace(
-                    variant,
-                    inputs=tuple(strip_editor_widget(item) for item in variant.inputs),
-                )
-                for variant in entry.variants
-            )
-            if entry.variants is not None
-            else None
-        )
-        if inputs == entry.inputs and variants == entry.variants:
-            return entry
-        return replace(entry, inputs=inputs, variants=variants)
+    def strip_editor_widget(entry: Input) -> Input:
+        widget = entry.widget
+        editor_only = (CurveWidget, CompositorWidget)
+        if isinstance(widget, editor_only) or (
+            isinstance(widget, WidgetRepresentations)
+            and any(isinstance(item.widget, editor_only) for item in widget.representations)
+        ):
+            return replace(entry, widget=None)
+        return entry
 
-    signature_schema = replace(
-        schema,
-        inputs=tuple(
-            cast("InputSpec", strip_editor_widget(input_spec)) for input_spec in schema.inputs
-        ),
-        input_families=tuple(
-            cast("InputFamilySpec", strip_editor_widget(family)) for family in schema.input_families
-        ),
-        combos=tuple(
-            cast("DynamicComboSpec", strip_editor_widget(combo)) for combo in schema.combos
-        ),
-        slots=tuple(cast("DynamicSlotSpec", strip_editor_widget(slot)) for slot in schema.slots),
-        replacements=(),
-        outputs=tuple(replace(output, known_value=None) for output in schema.outputs),
+    signature_schema = (
+        schema
+        if schema.body
+        else replace(
+            schema,
+            inputs=tuple(strip_editor_widget(input_spec) for input_spec in schema.inputs),
+            replacements=(),
+            outputs=tuple(replace(output, known_value=None) for output in schema.outputs),
+        )
     )
     wire = schema_to_wire(signature_schema)
     wire.pop("occupies", None)
@@ -1221,11 +1135,9 @@ def schema_signature(schema: NodeSchema) -> str:
     wire.pop("searchTerms", None)
     wire.pop("dispatchAffinity", None)
     wire.pop("replacements", None)
-    wire.pop("aliases", None)
     wire.pop("outputNode", None)
     wire.pop("emitsPreviews", None)
     wire.pop("mayExpandGraph", None)
-    wire.pop("widgetGroups", None)
     wire.pop("mirror", None)
     wire.pop("displayName", None)
     wire.pop("editorRole", None)
@@ -1234,32 +1146,42 @@ def schema_signature(schema: NodeSchema) -> str:
 
     def strip_presentation(entry: dict[str, object]) -> None:
         entry.pop("doc", None)
+        entry.pop("tooltip", None)
+        if "onAbsent" in entry and entry["onAbsent"] == (
+            "skip" if entry.get("required", True) else "omit"
+        ):
+            entry.pop("onAbsent")
         widget = entry.pop("widget", None)
         dynamic_identity = dynamic_prompts_identity(widget)
         if dynamic_identity is not None:
             entry["dynamicPrompts"] = dynamic_identity
+        asset_identity = _asset_widget_identity(widget)
+        if asset_identity is not None:
+            entry["asset"] = asset_identity
+        alpha_identity = _color_alpha_identity(widget)
+        if alpha_identity is not None:
+            entry["colorAlpha"] = alpha_identity
         entry.pop("displayName", None)
-        entry.pop("adjacentTo", None)
+        entry.pop("label", None)
         entry.pop("forceInput", None)
-        entry.pop("socketless", None)
-        entry.pop("advanced", None)
+        entry.pop("pinFirst", None)
+        entry.pop("pin", None)
+        entry.pop("sent", None)
+        entry.pop("onEdit", None)
+        entry.pop("afterRun", None)
+        entry.pop("visible", None)
+        entry.pop("readOnly", None)
+        entry.pop("disabled", None)
+        entry.pop("disabledReason", None)
+        # A lookup's name and arguments join no signature; the value it gives
+        # does, as a stored value.
+        automatic = entry.get("automatic")
+        if isinstance(automatic, dict) and "lookup" in automatic:
+            entry.pop("automatic")
         entry.pop("hidden", None)
         entry.pop("preview", None)
         entry.pop("represents", None)
         entry.pop("knownValue", None)
-        for child in cast("list[dict[str, object]]", entry.get("template", ())):
-            strip_presentation(child)
-        for option in cast("list[dict[str, object]]", entry.get("options", ())):
-            for child in cast("list[dict[str, object]]", option.get("inputs", ())):
-                strip_presentation(child)
-        for child in cast("list[dict[str, object]]", entry.get("inputs", ())):
-            strip_presentation(child)
-        for variant in cast("list[dict[str, object]]", entry.get("variants", ())):
-            variant.pop("doc", None)
-            for dep in cast("list[dict[str, object]]", variant.get("inputs", ())):
-                strip_presentation(dep)
-        for choice in cast("list[dict[str, object]]", entry.get("choices", ())):
-            strip_presentation(choice)
 
     def dynamic_prompts_identity(widget: object) -> object | None:
         if not isinstance(widget, dict):
@@ -1280,8 +1202,200 @@ def schema_signature(schema: NodeSchema) -> str:
 
     for entry in cast("list[dict[str, object]]", wire["interface"]):
         strip_presentation(entry)
+    # An effective schema signs as the flat interface it holds.
+    wire.pop("effective", None)
+    if not schema.effective:
+        for key in ("body", "tables", "derived", "validate", "titleSuffix", "menu"):
+            wire.pop(key, None)
+        wire["body"] = _signature_rows(schema.body, schema, strip_presentation)
     canonical = json.dumps(wire, sort_keys=True, separators=(",", ":"))
     return hashlib.blake2b(canonical.encode("utf-8"), digest_size=20).hexdigest()
+
+
+def _asset_widget_identity(widget: object) -> object | None:
+    """The asset kind and selection a run resolves an asset by; they join both signatures."""
+    if not isinstance(widget, dict):
+        return None
+    descriptor = cast("dict[str, object]", widget)
+    if descriptor.get("type") == "ASSET":
+        identity = {key: descriptor[key] for key in ("kind", "selection") if key in descriptor}
+        return identity or None
+    if descriptor.get("type") == "REPRESENTATIONS":
+        found = [
+            [raw.get("id"), _asset_widget_identity(raw.get("widget"))]
+            for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
+        ]
+        found = [item for item in found if item[1] is not None]
+        return found or None
+    return None
+
+
+def _color_alpha_identity(widget: object) -> object | None:
+    """Whether a color field uses opacity; it decides the value a run hands the node."""
+    if not isinstance(widget, dict):
+        return None
+    descriptor = cast("dict[str, object]", widget)
+    if descriptor.get("type") == "COLOR":
+        return True if descriptor.get("alpha") else None
+    if descriptor.get("type") == "REPRESENTATIONS":
+        found = [
+            [raw.get("id"), _color_alpha_identity(raw.get("widget"))]
+            for raw in cast("list[dict[str, object]]", descriptor.get("representations", []))
+        ]
+        found = [item for item in found if item[1] is not None]
+        return found or None
+    return None
+
+
+_FORMULA_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _structure_formula(formula: body.Formula, schema: NodeSchema) -> dict[str, object]:
+    """A structure formula with the derived formulas and tables it names written out."""
+    derived: dict[str, str] = {}
+    tables: dict[str, object] = {}
+    pending = [formula.text]
+    while pending:
+        for name in _FORMULA_NAME.findall(pending.pop()):
+            if name in schema.derived and name not in derived:
+                derived[name] = schema.derived[name].text
+                pending.append(derived[name])
+            elif name in schema.tables and name not in tables:
+                tables[name] = _table_to_wire(schema.tables[name])
+    wire: dict[str, object] = {"formula": formula.text}
+    if derived:
+        wire["derived"] = derived
+    if tables:
+        wire["tables"] = tables
+    return wire
+
+
+def _signature_rows(
+    rows: Sequence[body.BodyRow | body.Use],
+    schema: NodeSchema,
+    strip: Any,
+) -> list[dict[str, object]]:
+    """The structure and execution fields of a scope's rows, in one canonical order.
+
+    Sections and Rows open no scope and are layout, so their rows join the
+    scope around them; notes, buttons, and a state or field that is not part of a run
+    drop out. Rows are
+    sorted, so reordering rows or moving one between sections changes
+    neither signature."""
+    found: list[dict[str, object]] = []
+    for row in rows:
+        if isinstance(row, (body.Section, body.Row)):
+            found.extend(_signature_rows(row.rows, schema, strip))
+            continue
+        if (
+            isinstance(row, (body.Note, body.Button, body.Editor))
+            or (isinstance(row, body.State) and not row.part_of_run)
+            or (isinstance(row, Input) and not row.sent)
+        ):
+            continue
+        found.append(_signature_row(row, schema, strip))
+    return sorted(found, key=lambda entry: (str(entry["kind"]), str(entry.get("id", ""))))
+
+
+def _signature_row(
+    row: body.BodyRow | body.Use, schema: NodeSchema, strip: Any
+) -> dict[str, object]:
+    wire_version = SCHEMA_WIRE_VERSION
+    if isinstance(row, Input):
+        entry = {"kind": "input", **_input_entry_to_wire(row, wire_version)}
+        strip(entry)
+        if isinstance(row.automatic, body.Formula):
+            entry["automatic"] = _structure_formula(row.automatic, schema)
+        return entry
+    if isinstance(row, Output):
+        entry = {"kind": "output", **_output_entry_to_wire(row, wire_version)}
+        strip(entry)
+        return entry
+    if isinstance(row, body.State):
+        return body_row_to_wire(row, wire_version)
+    if isinstance(row, body.Use):
+        # A widget override keeps what an Input's widget keeps: its asset kind
+        # and selection and its dynamic prompts.
+        entry: dict[str, object] = _use_to_wire(row, wire_version)
+        entry.pop("inside", None)
+        strip(entry)
+        if row.only is not None:
+            entry["only"] = sorted(row.only)
+        if row.inside:
+            entry["inside"] = _signature_rows(row.inside, schema, strip)
+        return entry
+    if isinstance(row, body.Group):
+        assert row.keys is not None
+        entry = {"kind": "group", "id": row.id, "keys": _keys_to_wire(row.keys)}
+        if row.value is not None:
+            entry["value"] = _signature_row(row.value, schema, strip)
+        else:
+            assert row.member is not None
+            entry["member"] = _signature_rows(row.member, schema, strip)
+        if isinstance(row.grows, body.Count):
+            entry["count"] = _structure_formula(row.grows.formula, schema)
+        entry["minMembers"] = row.min_members
+        if row.max_members is not None:
+            entry["maxMembers"] = row.max_members
+        for flag in ("independent_types", "optional_after_minimum"):
+            if getattr(row, flag):
+                entry[_camel(flag)] = True
+        return entry
+    if isinstance(row, body.Choice):
+        entry = {
+            "kind": "choice",
+            "id": row.id,
+            "required": row.required,
+            "options": sorted(
+                (
+                    {"key": option.key, "rows": _signature_rows(option.rows, schema, strip)}
+                    for option in row.options
+                ),
+                key=lambda option: str(option["key"]),
+            ),
+        }
+        if row.shared:
+            entry["shared"] = _signature_rows(row.shared, schema, strip)
+        if row.leader is not None:
+            entry["leader"] = _structure_formula(row.leader, schema)
+        return entry
+    if isinstance(row, body.TypeChoice):
+        entry = {"kind": "typeChoice", "id": row.id, "required": bool(row.required)}
+        if row.variants is not None:
+            entry["variants"] = sorted(
+                (
+                    {
+                        "key": variant.key,
+                        "type": type_expr_to_wire(variant.type, wire_version),
+                        "rows": _signature_rows(variant.rows, schema, strip),
+                    }
+                    for variant in row.variants
+                ),
+                key=lambda variant: str(variant["key"]),
+            )
+        else:
+            assert row.type is not None
+            entry["type"] = type_expr_to_wire(row.type, wire_version)
+        entry["rows"] = _signature_rows(row.rows, schema, strip)
+        if row.type_variable:
+            entry["typeVariable"] = row.type_variable
+        return entry
+    assert isinstance(row, body.Described)
+    entry = {
+        "kind": "described",
+        "id": row.id,
+        "kinds": _signature_rows(row.kinds, schema, strip),
+        "minEntries": row.min_entries,
+        "maxEntries": row.max_entries,
+        "fixedIds": row.fixed_ids,
+    }
+    if row.probe is not None:
+        entry["probe"] = {
+            "input": row.probe.input,
+            "kind": row.probe.kind,
+            "revision": row.probe.revision,
+        }
+    return entry
 
 
 def _expect_object(value: object, field: str) -> dict[str, Any]:
@@ -1362,7 +1476,48 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
     )
 
 
-def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpec:
+_MEDIA_POLICY_FIELDS = frozenset({"alphaPolicy", "maskPolarity", "maskSemantic"})
+_INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
+    "id",
+    "type",
+    "required",
+    "default",
+    "onAbsent",
+    "widget",
+    "tooltip",
+    "label",
+    "pinFirst",
+    "pin",
+    "sent",
+    "afterRun",
+    "visible",
+    "readOnly",
+    "disabled",
+    "disabledReason",
+    "onEdit",
+    "automatic",
+    "hidden",
+    "lazy",
+    "acceptsStorage",
+    "acceptsStream",
+    "acceptsList",
+    "sourceFilename",
+}
+_OUTPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
+    "id",
+    "type",
+    "optional",
+    "tooltip",
+    "label",
+    "visible",
+    "preview",
+    "represents",
+    "knownValue",
+}
+
+
+def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
+    _reject_unknown_fields(entry, _INPUT_FIELDS, "input")
     on_absent = entry.get("onAbsent")
     widget_wire = entry.get("widget")
     widget = None if widget_wire is None else _widget_from_wire(widget_wire, wire_version)
@@ -1377,23 +1532,33 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpe
                 "Any", _expect_str(source_data.get("category"), "input.sourceFilename.category")
             ),
         )
-    return InputSpec(
+    return Input(
         id=_expect_str(entry.get("id"), "input.id"),
         type=type_expr_from_wire(_expect_object(entry.get("type"), "input.type"), wire_version),
         required=_expect_bool(entry.get("required", True), "input.required"),
         default=entry.get("default"),
-        doc=_expect_str(entry.get("doc", ""), "input.doc"),
+        tooltip=_expect_str(entry.get("tooltip", ""), "input.tooltip"),
         on_absent=None
         if on_absent is None
         else cast("AbsentPolicy", _expect_str(on_absent, "input.onAbsent")),
         widget=widget,
-        display_name=_expect_str(entry.get("displayName", ""), "input.displayName"),
-        adjacent_to=None
-        if "adjacentTo" not in entry
-        else _expect_str(entry["adjacentTo"], "input.adjacentTo"),
-        force_input=_expect_bool(entry.get("forceInput", False), "input.forceInput"),
-        socketless=_expect_bool(entry.get("socketless", False), "input.socketless"),
-        advanced=_expect_bool(entry.get("advanced", False), "input.advanced"),
+        label=_text_or_formula_from_wire(entry.get("label", ""), "input.label"),
+        pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
+        pin=_expect_bool(entry.get("pin", True), "input.pin"),
+        sent=_expect_bool(entry.get("sent", True), "input.sent"),
+        on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
+        visible=True
+        if "visible" not in entry
+        else cast("Any", _formula_from_wire(entry["visible"], "input.visible")),
+        read_only=cast("Any", _formula_from_wire(entry.get("readOnly", False), "input.readOnly")),
+        disabled=cast("Any", _formula_from_wire(entry.get("disabled", False), "input.disabled")),
+        disabled_reason=_text_or_formula_from_wire(
+            entry.get("disabledReason", ""), "input.disabledReason"
+        ),
+        after_run=None
+        if "afterRun" not in entry
+        else cast("AfterRunMode", _expect_str(entry["afterRun"], "input.afterRun")),
+        automatic=_automatic_from_wire(entry.get("automatic")),
         hidden=_expect_bool(entry.get("hidden", False), "input.hidden"),
         lazy=_expect_bool(entry.get("lazy", False), "input.lazy"),
         source_filename=source_filename,
@@ -1404,183 +1569,67 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> InputSpe
     )
 
 
-def _variant_from_wire(variant: dict[str, Any], wire_version: int) -> SlotVariant:
-    return SlotVariant(
-        key=_expect_str(variant.get("key"), "variant.key"),
-        type=type_expr_from_wire(_expect_object(variant.get("type"), "variant.type"), wire_version),
-        inputs=tuple(
-            _dynamic_entry_from_wire(_expect_object(dep, "variant.inputs entry"), wire_version)
-            for dep in _expect_list(variant.get("inputs"), "variant.inputs")
-        ),
-        doc=_expect_str(variant.get("doc", ""), "variant.doc"),
-    )
+def _automatic_from_wire(value: object) -> body.Formula | body.Lookup | None:
+    if value is None:
+        return None
+    decoded = _formula_from_wire(_expect_object(value, "input.automatic"), "input.automatic")
+    if not isinstance(decoded, (body.Formula, body.Lookup)):
+        raise ValueError("input.automatic must be a formula or a lookup")
+    return decoded
 
 
-def _dynamic_entry_from_wire(entry: dict[str, Any], wire_version: int) -> DynamicEntry:
-    role = _expect_str(entry.get("role"), "dynamic entry role")
-    if role == "input":
-        return _input_entry_from_wire(entry, wire_version)
-    if role == "inputFamily":
-        if "type" in entry and "template" in entry:
-            raise ValueError("inputFamily must not carry both type and template")
-        if "type" in entry:
-            raise ValueError("inputFamily.type is not supported")
-        max_members = entry.get("maxMembers")
-        names = entry.get("memberNames")
-        prefix = entry.get("memberPrefix")
-        return InputFamilySpec(
-            id=_expect_str(entry.get("id"), "inputFamily.id"),
-            template=tuple(
-                _dynamic_entry_from_wire(
-                    _expect_object(item, "inputFamily.template entry"), wire_version
-                )
-                for item in _expect_list(entry.get("template"), "inputFamily.template")
-            ),
-            min_members=_expect_int(entry.get("minMembers", 0), "inputFamily.minMembers"),
-            max_members=None
-            if max_members is None
-            else _expect_int(max_members, "inputFamily.maxMembers"),
-            doc=_expect_str(entry.get("doc", ""), "inputFamily.doc"),
-            display_name=_expect_str(entry.get("displayName", ""), "inputFamily.displayName"),
-            required=_expect_bool(entry.get("required", True), "inputFamily.required"),
-            independent_types=_expect_bool(
-                entry.get("independentTypes", False), "inputFamily.independentTypes"
-            ),
-            optional_after_minimum=_expect_bool(
-                entry.get("optionalAfterMinimum", False), "inputFamily.optionalAfterMinimum"
-            ),
-            member_prefix=None
-            if prefix is None
-            else _expect_str(prefix, "inputFamily.memberPrefix"),
-            member_names=None
-            if names is None
-            else _expect_strings(names, "inputFamily.memberNames"),
-        )
-    if role == "dynamicCombo":
-        options: list[DynamicComboOption] = []
-        for raw_option in _expect_list(entry.get("options"), "dynamicCombo.options"):
-            option = _expect_object(raw_option, "dynamicCombo.options entry")
-            options.append(
-                DynamicComboOption(
-                    key=_expect_str(option.get("key"), "dynamicCombo option key"),
-                    inputs=tuple(
-                        _dynamic_entry_from_wire(
-                            _expect_object(item, "dynamicCombo option input"), wire_version
-                        )
-                        for item in _expect_list(option.get("inputs"), "dynamicCombo option inputs")
-                    ),
-                )
-            )
-        default = entry.get("default")
-        return DynamicComboSpec(
-            id=_expect_str(entry.get("id"), "dynamicCombo.id"),
-            options=tuple(options),
-            default=None if default is None else _expect_str(default, "dynamicCombo.default"),
-            required=_expect_bool(entry.get("required", True), "dynamicCombo.required"),
-            doc=_expect_str(entry.get("doc", ""), "dynamicCombo.doc"),
-            display_name=_expect_str(entry.get("displayName", ""), "dynamicCombo.displayName"),
-            hidden=_expect_bool(entry.get("hidden", False), "dynamicCombo.hidden"),
-        )
-    if role == "dynamicSlot":
-        has_variants = "variants" in entry
-        has_slot_type = "slotType" in entry
-        if has_variants == has_slot_type:
-            raise ValueError("dynamicSlot requires exactly one of variants or slotType")
-        type_template_id = _expect_str(
-            entry.get("typeTemplateId", ""), "dynamicSlot.typeTemplateId"
-        )
-        if "typeTemplateId" in entry and (not type_template_id):
-            raise ValueError("dynamicSlot.typeTemplateId must be a non-empty string")
-        return DynamicSlotSpec(
-            id=_expect_str(entry.get("id"), "dynamicSlot.id"),
-            variants=tuple(
-                _variant_from_wire(
-                    _expect_object(variant, "dynamicSlot.variants entry"), wire_version
-                )
-                for variant in _expect_list(entry.get("variants"), "dynamicSlot.variants")
-            )
-            if has_variants
-            else None,
-            slot_type=type_expr_from_wire(
-                _expect_object(entry.get("slotType"), "dynamicSlot.slotType"), wire_version
-            )
-            if has_slot_type
-            else None,
-            inputs=tuple(
-                _dynamic_entry_from_wire(
-                    _expect_object(item, "dynamicSlot.inputs entry"), wire_version
-                )
-                for item in _expect_list(
-                    entry.get("inputs") if has_slot_type else entry.get("inputs", []),
-                    "dynamicSlot.inputs",
-                )
-            ),
-            required=_expect_bool(entry.get("required", has_variants), "dynamicSlot.required"),
-            force_input=_expect_bool(entry.get("forceInput", False), "dynamicSlot.forceInput"),
-            doc=_expect_str(entry.get("doc", ""), "dynamicSlot.doc"),
-            display_name=_expect_str(entry.get("displayName", ""), "dynamicSlot.displayName"),
-            type_template_id=type_template_id,
-        )
-    raise ValueError(f"unsupported dynamic entry role: {role!r}")
-
-
-def _output_descriptors_from_wire(
-    entry: dict[str, Any], wire_version: int
-) -> OutputDescriptorsSpec:
-    _reject_unknown_fields(
-        entry,
-        frozenset({"role", "input", "choices", "minEntries", "maxEntries", "fixedIds", "probe"}),
-        "outputDescriptors",
-    )
-    choices: list[OutputSpec] = []
-    for raw in _expect_list(entry.get("choices"), "outputDescriptors.choices"):
-        choice = _expect_object(raw, "output descriptor choice")
+def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
+    _reject_unknown_fields(entry, _OUTPUT_FIELDS, "output")
+    expr = type_expr_from_wire(_expect_object(entry.get("type"), "output.type"), wire_version)
+    preview = False
+    preview = _expect_bool(entry.get("preview", False), "output.preview")
+    represents = None
+    if "represents" in entry:
+        data = _expect_object(entry.get("represents"), "output.represents")
         _reject_unknown_fields(
-            choice,
-            frozenset(
-                {
-                    "id",
-                    "type",
-                    "displayName",
-                    "doc",
-                    "optional",
-                    "preview",
-                    "alphaPolicy",
-                    "maskPolarity",
-                    "maskSemantic",
-                }
-            ),
-            "output descriptor choice",
+            data, frozenset({"input", "rendition", "applies"}), "output.represents"
         )
-        choices.append(
-            OutputSpec(
-                id=_expect_str(choice.get("id"), "output descriptor choice id"),
-                type=type_expr_from_wire(
-                    _expect_object(choice.get("type"), "choice type"), wire_version
-                ),
-                display_name=_expect_str(choice.get("displayName", ""), "choice displayName"),
-                doc=_expect_str(choice.get("doc", ""), "choice doc"),
-                optional=_expect_bool(choice.get("optional", False), "choice optional"),
-                preview=_expect_bool(choice.get("preview", False), "choice preview"),
-                **_media_policy_from_wire(choice, wire_version),
+        applies = None
+        if "applies" in data:
+            applies = _applies_from_wire(data.get("applies"), "output.represents.applies")
+        represents = OutputRepresents(
+            input=_expect_str(data.get("input"), "output.represents.input"),
+            rendition=_expect_str(data.get("rendition"), "output.represents.rendition"),
+            applies=applies,
+        )
+    known_value = None
+    if "knownValue" in entry:
+        data = _expect_object(entry.get("knownValue"), "output.knownValue")
+        _reject_unknown_fields(data, frozenset({"input", "limits"}), "output.knownValue")
+        limits: dict[str, str] = {}
+        if "limits" in data:
+            raw_limits = _expect_object(data.get("limits"), "output.knownValue.limits")
+            if not raw_limits:
+                raise ValueError("output.knownValue.limits must name at least one limit")
+            _reject_unknown_fields(
+                raw_limits, frozenset(KNOWN_VALUE_LIMITS), "output.knownValue.limits"
             )
+            for key, target in raw_limits.items():
+                limits[key] = _expect_str(target, f"output.knownValue.limits.{key}")
+                if not limits[key]:
+                    raise ValueError(f"output.knownValue.limits.{key} must be a non-empty string")
+        known_value = OutputKnownValue(
+            input=_expect_str(data.get("input"), "output.knownValue.input"),
+            limits=limits,
         )
-    probe = None
-    if "probe" in entry:
-        data = _expect_object(entry["probe"], "outputDescriptors.probe")
-        _reject_unknown_fields(data, frozenset({"input", "kind", "revision"}), "output probe")
-        probe = OutputProbeSpec(
-            input=_expect_str(data.get("input"), "output probe input"),
-            kind=_expect_str(data.get("kind"), "output probe kind"),
-            revision=_expect_str(data.get("revision"), "output probe revision"),
-        )
-    return OutputDescriptorsSpec(
-        input=_expect_str(entry.get("input"), "outputDescriptors.input"),
-        choices=tuple(choices),
-        min_entries=_expect_int(entry.get("minEntries"), "outputDescriptors.minEntries"),
-        max_entries=_expect_int(entry.get("maxEntries"), "outputDescriptors.maxEntries"),
-        fixed_ids=_expect_bool(entry.get("fixedIds"), "outputDescriptors.fixedIds"),
-        probe=probe,
+    return Output(
+        id=_expect_str(entry.get("id"), "output.id"),
+        type=expr,
+        tooltip=_expect_str(entry.get("tooltip", ""), "output.tooltip"),
+        optional=_expect_bool(entry.get("optional", False), "output.optional"),
+        preview=preview,
+        represents=represents,
+        known_value=known_value,
+        label=_text_or_formula_from_wire(entry.get("label", ""), "output.label"),
+        visible=True
+        if "visible" not in entry
+        else cast("Any", _formula_from_wire(entry["visible"], "output.visible")),
+        **_media_policy_from_wire(entry, wire_version),
     )
 
 
@@ -1594,114 +1643,17 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         if raw_dispatch_affinity != "native":
             raise ValueError(f"unsupported dispatchAffinity: {raw_dispatch_affinity!r}")
         dispatch_affinity = raw_dispatch_affinity
-    inputs: list[InputSpec] = []
-    outputs: list[OutputSpec] = []
-    input_families: list[InputFamilySpec] = []
-    output_families: list[OutputFamilySpec] = []
-    output_descriptors = None
-    combos: list[DynamicComboSpec] = []
-    slots: list[DynamicSlotSpec] = []
-    input_order: list[str] = []
+    inputs: list[Input] = []
+    outputs: list[Output] = []
     for raw_entry in _expect_list(wire.get("interface"), "interface"):
-        entry = _expect_object(raw_entry, "interface entry")
-        role = _expect_str(entry.get("role"), "interface role")
-        if role == "outputDescriptors":
-            if output_descriptors is not None:
-                raise ValueError("only one outputDescriptors construct is allowed")
-            output_descriptors = _output_descriptors_from_wire(entry, wire_version)
-            continue
-        if role not in {
-            "input",
-            "inputFamily",
-            "dynamicCombo",
-            "dynamicSlot",
-            "output",
-            "outputFamily",
-        }:
-            raise ValueError(f"unsupported interface role: {role!r}")
-        if role in {"input", "inputFamily", "dynamicCombo", "dynamicSlot"}:
-            dynamic = _dynamic_entry_from_wire(entry, cast("int", wire_version))
-            input_order.append(dynamic.id)
-            if isinstance(dynamic, InputSpec):
-                inputs.append(dynamic)
-            elif isinstance(dynamic, InputFamilySpec):
-                input_families.append(dynamic)
-            elif isinstance(dynamic, DynamicComboSpec):
-                combos.append(dynamic)
-            else:
-                slots.append(dynamic)
-            continue
-        expr = type_expr_from_wire(
-            _expect_object(entry.get("type"), "interface type"), wire_version
-        )
-        if role == "outputFamily":
-            out_max = entry.get("maxMembers")
-            has_count = "count" in entry
-            raw_count = entry.get("count")
-            count = None
-            if has_count:
-                count_data = _expect_object(raw_count, "outputFamily.count")
-                if set(count_data) != {"input", "suffix"}:
-                    raise ValueError("outputFamily.count must contain exactly input and suffix")
-                count = OutputCountSpec(
-                    input=_expect_str(count_data.get("input"), "outputFamily.count.input"),
-                    suffix=cast(
-                        "Literal['index']",
-                        _expect_str(count_data.get("suffix"), "outputFamily.count.suffix"),
-                    ),
-                )
-            preview = False
-            preview = _expect_bool(entry.get("preview", False), "outputFamily.preview")
-            output_families.append(
-                OutputFamilySpec(
-                    id=_expect_str(entry.get("id"), "outputFamily.id"),
-                    type=expr,
-                    min_members=_expect_int(entry.get("minMembers", 0), "outputFamily.minMembers"),
-                    max_members=None
-                    if out_max is None
-                    else _expect_int(out_max, "outputFamily.maxMembers"),
-                    doc=_expect_str(entry.get("doc", ""), "outputFamily.doc"),
-                    preview=preview,
-                    count=count,
-                )
-            )
+        entry = dict(_expect_object(raw_entry, "interface entry"))
+        role = _expect_str(entry.pop("role", None), "interface role")
+        if role == "input":
+            inputs.append(_input_entry_from_wire(entry, wire_version))
         elif role == "output":
-            preview = False
-            preview = _expect_bool(entry.get("preview", False), "output.preview")
-            represents = None
-            if "represents" in entry:
-                data = _expect_object(entry.get("represents"), "output.represents")
-                _reject_unknown_fields(
-                    data, frozenset({"input", "rendition", "applies"}), "output.represents"
-                )
-                applies = None
-                if "applies" in data:
-                    applies = _applies_from_wire(data.get("applies"), "output.represents.applies")
-                represents = OutputRepresents(
-                    input=_expect_str(data.get("input"), "output.represents.input"),
-                    rendition=_expect_str(data.get("rendition"), "output.represents.rendition"),
-                    applies=applies,
-                )
-            known_value = None
-            if "knownValue" in entry:
-                data = _expect_object(entry.get("knownValue"), "output.knownValue")
-                _reject_unknown_fields(data, frozenset({"input"}), "output.knownValue")
-                known_value = OutputKnownValue(
-                    input=_expect_str(data.get("input"), "output.knownValue.input")
-                )
-            outputs.append(
-                OutputSpec(
-                    id=_expect_str(entry.get("id"), "output.id"),
-                    type=expr,
-                    doc=_expect_str(entry.get("doc", ""), "output.doc"),
-                    optional=_expect_bool(entry.get("optional", False), "output.optional"),
-                    preview=preview,
-                    represents=represents,
-                    known_value=known_value,
-                    display_name=_expect_str(entry.get("displayName", ""), "output.displayName"),
-                    **_media_policy_from_wire(entry, wire_version),
-                )
-            )
+            outputs.append(_output_entry_from_wire(entry, wire_version))
+        else:
+            raise ValueError(f"unsupported interface role: {role!r}")
     slot_choices: list[tuple[str, str]] = []
     for raw_choice in _expect_list(wire.get("slotChoices", []), "slotChoices"):
         choice = _expect_list(raw_choice, "slotChoices entry")
@@ -1716,23 +1668,17 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
     selector = None
     if wire.get("selector") is not None:
         data = _expect_object(wire.get("selector"), "selector")
-        if set(data) != {"input", "branches"}:
-            raise ValueError("selector must contain exactly input and branches")
-        branches = _expect_object(data.get("branches"), "selector.branches")
-        if set(branches) != {"false", "true"}:
-            raise ValueError("selector.branches must contain exactly false and true")
+        if not {"input", "group"} <= set(data) <= {"input", "group", "names"}:
+            raise ValueError("selector must contain input and group, and may contain names")
         selector = SelectorSpec(
             _expect_str(data.get("input"), "selector.input"),
-            {
-                "false": _expect_str(branches.get("false"), "selector.branches.false"),
-                "true": _expect_str(branches.get("true"), "selector.branches.true"),
-            },
+            _expect_str(data.get("group"), "selector.group"),
+            _expect_str(data["names"], "selector.names") if "names" in data else None,
         )
     replacements = tuple(
         rule_from_wire(_expect_object(rule, "replacements entry"))
         for rule in _expect_list(wire.get("replacements", []), "replacements")
     )
-    widget_groups = _widget_groups_from_wire(wire.get("widgetGroups"))
     chunk_safe = None
     chunk_safe_applies = None
     if "chunkSafe" in wire:
@@ -1746,7 +1692,13 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
             _expect_strings(declaration.get("inputs"), "chunkSafe.inputs"),
             _expect_strings(declaration.get("outputs"), "chunkSafe.outputs"),
         )
+    body_fields: dict[str, object] = {}
+    if "body" in wire:
+        if inputs or outputs:
+            raise ValueError("a schema carries body or interface rows, not both")
+        body_fields = _body_fields_from_wire(wire, wire_version)
     return NodeSchema(
+        **cast("Any", body_fields),
         node_type=_expect_str(wire.get("nodeType"), "nodeType"),
         version=_expect_int(wire.get("version"), "version"),
         display_name=_expect_str(wire.get("displayName", ""), "displayName"),
@@ -1762,12 +1714,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         ),
         inputs=tuple(inputs),
         outputs=tuple(outputs),
-        input_families=tuple(input_families),
-        output_families=tuple(output_families),
-        output_descriptors=output_descriptors,
-        combos=tuple(combos),
-        slots=tuple(slots),
-        input_order=tuple(input_order),
         slot_choices=tuple(slot_choices),
         idempotent=_expect_bool(wire.get("idempotent", True), "idempotent"),
         occupies=_expect_strings(wire.get("occupies", []), "occupies"),
@@ -1780,7 +1726,6 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         ),
         search_terms=_expect_strings(wire.get("searchTerms", []), "searchTerms"),
         replacements=replacements,
-        aliases=_expect_strings(wire.get("aliases", []), "aliases"),
         output_node=_expect_bool(wire.get("outputNode", False), "outputNode"),
         emits_previews=_expect_bool(wire.get("emitsPreviews", False), "emitsPreviews"),
         may_expand_graph=_expect_bool(wire.get("mayExpandGraph", False), "mayExpandGraph"),
@@ -1791,49 +1736,10 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         input_values=_expect_bool(wire.get("inputValues", False), "inputValues"),
         mirror=_mirror_from_wire(wire.get("mirror"), wire_version),
         selector=selector,
-        widget_groups=widget_groups,
         chunk_safe=chunk_safe,
         chunk_safe_applies=chunk_safe_applies,
+        effective=_expect_bool(wire.get("effective", False), "effective"),
     )
-
-
-def _widget_groups_from_wire(raw: Any) -> tuple[ConditionalWidgetGroup, ...]:
-    if raw is None:
-        return ()
-    entries = _expect_list(raw, "widgetGroups")
-    if not entries:
-        raise ValueError("widgetGroups must be a non-empty array")
-
-    def condition_from_wire(value: Any, where: str) -> ConditionalWidgetCondition:
-        data = _expect_object(value, where)
-        if set(data) != {"input", "values"}:
-            raise ValueError(f"{where} must contain exactly input and values")
-        values = _expect_list(data.get("values"), f"{where}.values")
-        return ConditionalWidgetCondition(
-            input=_expect_str(data.get("input"), f"{where}.input"), values=tuple(values)
-        )
-
-    result: list[ConditionalWidgetGroup] = []
-    for index, value in enumerate(entries):
-        where = f"widgetGroups[{index}]"
-        data = _expect_object(value, where)
-        _reject_unknown_fields(data, frozenset({"input", "values", "members", "requires"}), where)
-        condition = condition_from_wire(
-            {"input": data.get("input"), "values": data.get("values")}, where
-        )
-        members = _expect_strings(data.get("members"), f"{where}.members")
-        requires = tuple(
-            (
-                condition_from_wire(item, f"{where}.requires[{required_index}]")
-                for required_index, item in enumerate(
-                    _expect_list(data.get("requires", []), f"{where}.requires")
-                )
-            )
-        )
-        if "requires" in data and (not requires):
-            raise ValueError(f"{where}.requires must be a non-empty array")
-        result.append(ConditionalWidgetGroup(condition.input, condition.values, members, requires))
-    return tuple(result)
 
 
 def _mirror_from_wire(wire: Any, wire_version: int) -> MirrorSpec | None:
@@ -1893,3 +1799,750 @@ def _deprecation_from_wire(wire: Any) -> Deprecation | None:
         since=_expect_str(data.get("since", ""), "deprecation.since"),
         replacement=_expect_str(data.get("replacement", ""), "deprecation.replacement"),
     )
+
+
+# --- the node body tree -----------------------------------------------------------
+#
+# A body row is an object with "kind". A formula is {"formula": text}; a
+# lookup is {"lookup": wire name, "args": [...]}; a step value is
+# {"value": literal}, a formula or a lookup. Fields at their default are left out.
+
+_STEP_KINDS: Final = {
+    "set": body.Set,
+    "toggle": body.Toggle,
+    "reset": body.Reset,
+    "swap": body.Swap,
+    "append": body.Append,
+    "randomize": body.Randomize,
+    "setMode": body.SetMode,
+    "addMember": body.AddMember,
+    "removeMember": body.RemoveMember,
+    "clearMembers": body.ClearMembers,
+    "setEach": body.SetEach,
+    "disconnect": body.Disconnect,
+    "addNode": body.AddNode,
+    "pick": body.Pick,
+    "ask": body.Ask,
+    "openPicker": body.OpenPicker,
+    "openEditor": body.OpenEditor,
+    "pasteImage": body.PasteImage,
+    "call": body.Call,
+    "queue": body.Queue,
+    "interrupt": body.Interrupt,
+    "copy": body.Copy,
+    "download": body.Download,
+    "openLink": body.OpenLink,
+}
+_STEP_NAMES: Final = {cls: name for name, cls in _STEP_KINDS.items()}
+
+
+def _camel(name: str) -> str:
+    head, *rest = name.split("_")
+    return head + "".join(part.title() for part in rest)
+
+
+def _formula_to_wire(value: object) -> object:
+    """Text or a flag as itself, a formula or a lookup as an object."""
+    if isinstance(value, body.Formula):
+        return {"formula": value.text}
+    if isinstance(value, body.Lookup):
+        return _lookup_to_wire(value)
+    return value
+
+
+def _formula_from_wire(value: object, field: str) -> object:
+    if isinstance(value, dict):
+        data = cast("dict[str, Any]", value)
+        if set(data) == {"formula"}:
+            return body.Formula(_expect_str(data["formula"], f"{field}.formula"))
+        if "lookup" in data:
+            return _lookup_from_wire(data, field)
+        raise ValueError(f"{field} must be a value, a formula or a lookup")
+    return value
+
+
+def _text_or_formula_from_wire(value: object, field: str) -> str | body.Formula:
+    decoded = _formula_from_wire(value, field)
+    if not isinstance(decoded, (str, body.Formula)):
+        raise ValueError(f"{field} must be text or a formula")
+    return decoded
+
+
+def _arguments_to_wire(args: tuple[body.Argument, ...]) -> list[object]:
+    return [_formula_to_wire(argument) for argument in args]
+
+
+def _arguments_from_wire(value: object, field: str) -> tuple[body.Argument, ...]:
+    args: list[body.Argument] = []
+    for item in _expect_list(value, field):
+        argument = _formula_from_wire(item, field)
+        if not isinstance(argument, (str, body.Formula)):
+            raise ValueError(f"{field} holds field ids and formulas")
+        args.append(argument)
+    return tuple(args)
+
+
+def _lookup_to_wire(lookup: body.Lookup) -> dict[str, object]:
+    wire: dict[str, object] = {"lookup": lookup.name}
+    if lookup.args:
+        wire["args"] = _arguments_to_wire(lookup.args)
+    return wire
+
+
+def _lookup_from_wire(data: dict[str, Any], field: str) -> body.Lookup:
+    _reject_unknown_fields(data, frozenset({"lookup", "args"}), field)
+    return body.Lookup(
+        _expect_str(data["lookup"], f"{field}.lookup"),
+        _arguments_from_wire(data.get("args", []), f"{field}.args"),
+    )
+
+
+def _table_to_wire(value: object) -> object:
+    if isinstance(value, Mapping):
+        items = cast("Mapping[object, object]", value).items()
+        return {"table": [[key, _table_to_wire(item)] for key, item in items]}
+    if isinstance(value, (list, tuple)):
+        return [_table_to_wire(item) for item in cast("Sequence[object]", value)]
+    if isinstance(value, float) and value.is_integer():
+        # JSON readers cannot tell 1.0 from 1, and formulas can: mark the float.
+        return {"float": value}
+    return value
+
+
+def _table_from_wire(value: object) -> object:
+    if isinstance(value, dict):
+        data = cast("dict[str, Any]", value)
+        if set(data) == {"float"}:
+            number = data["float"]
+            if type(number) not in (int, float) or not float(number).is_integer():
+                raise ValueError("a marked table float is {'float': whole number}")
+            return float(number)
+        if set(data) != {"table"}:
+            raise ValueError("a table dictionary is {'table': [[key, value], ...]}")
+        pairs = _expect_list(data["table"], "table")
+        result: dict[object, object] = {}
+        for pair in pairs:
+            entry = _expect_list(pair, "table entry")
+            if (
+                len(entry) != 2
+                or not isinstance(entry[0], (str, int))
+                or isinstance(entry[0], bool)
+            ):
+                raise ValueError("a table entry is [text or whole-number key, value]")
+            result[entry[0]] = _table_from_wire(entry[1])
+        return result
+    if isinstance(value, list):
+        return tuple(_table_from_wire(item) for item in cast("list[object]", value))
+    return value
+
+
+def _step_value_to_wire(value: object) -> object:
+    if isinstance(value, (body.Formula, body.Lookup)):
+        return _formula_to_wire(value)
+    return {"value": _table_to_wire(value)}
+
+
+def _step_value_from_wire(value: object, field: str) -> object:
+    data = _expect_object(value, field)
+    if set(data) == {"value"}:
+        return _table_from_wire(data["value"])
+    return _formula_from_wire(data, field)
+
+
+def _step_to_wire(step: body.Step, wire_version: int) -> dict[str, object]:
+    wire: dict[str, object] = {"step": _STEP_NAMES[type(step)]}
+    for item in dataclasses.fields(cast("Any", step)):
+        value = getattr(step, item.name)
+        if value == item.default or (
+            item.default_factory is not dataclasses.MISSING and value == item.default_factory()
+        ):
+            continue
+        key = "options" if item.name == "options" else _camel(item.name)
+        if isinstance(step, body.Ask) and item.name == "rows":
+            wire[key] = [_input_entry_to_wire(row, wire_version) for row in step.rows]
+        elif isinstance(step, body.Call) and item.name == "function":
+            wire["function"] = step.name
+        elif isinstance(step, body.Call) and item.name == "args":
+            wire["args"] = _arguments_to_wire(step.args)
+        elif item.name in ("value", "low", "high", "url", "options"):
+            wire[key] = _step_value_to_wire(value)
+        elif item.name == "values":
+            values = cast("Mapping[str, object]", value)
+            wire[key] = {name: _step_value_to_wire(item) for name, item in values.items()}
+        elif item.name == "which":
+            wire[key] = _formula_to_wire(value)
+        elif isinstance(value, tuple):
+            wire[key] = list(cast("tuple[object, ...]", value))
+        else:
+            wire[key] = value
+    return wire
+
+
+def _step_from_wire(value: object, wire_version: int) -> body.Step:
+    data = _expect_object(value, "step")
+    name = _expect_str(data.get("step"), "step.step")
+    cls = _STEP_KINDS.get(name)
+    if cls is None:
+        raise ValueError(f"unknown step {name!r}")
+    fields_by_key = {_camel(item.name): item for item in dataclasses.fields(cast("Any", cls))}
+    _reject_unknown_fields(data, frozenset({"step", *fields_by_key}), f"step {name}")
+    kwargs: dict[str, object] = {}
+    for key, raw in data.items():
+        if key == "step":
+            continue
+        field_name = fields_by_key[key].name
+        where = f"step {name}.{key}"
+        if cls is body.Ask and field_name == "rows":
+            kwargs[field_name] = tuple(
+                _input_entry_from_wire(_expect_object(row, where), wire_version)
+                for row in _expect_list(raw, where)
+            )
+        elif cls is body.Call and field_name == "function":
+            kwargs[field_name] = _expect_str(raw, where)
+        elif cls is body.Call and field_name == "args":
+            kwargs[field_name] = _arguments_from_wire(raw, where)
+        elif field_name in ("value", "low", "high", "url", "options"):
+            kwargs[field_name] = _step_value_from_wire(raw, where)
+        elif field_name == "values":
+            kwargs[field_name] = {
+                item_name: _step_value_from_wire(item, where)
+                for item_name, item in _expect_object(raw, where).items()
+            }
+        elif field_name == "which":
+            kwargs[field_name] = _formula_from_wire(raw, where)
+        elif isinstance(raw, list):
+            kwargs[field_name] = _expect_strings(cast("object", raw), where)
+        else:
+            kwargs[field_name] = raw
+    return cls(**cast("Any", kwargs))
+
+
+def _steps_to_wire(steps: tuple[body.Step, ...], wire_version: int) -> list[object]:
+    return [_step_to_wire(step, wire_version) for step in steps]
+
+
+def _steps_from_wire(value: object, field: str, wire_version: int) -> tuple[body.Step, ...]:
+    return tuple(_step_from_wire(item, wire_version) for item in _expect_list(value, field))
+
+
+def _rule_to_wire(rule: body.Rule, wire_version: int) -> dict[str, object]:
+    wire: dict[str, object] = {"check": _formula_to_wire(rule.check), "message": rule.message}
+    if rule.fix:
+        wire["fix"] = _steps_to_wire(rule.fix, wire_version)
+        wire["fixLabel"] = rule.fix_label
+    return wire
+
+
+def _rule_from_wire(value: object, wire_version: int) -> body.Rule:
+    data = _expect_object(value, "rule")
+    _reject_unknown_fields(data, frozenset({"check", "message", "fix", "fixLabel"}), "rule")
+    check = _formula_from_wire(data.get("check"), "rule.check")
+    if not isinstance(check, body.Formula):
+        raise ValueError("rule.check is a formula")
+    return body.Rule(
+        check,
+        _expect_str(data.get("message"), "rule.message"),
+        _steps_from_wire(data.get("fix", []), "rule.fix", wire_version),
+        _expect_str(data.get("fixLabel", ""), "rule.fixLabel"),
+    )
+
+
+def _common_to_wire(row: object, wire: dict[str, object]) -> dict[str, object]:
+    """The label, tooltip and visible a box carries, each only when set."""
+    for name in ("label", "tooltip"):
+        value = getattr(row, name, "")
+        if value:
+            wire[name] = _formula_to_wire(value)
+    visible = getattr(row, "visible", True)
+    if visible is not True:
+        wire["visible"] = _formula_to_wire(visible)
+    return wire
+
+
+def _common_from_wire(data: dict[str, Any], field: str) -> dict[str, object]:
+    common: dict[str, object] = {}
+    for name in ("label", "tooltip"):
+        if name in data:
+            common[name] = _formula_from_wire(data[name], f"{field}.{name}")
+    if "visible" in data:
+        common["visible"] = _formula_from_wire(data["visible"], f"{field}.visible")
+    return common
+
+
+_COMMON: Final = frozenset({"label", "tooltip", "visible"})
+
+
+def _keys_to_wire(keys: body.Numbered | body.Named) -> dict[str, object]:
+    if isinstance(keys, body.Named):
+        return {"named": list(keys.names)}
+    return {"numbered": {"prefix": keys.prefix, "start": keys.start, "pad": keys.pad}}
+
+
+def _keys_from_wire(value: object) -> body.Numbered | body.Named:
+    data = _expect_object(value, "group.keys")
+    if set(data) == {"named"}:
+        return body.Named(_expect_strings(data["named"], "group.keys.named"))
+    if set(data) != {"numbered"}:
+        raise ValueError("group.keys is {'numbered': {...}} or {'named': [...]}")
+    numbered = _expect_object(data["numbered"], "group.keys.numbered")
+    _reject_unknown_fields(numbered, frozenset({"prefix", "start", "pad"}), "group.keys.numbered")
+    return body.Numbered(
+        _expect_str(numbered.get("prefix"), "group.keys.numbered.prefix"),
+        _expect_int(numbered.get("start", 1), "group.keys.numbered.start"),
+        _expect_int(numbered.get("pad", 0), "group.keys.numbered.pad"),
+    )
+
+
+def _grows_to_wire(grows: body.Grows) -> object:
+    if isinstance(grows, body.Count):
+        return {"count": grows.formula.text}
+    if isinstance(grows, body.FollowList):
+        return {"followList": grows.field}
+    return grows
+
+
+def _grows_from_wire(value: object) -> body.Grows:
+    if isinstance(value, str):
+        if value not in body.GROWS_WORDS:
+            raise ValueError(f"unknown group.grows {value!r}")
+        return cast("body.Grows", value)
+    data = _expect_object(value, "group.grows")
+    if set(data) == {"count"}:
+        return body.Count(body.Formula(_expect_str(data["count"], "group.grows.count")))
+    if set(data) == {"followList"}:
+        return body.FollowList(_expect_str(data["followList"], "group.grows.followList"))
+    raise ValueError("group.grows is a word, {'count': formula} or {'followList': field}")
+
+
+def _use_to_wire(use: body.Use, wire_version: int) -> dict[str, object]:
+    wire: dict[str, object] = {"kind": "use", "id": use.id}
+    if use.label is not body.UNSET:
+        wire["label"] = use.label
+    if use.tooltip is not body.UNSET:
+        wire["tooltip"] = use.tooltip
+    if use.widget is not body.UNSET:
+        widget = cast("Widget | None", use.widget)
+        wire["widget"] = None if widget is None else _widget_to_wire(widget, wire_version)
+    if use.default is not body.UNSET:
+        wire["default"] = use.default
+    if use.required is not body.UNSET:
+        wire["required"] = use.required
+    if use.only is not None:
+        wire["only"] = list(use.only)
+    if use.inside:
+        wire["inside"] = [_use_to_wire(inner, wire_version) for inner in use.inside]
+    return wire
+
+
+def _use_from_wire(data: dict[str, Any], wire_version: int) -> body.Use:
+    allowed = {"kind", "id", "label", "tooltip", "widget", "default", "required", "only", "inside"}
+    _reject_unknown_fields(data, frozenset(allowed), "use")
+    kwargs: dict[str, object] = {"id": _expect_str(data.get("id"), "use.id")}
+    for name in ("label", "tooltip"):
+        if name in data:
+            kwargs[name] = _expect_str(data[name], f"use.{name}")
+    if "widget" in data:
+        raw = data["widget"]
+        kwargs["widget"] = None if raw is None else _widget_from_wire(raw, wire_version)
+    if "default" in data:
+        kwargs["default"] = data["default"]
+    if "required" in data:
+        kwargs["required"] = _expect_bool(data["required"], "use.required")
+    if "only" in data:
+        kwargs["only"] = _expect_strings(data["only"], "use.only")
+    if "inside" in data:
+        kwargs["inside"] = tuple(
+            _use_from_wire(_expect_object(item, "use.inside"), wire_version)
+            for item in _expect_list(data["inside"], "use.inside")
+        )
+    return body.Use(**cast("Any", kwargs))
+
+
+def body_row_to_wire(row: body.BodyRow | body.Use, wire_version: int) -> dict[str, object]:
+    if isinstance(row, body.Use):
+        return _use_to_wire(row, wire_version)
+    if isinstance(row, Input):
+        return {"kind": "input", **_input_entry_to_wire(row, wire_version)}
+    if isinstance(row, Output):
+        return {"kind": "output", **_output_entry_to_wire(row, wire_version)}
+    if isinstance(row, body.State):
+        state: dict[str, object] = {
+            "kind": "state",
+            "id": row.id,
+            "type": type_expr_to_wire(row.type, wire_version),
+        }
+        if row.default is not None:
+            state["default"] = row.default
+        if not row.part_of_run:
+            state["partOfRun"] = False
+        return state
+    if isinstance(row, body.Row):
+        return {"kind": "row", "rows": _rows_to_wire(row.rows, wire_version)}
+    if isinstance(row, body.Section):
+        wire = _common_to_wire(row, {"kind": "section", "id": row.id})
+        wire["rows"] = _rows_to_wire(row.rows, wire_version)
+        if row.collapsed:
+            wire["collapsed"] = True
+        if not row.open_name:
+            wire["openName"] = False
+        return wire
+    if isinstance(row, body.Note):
+        wire = {"kind": "note", "id": row.id, "text": _formula_to_wire(row.text)}
+        if row.unknown:
+            wire["unknown"] = row.unknown
+        return _common_to_wire(row, wire)
+    if isinstance(row, body.Editor):
+        widget = _widget_to_wire(row.widget, wire_version)
+        return _common_to_wire(row, {"kind": "editor", "id": row.id, "widget": widget})
+    if isinstance(row, body.Button):
+        wire = _common_to_wire(row, {"kind": "button", "id": row.id, "label": row.label})
+        wire["steps"] = _steps_to_wire(row.steps, wire_version)
+        if row.enabled is not True:
+            wire["enabled"] = _formula_to_wire(row.enabled)
+        if row.disabled_reason:
+            wire["disabledReason"] = _formula_to_wire(row.disabled_reason)
+        if row.icon is not None:
+            wire["icon"] = row.icon
+        return wire
+    if isinstance(row, body.Group):
+        assert row.keys is not None
+        wire = _common_to_wire(row, {"kind": "group", "id": row.id})
+        if row.value is not None:
+            wire["value"] = body_row_to_wire(row.value, wire_version)
+        else:
+            assert row.member is not None
+            wire["member"] = _rows_to_wire(row.member, wire_version)
+        wire["keys"] = _keys_to_wire(row.keys)
+        wire["grows"] = _grows_to_wire(row.grows)
+        if row.min_members:
+            wire["minMembers"] = row.min_members
+        if row.max_members is not None:
+            wire["maxMembers"] = row.max_members
+        for flag in ("independent_types", "optional_after_minimum", "reorderable"):
+            if getattr(row, flag):
+                wire[_camel(flag)] = True
+        if row.add_label:
+            wire["addLabel"] = row.add_label
+        if row.member_label:
+            wire["memberLabel"] = _formula_to_wire(row.member_label)
+        if not row.open_name:
+            wire["openName"] = False
+        return wire
+    if isinstance(row, body.Choice):
+        wire = _common_to_wire(row, {"kind": "choice", "id": row.id})
+        wire["options"] = [
+            {
+                "key": option.key,
+                "rows": _rows_to_wire(option.rows, wire_version),
+                **({"label": option.label} if option.label else {}),
+            }
+            for option in row.options
+        ]
+        if row.shared:
+            wire["shared"] = _rows_to_wire(row.shared, wire_version)
+        if row.leader is not None:
+            wire["leader"] = row.leader.text
+        if row.default is not None:
+            wire["default"] = row.default
+        if not row.required:
+            wire["required"] = False
+        if row.hidden:
+            wire["hidden"] = True
+        if row.on_edit:
+            wire["onEdit"] = _steps_to_wire(row.on_edit, wire_version)
+        return wire
+    if isinstance(row, body.TypeChoice):
+        wire = _common_to_wire(row, {"kind": "typeChoice", "id": row.id})
+        if row.variants is not None:
+            wire["variants"] = [
+                {
+                    "key": variant.key,
+                    "type": type_expr_to_wire(variant.type, wire_version),
+                    "rows": _rows_to_wire(variant.rows, wire_version),
+                    **({"tooltip": variant.tooltip} if variant.tooltip else {}),
+                }
+                for variant in row.variants
+            ]
+        else:
+            assert row.type is not None
+            wire["type"] = type_expr_to_wire(row.type, wire_version)
+        if row.rows:
+            wire["rows"] = _rows_to_wire(row.rows, wire_version)
+        wire["required"] = bool(row.required)
+        if row.type_variable:
+            wire["typeVariable"] = row.type_variable
+        return wire
+    assert isinstance(row, body.Described)
+    wire = _common_to_wire(row, {"kind": "described", "id": row.id})
+    wire["kinds"] = _rows_to_wire(row.kinds, wire_version)
+    wire["maxEntries"] = row.max_entries
+    if row.min_entries:
+        wire["minEntries"] = row.min_entries
+    if row.fixed_ids:
+        wire["fixedIds"] = True
+    if row.probe is not None:
+        wire["probe"] = {
+            "input": row.probe.input,
+            "kind": row.probe.kind,
+            "revision": row.probe.revision,
+        }
+    return wire
+
+
+def _rows_to_wire(
+    rows: Sequence[body.BodyRow | body.Use], wire_version: int
+) -> list[dict[str, object]]:
+    return [body_row_to_wire(row, wire_version) for row in rows]
+
+
+def _rows_from_wire(value: object, field: str, wire_version: int) -> tuple[Any, ...]:
+    return tuple(
+        body_row_from_wire(_expect_object(item, field), wire_version)
+        for item in _expect_list(value, field)
+    )
+
+
+def body_row_from_wire(data: dict[str, Any], wire_version: int) -> body.BodyRow | body.Use:
+    kind = _expect_str(data.get("kind"), "row.kind")
+    rest = {key: value for key, value in data.items() if key != "kind"}
+    if kind == "use":
+        return _use_from_wire(data, wire_version)
+    if kind == "input":
+        return _input_entry_from_wire(rest, wire_version)
+    if kind == "output":
+        return _output_entry_from_wire(rest, wire_version)
+    if kind == "state":
+        _reject_unknown_fields(rest, frozenset({"id", "type", "default", "partOfRun"}), "state")
+        return body.State(
+            _expect_str(rest.get("id"), "state.id"),
+            type_expr_from_wire(_expect_object(rest.get("type"), "state.type"), wire_version),
+            rest.get("default"),
+            _expect_bool(rest.get("partOfRun", True), "state.partOfRun"),
+        )
+    if kind == "row":
+        _reject_unknown_fields(rest, frozenset({"rows"}), "row")
+        return body.Row(_rows_from_wire(rest.get("rows"), "row.rows", wire_version))
+    if kind == "section":
+        _reject_unknown_fields(rest, _COMMON | {"id", "rows", "collapsed", "openName"}, "section")
+        return body.Section(
+            _expect_str(rest.get("id"), "section.id"),
+            _rows_from_wire(rest.get("rows"), "section.rows", wire_version),
+            collapsed=_expect_bool(rest.get("collapsed", False), "section.collapsed"),
+            open_name=_expect_bool(rest.get("openName", True), "section.openName"),
+            **cast("Any", _common_from_wire(rest, "section")),
+        )
+    if kind == "note":
+        _reject_unknown_fields(rest, frozenset({"id", "text", "unknown", "visible"}), "note")
+        common = _common_from_wire(rest, "note")
+        return body.Note(
+            _expect_str(rest.get("id"), "note.id"),
+            cast("Any", _formula_from_wire(rest.get("text"), "note.text")),
+            _expect_str(rest.get("unknown", ""), "note.unknown"),
+            **cast("Any", {key: common[key] for key in ("visible",) if key in common}),
+        )
+    if kind == "editor":
+        _reject_unknown_fields(rest, frozenset({"id", "widget", "visible"}), "editor")
+        common = _common_from_wire(rest, "editor")
+        return body.Editor(
+            _expect_str(rest.get("id"), "editor.id"),
+            cast("Any", _widget_from_wire(rest.get("widget"), wire_version)),
+            **cast("Any", common),
+        )
+    if kind == "button":
+        _reject_unknown_fields(
+            rest, _COMMON | {"id", "steps", "enabled", "disabledReason", "icon"}, "button"
+        )
+        common = _common_from_wire(rest, "button")
+        return body.Button(
+            _expect_str(rest.get("id"), "button.id"),
+            _expect_str(common.pop("label", None), "button.label"),
+            _steps_from_wire(rest.get("steps"), "button.steps", wire_version),
+            enabled=cast("Any", _formula_from_wire(rest.get("enabled", True), "button.enabled")),
+            disabled_reason=cast(
+                "Any", _formula_from_wire(rest.get("disabledReason", ""), "button.disabledReason")
+            ),
+            icon=None if "icon" not in rest else _expect_str(rest["icon"], "button.icon"),
+            **cast("Any", common),
+        )
+    if kind == "group":
+        allowed = _COMMON | {
+            "id",
+            "member",
+            "value",
+            "keys",
+            "grows",
+            "minMembers",
+            "maxMembers",
+            "independentTypes",
+            "optionalAfterMinimum",
+            "reorderable",
+            "addLabel",
+            "memberLabel",
+            "openName",
+        }
+        _reject_unknown_fields(rest, frozenset(allowed), "group")
+        value = None
+        if "value" in rest:
+            value = body_row_from_wire(_expect_object(rest["value"], "group.value"), wire_version)
+        return body.Group(
+            _expect_str(rest.get("id"), "group.id"),
+            member=None
+            if "member" not in rest
+            else _rows_from_wire(rest["member"], "group.member", wire_version),
+            value=cast("Any", value),
+            keys=_keys_from_wire(rest.get("keys")),
+            grows=_grows_from_wire(rest.get("grows", "link")),
+            min_members=_expect_int(rest.get("minMembers", 0), "group.minMembers"),
+            max_members=None
+            if "maxMembers" not in rest
+            else _expect_int(rest["maxMembers"], "group.maxMembers"),
+            independent_types=_expect_bool(
+                rest.get("independentTypes", False), "group.independentTypes"
+            ),
+            optional_after_minimum=_expect_bool(
+                rest.get("optionalAfterMinimum", False), "group.optionalAfterMinimum"
+            ),
+            reorderable=_expect_bool(rest.get("reorderable", False), "group.reorderable"),
+            add_label=_expect_str(rest.get("addLabel", ""), "group.addLabel"),
+            member_label=cast(
+                "Any", _formula_from_wire(rest.get("memberLabel", ""), "group.memberLabel")
+            ),
+            open_name=_expect_bool(rest.get("openName", True), "group.openName"),
+            **cast("Any", _common_from_wire(rest, "group")),
+        )
+    if kind == "choice":
+        allowed = _COMMON | {
+            "id",
+            "options",
+            "shared",
+            "leader",
+            "default",
+            "required",
+            "hidden",
+            "onEdit",
+        }
+        _reject_unknown_fields(rest, frozenset(allowed), "choice")
+        options: list[body.Option] = []
+        for raw in _expect_list(rest.get("options"), "choice.options"):
+            option = _expect_object(raw, "choice.options")
+            _reject_unknown_fields(option, frozenset({"key", "rows", "label"}), "choice.options")
+            options.append(
+                body.Option(
+                    _expect_str(option.get("key"), "choice.options.key"),
+                    _rows_from_wire(option.get("rows", []), "choice.options.rows", wire_version),
+                    _expect_str(option.get("label", ""), "choice.options.label"),
+                )
+            )
+        return body.Choice(
+            _expect_str(rest.get("id"), "choice.id"),
+            tuple(options),
+            shared=_rows_from_wire(rest.get("shared", []), "choice.shared", wire_version),
+            leader=None
+            if "leader" not in rest
+            else body.Formula(_expect_str(rest["leader"], "choice.leader")),
+            default=None
+            if "default" not in rest
+            else _expect_str(rest["default"], "choice.default"),
+            required=_expect_bool(rest.get("required", True), "choice.required"),
+            hidden=_expect_bool(rest.get("hidden", False), "choice.hidden"),
+            on_edit=_steps_from_wire(rest.get("onEdit", []), "choice.onEdit", wire_version),
+            **cast("Any", _common_from_wire(rest, "choice")),
+        )
+    if kind == "typeChoice":
+        allowed = _COMMON | {"id", "variants", "type", "rows", "required", "typeVariable"}
+        _reject_unknown_fields(rest, frozenset(allowed), "typeChoice")
+        variants: list[body.Variant] | None = None
+        if "variants" in rest:
+            variants = []
+            for raw in _expect_list(rest["variants"], "typeChoice.variants"):
+                variant = _expect_object(raw, "typeChoice.variants")
+                _reject_unknown_fields(
+                    variant, frozenset({"key", "type", "rows", "tooltip"}), "typeChoice.variants"
+                )
+                variants.append(
+                    body.Variant(
+                        _expect_str(variant.get("key"), "typeChoice.variants.key"),
+                        type_expr_from_wire(
+                            _expect_object(variant.get("type"), "typeChoice.variants.type"),
+                            wire_version,
+                        ),
+                        _rows_from_wire(
+                            variant.get("rows", []), "typeChoice.variants.rows", wire_version
+                        ),
+                        _expect_str(variant.get("tooltip", ""), "typeChoice.variants.tooltip"),
+                    )
+                )
+        return body.TypeChoice(
+            _expect_str(rest.get("id"), "typeChoice.id"),
+            variants=None if variants is None else tuple(variants),
+            type=None
+            if "type" not in rest
+            else type_expr_from_wire(_expect_object(rest["type"], "typeChoice.type"), wire_version),
+            rows=_rows_from_wire(rest.get("rows", []), "typeChoice.rows", wire_version),
+            required=_expect_bool(rest.get("required"), "typeChoice.required"),
+            type_variable=_expect_str(rest.get("typeVariable", ""), "typeChoice.typeVariable"),
+            **cast("Any", _common_from_wire(rest, "typeChoice")),
+        )
+    if kind == "described":
+        allowed = _COMMON | {"id", "kinds", "maxEntries", "minEntries", "fixedIds", "probe"}
+        _reject_unknown_fields(rest, frozenset(allowed), "described")
+        probe = None
+        if "probe" in rest:
+            data_probe = _expect_object(rest["probe"], "described.probe")
+            _reject_unknown_fields(
+                data_probe, frozenset({"input", "kind", "revision"}), "described.probe"
+            )
+            probe = OutputProbeSpec(
+                _expect_str(data_probe.get("input"), "described.probe.input"),
+                _expect_str(data_probe.get("kind"), "described.probe.kind"),
+                _expect_str(data_probe.get("revision"), "described.probe.revision"),
+            )
+        return body.Described(
+            _expect_str(rest.get("id"), "described.id"),
+            _rows_from_wire(rest.get("kinds"), "described.kinds", wire_version),
+            _expect_int(rest.get("maxEntries"), "described.maxEntries"),
+            min_entries=_expect_int(rest.get("minEntries", 0), "described.minEntries"),
+            fixed_ids=_expect_bool(rest.get("fixedIds", False), "described.fixedIds"),
+            probe=probe,
+            **cast("Any", _common_from_wire(rest, "described")),
+        )
+    raise ValueError(f"unknown row kind {kind!r}")
+
+
+def _body_fields_to_wire(schema: NodeSchema, wire: dict[str, object], wire_version: int) -> None:
+    wire["body"] = _rows_to_wire(schema.body, wire_version)
+    if schema.tables:
+        wire["tables"] = {name: _table_to_wire(value) for name, value in schema.tables.items()}
+    if schema.derived:
+        wire["derived"] = {name: formula.text for name, formula in schema.derived.items()}
+    if schema.validate:
+        wire["validate"] = [_rule_to_wire(rule, wire_version) for rule in schema.validate]
+    if schema.title_suffix:
+        wire["titleSuffix"] = _formula_to_wire(schema.title_suffix)
+    if schema.menu:
+        wire["menu"] = _rows_to_wire(schema.menu, wire_version)
+
+
+def _body_fields_from_wire(wire: dict[str, Any], wire_version: int) -> dict[str, object]:
+    tables = {
+        name: _table_from_wire(value)
+        for name, value in _expect_object(wire.get("tables", {}), "tables").items()
+    }
+    derived = {
+        name: body.Formula(_expect_str(text, f"derived.{name}"))
+        for name, text in _expect_object(wire.get("derived", {}), "derived").items()
+    }
+    menu = _rows_from_wire(wire.get("menu", []), "menu", wire_version)
+    if any(not isinstance(item, body.Button) for item in menu):
+        raise ValueError("menu holds buttons")
+    return {
+        "body": _rows_from_wire(wire.get("body"), "body", wire_version),
+        "tables": tables,
+        "derived": derived,
+        "validate": tuple(
+            _rule_from_wire(rule, wire_version)
+            for rule in _expect_list(wire.get("validate", []), "validate")
+        ),
+        "title_suffix": _formula_from_wire(wire.get("titleSuffix", ""), "titleSuffix"),
+        "menu": menu,
+    }

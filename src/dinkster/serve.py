@@ -127,6 +127,7 @@ from dinkster_server import (
 from dinkster_server.cleanup import CleanupPolicy, EngineReferences
 from dinkster_server.image_document import InvalidDocument, validate_document
 from dinkster_server.library import run_owned_thread
+from dinkster_server.workflow_facts import is_node_number, number_write_refusal
 from dinkster_values import MEBIBYTE
 from dinkster_workers import (
     ManifestError,
@@ -211,12 +212,28 @@ def _add_collaboration_routes(app: web.Application, database: Path | None) -> bo
             raise
         return False
 
+    class NumberLimits:
+        def remembers(self, document_kind: str, path: tuple[str | int, ...], value: object) -> bool:
+            return document_kind == "workflow" and is_node_number(path, value)
+
+        def refusal(
+            self,
+            document_kind: str,
+            before: object,
+            after: object,
+            held: Callable[[tuple[str | int, ...], object], bool],
+        ) -> dict[str, object] | None:
+            if document_kind != "workflow":
+                return None
+            return number_write_refusal(before, after, app[STATE_KEY].schemas, held)
+
     collab.install_session_extension(
         app,
         database=database,
         snapshot_validator=_validate_collaboration_snapshot,
         principal_for=principal_for,
         resolve_scope=resolve_scope,
+        write_check=NumberLimits(),
     )
     return True
 
@@ -1292,6 +1309,12 @@ def main(argv: list[str] | None = None) -> None:
         help="drop execution logs of runs that finished more than DAYS ago (default: 30)",
     )
     parser.add_argument(
+        "--no-upload-size-limit",
+        action="store_true",
+        help="disable upload size limits on a standalone engine (off by default); "
+        "managed environments use dinkster-env uploads",
+    )
+    parser.add_argument(
         "--allow-mount-changes",
         action="store_true",
         help="enable POST/DELETE /api/mounts: grant and revoke filesystem "
@@ -1569,8 +1592,10 @@ def _serve(
         args.no_default_packs = True
     if args.selected_packs and args.generation is None:
         parser.error("--selected-packs requires --generation")
+    if args.no_upload_size_limit and args.generation is not None:
+        parser.error("managed upload limits are configured with dinkster-env uploads")
     pack_selection: Mapping[str, object] | None = None
-    upload_limits: dict[str, int] = {}
+    upload_limits: dict[str, int] | None = None if args.no_upload_size_limit else {}
     response_compression = False
     runtime_offline = False
     excluded_nodes: list[str] = []
@@ -1603,7 +1628,10 @@ def _serve(
                     settings.get("responseCompression", False)
                 )
                 runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
-                upload_limits = read_upload_limits(settings.get("uploadLimits", {}))
+                upload_limits = read_upload_limits(
+                    settings.get("uploadLimits"),
+                    no_upload_size_limit=settings.get("noUploadSizeLimit", False),
+                )
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
                 if scratch_directory is not None:
@@ -2422,6 +2450,7 @@ def _serve(
             else _order_default_pack_specs(composer, specs, resolved_default_pack_count)
         )
         composer.validate_specs(specs)
+        composer.plan_pack_entries(specs)
         if args.prepare_stale_catalogs or (
             args.generation is None
             and Path(__file__).with_name("official_packs").joinpath("official-packs.lock").is_file()
@@ -2497,9 +2526,13 @@ def _serve(
                 local_resolver=(mount_service.table if mount_service is not None else None),
                 project_folders_for=(mount_service.project_context if mount_service else None),
                 upload_writer=AssetWriter(mount_service.table) if mount_service else None,
-                import_mount=import_mount,
-                acquire_model=model_downloads.acquire if model_downloads else None,
-                model_destination=model_downloads.destination if model_downloads else None,
+                import_mount=(
+                    lambda project: (
+                        (mount_service.projects.input(project, import_mount) or import_mount)
+                        if mount_service
+                        else import_mount
+                    )
+                ),
                 model_sources_for_name=TemplateModelSources().for_name,
                 disabled_model_name_locations=(
                     model_downloads.disabled_name_locations if model_downloads else None
@@ -2615,11 +2648,21 @@ def _serve(
                     resolution_store.replace_mount_snapshot(scopes, ())
                 else:
                     mount_service.attach_resolution_store(resolution_store, scopes)
+
+            async def prepare_project_run(project: str) -> None:
+                if mount_service is not None:
+                    output = mount_service.project_context(project).output_mount
+                    if output is not None and output in mount_service.table.pending():
+                        await mount_service.scan(app, output, pending_only=True)
+
             redactor = PathRedactor(redaction_roots)
             app = create_app(
                 make_engine,
                 composition.schemas,
                 pack_route_dispatch=composer.call_pack_route,
+                pack_function_dispatch=composer.call_pack_function,
+                lookup_dispatch=composer.call_lookup,
+                lookup_marks=composer.lookup_marks,
                 frontend_module_read=composer.read_frontend_module,
                 max_running_jobs=max_running_jobs,
                 governor=governor,
@@ -2665,6 +2708,7 @@ def _serve(
                 workers=lambda: composer.workers(remote_specs),
                 place_execution=composer.place_execution,
                 full_free=composer.full_free,
+                prepare_project_run=prepare_project_run,
                 prepare_remote_run=prepare_remote_run if account is not None else None,
                 finish_remote_run=finish_remote_run if account is not None else None,
                 federated_asset_paths=(

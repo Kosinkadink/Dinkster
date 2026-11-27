@@ -18,10 +18,10 @@ from dinkster_engine import (
 )
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -63,8 +63,7 @@ class GpuSleeper(Tracked):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.gpu_sleeper",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             occupies=("gpu",),
         )
 
@@ -79,8 +78,7 @@ class CpuSleeper(Tracked):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.cpu_sleeper",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
 
@@ -94,8 +92,7 @@ class IoSleeper(Tracked):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.io_sleeper",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             io_bound=True,
         )
 
@@ -110,8 +107,7 @@ class DualResource(Tracked):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.dual",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             occupies=("gpu", "npu"),
         )
 
@@ -121,8 +117,7 @@ class GpuFail(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.gpu_fail",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             occupies=("gpu",),
         )
 
@@ -140,8 +135,7 @@ class LoadModel(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.load_model",
-            inputs=(InputSpec("name", STRING), InputSpec("device", STRING)),
-            outputs=(OutputSpec("model", MODEL),),
+            body=(Input("name", STRING), Input("device", STRING), Output("model", MODEL)),
         )
 
     @classmethod
@@ -159,8 +153,7 @@ class Sampler(Tracked):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sampler",
-            inputs=(InputSpec("model", MODEL), InputSpec("tag", STRING)),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("model", MODEL), Input("tag", STRING), Output("out", STRING)),
             occupies=("gpu",),
         )
 

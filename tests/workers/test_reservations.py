@@ -25,7 +25,7 @@ from dinkster_memory import (
     PressureSignal,
     ReservationRequest,
 )
-from dinkster_schema import InputSpec, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, NodeSchema, Output, TypeExpr, elaborate
 from dinkster_values import (
     CORE_FLOAT,
     CORE_INT,
@@ -85,8 +85,7 @@ HOG_SCHEMA = NodeSchema(
     node_type="test.hog",
     display_name="Hog",
     category="test",
-    inputs=(InputSpec("nbytes", INT),),
-    outputs=(OutputSpec("nbytes", INT),),
+    body=(Input("nbytes", INT), Output("nbytes", INT)),
 )
 
 
@@ -310,7 +309,7 @@ def hog_invocation(
             "seconds": registry.wrap(CORE_FLOAT, seconds),
             "residency": registry.wrap(CORE_STRING, residency),
         },
-        effective_schema=worker.schemas["iso.hog"],
+        effective_schema=elaborate(worker.schemas["iso.hog"], ()),
     )
 
 
@@ -505,8 +504,7 @@ def invocation_with_inputs(**inputs: Value) -> Invocation:
             node_type="comfy.use_model",
             display_name="Use Model",
             category="test",
-            inputs=(),
-            outputs=(),
+            body=(),
         ),
     )
 

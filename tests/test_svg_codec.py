@@ -11,10 +11,10 @@ import pytest
 from dinkster_api.v1 import (
     CORE_STRING,
     SVG_TYPE,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     materialize_svg,
 )
@@ -73,7 +73,7 @@ class SvgSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="svg-fixture.source",
-            outputs=(OutputSpec("svg", TypeExpr.concrete(SVG_TYPE)),),
+            body=(Output("svg", TypeExpr.concrete(SVG_TYPE)),),
         )
 
     @classmethod
@@ -86,8 +86,10 @@ class SvgConsumer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="svg-fixture.consumer",
-            inputs=(InputSpec("svg", TypeExpr.concrete(SVG_TYPE)),),
-            outputs=(OutputSpec("result", TypeExpr.concrete(CORE_STRING)),),
+            body=(
+                Input("svg", TypeExpr.concrete(SVG_TYPE)),
+                Output("result", TypeExpr.concrete(CORE_STRING)),
+            ),
         )
 
     @classmethod

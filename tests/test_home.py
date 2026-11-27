@@ -80,17 +80,24 @@ def make_engine(
     return app
 
 
-async def wait_for(client: TestClient, predicate: Callable[[dict], bool]) -> dict:
+async def wait_for(
+    client: TestClient, predicate: Callable[[dict], bool], path: str = "/supervisor/status"
+) -> dict:
     status: dict = {}
     for _ in range(200):
-        status = await (await client.get("/supervisor/status")).json()
+        status = await (await client.get(path)).json()
         if predicate(status):
             return status
         await asyncio.sleep(0.02)
     raise AssertionError(f"status never matched: {status}")
 
 
-def test_frontend_and_status_answer_with_no_engine(tmp_path: Path) -> None:
+def test_frontend_and_status_answer_with_no_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home_folder = tmp_path / "configured-home"
+    monkeypatch.setenv("DINKSTER_HOME", str(home_folder))
+
     async def scenario() -> None:
         frontend = make_frontend(tmp_path / "frontend")
         (tmp_path / "secret.txt").write_text("outside")
@@ -109,7 +116,13 @@ def test_frontend_and_status_answer_with_no_engine(tmp_path: Path) -> None:
             status = await (await client.get("/supervisor/status")).json()
             assert status["protocol"] == 1 and status["role"] == "home"
             assert status["state"] == "stopped" and "open" not in status
+            assert status["execution"] is None
+            assert (await (await client.get("/supervisor/status?project=default")).json())[
+                "execution"
+            ] is None
             assert status["installations"] == 0
+            assert status["projectsFolder"] == str(home_folder / "projects")
+            assert not (home_folder / "projects").exists()
 
             refused = await client.get("/api/nodes")
             assert refused.status == 503
@@ -222,6 +235,11 @@ def test_open_engine_receives_the_api_and_events_until_another_opens(tmp_path: P
             assert opened.status == 200
             status = await wait_for(client, lambda s: s["state"] == "ready")
             assert status["open"] == {"root": str(first_root.resolve()), "engine": "main"}
+            unverified = (await (await client.get("/supervisor/status?project=default")).json())[
+                "execution"
+            ]
+            assert unverified["host"] == {"kind": "unknown", "distribution": None}
+            assert unverified["filesystem"] is None
             assert await (await client.get("/api/nodes")).json() == {"engine": "first"}
             # A built frontend file wins over an engine path of the same shape.
             assert await (await client.get("/assets/index-abc.js")).text() == (
@@ -904,6 +922,402 @@ def test_open_starts_a_managed_snapshot_registered_in_the_store(
         stop_engine(root, "main")
 
 
+def test_execution_binding_tracks_managed_target_and_host_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from dinkster_library import LibraryClient
+    from dinkster_supervisor import environment_runtime
+    from dinkster_supervisor import home as home_module
+    from dinkster_supervisor.environment_runtime import start_engine, stop_engine
+    from test_environment_runtime import free_port, make_generation
+
+    settings = tmp_path / "settings"
+    settings.mkdir()
+    (settings / "model-settings.json").write_text('{"version":1,"locations":[]}')
+    monkeypatch.setenv("DINKSTER_HOME", str(settings))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    roots = [tmp_path / "first", tmp_path / "second"]
+    for root in roots:
+        make_generation(root, fake_serve=False)
+        (root / "builds/1/dinkster.lock").write_text('{"format":"dinkster.lock/1","packs":[]}\n')
+        (root / "environment.json").write_text(
+            json.dumps(
+                {
+                    "format": "dinkster.project/1",
+                    "channel": "nightly",
+                    "variant": "linux-cpu",
+                    "mirrors": [],
+                    "port": free_port(),
+                    "libraryRoot": str(root / "library"),
+                }
+            )
+        )
+        with LibraryClient(root / "library") as helper:
+            helper.call("projects.register", id="film", name=root.name)
+
+    async def scenario() -> None:
+        started = asyncio.Event()
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            completed = started
+            try:
+                return await home_module.start_managed_engine(target, found)
+            finally:
+                completed.set()
+
+        home = Home(installations=lambda: frozenset(roots), start=start, watch_interval=0.05)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+
+            async def opened(root: Path, engine: str = "main") -> dict:
+                nonlocal started
+                started = asyncio.Event()
+                response = await client.post(
+                    "/supervisor/engine", json={"root": str(root), "engine": engine}
+                )
+                assert response.status == 200
+                await started.wait()
+                status = await wait_for(client, lambda s: s["state"] != "starting")
+                assert status["state"] == "ready", status
+                return await (await client.get("/supervisor/status?project=film")).json()
+
+            first = await opened(roots[0])
+            execution = first["execution"]
+            assert execution["project"] == {"id": "film", "revision": 1}
+            assert execution["installation"] == {
+                "id": (roots[0] / "environment-id").read_text().strip(),
+                "root": str(roots[0]),
+            }
+            assert execution["engine"]["name"] == "main"
+            assert execution["engine"]["generation"] == 1
+            assert execution["host"] == {"kind": "native", "distribution": None}
+            assert (await (await client.get("/supervisor/status?project=film")).json())[
+                "execution"
+            ] == execution
+            for query in (
+                "",
+                "?project=missing",
+                "?project=..%2Ffilm",
+                "?project=film&project=film",
+            ):
+                assert (await (await client.get("/supervisor/status" + query)).json())[
+                    "execution"
+                ] is None
+
+            second = await opened(roots[1])
+            assert second["execution"]["installation"] != execution["installation"]
+            again = await opened(roots[0])
+            assert again["execution"]["engine"] == execution["engine"]
+            assert again["execution"]["filesystem"] != execution["filesystem"]
+            assert (await client.post("/supervisor/engine/stop")).status == 200
+            await asyncio.to_thread(start_engine, roots[0], 1, "alternate", free_port())
+            other_engine = await opened(roots[0], "alternate")
+            assert other_engine["execution"]["engine"]["name"] == "alternate"
+            assert other_engine["execution"]["filesystem"] != again["execution"]["filesystem"]
+
+            async with aiohttp.ClientSession() as session:
+                assert (
+                    await session.post(
+                        other_engine["execution"]["engine"]["url"] + "/supervisor/engine/restart"
+                    )
+                ).status == 200
+            external_restart = await wait_for(
+                client,
+                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
+                "/supervisor/status?project=film",
+            )
+            assert external_restart["execution"]["engine"] == other_engine["execution"]["engine"]
+            assert (
+                external_restart["execution"]["filesystem"]
+                != other_engine["execution"]["filesystem"]
+            )
+            assert (await client.post("/supervisor/engine/restart")).status == 200
+            restarted = await wait_for(
+                client,
+                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
+                "/supervisor/status?project=film",
+            )
+            assert (
+                restarted["execution"]["filesystem"] != external_restart["execution"]["filesystem"]
+            )
+            with LibraryClient(roots[0] / "library") as helper:
+                helper.call("projects.patch", id="film", revision=1, patch={"name": "Revised film"})
+            revised = await (await client.get("/supervisor/status?project=film")).json()
+            assert revised["execution"]["project"] == {"id": "film", "revision": 2}
+            assert revised["execution"]["filesystem"] != restarted["execution"]["filesystem"]
+            with LibraryClient(roots[0] / "library") as helper:
+                helper.call(
+                    "projects.patch", id="film", revision=2, patch={"environment": {"id": "b" * 32}}
+                )
+            assert (await (await client.get("/supervisor/status?project=film")).json())[
+                "execution"
+            ] is None
+            with LibraryClient(roots[0] / "library") as helper:
+                helper.call("projects.patch", id="film", revision=3, patch={"environment": None})
+            settings_path = roots[0] / "environment.json"
+            saved = settings_path.read_text()
+            settings_path.write_text(
+                json.dumps({**json.loads(saved), "libraryRoot": str(roots[1] / "library")})
+            )
+            assert (await (await client.get("/supervisor/status?project=film")).json())[
+                "execution"
+            ]["filesystem"] is None
+            settings_path.write_text(saved)
+
+            original_provenance = environment_runtime.engine_provenance
+            entered, release = threading.Event(), threading.Event()
+
+            def delayed(root: Path, engine: str) -> dict[str, object] | None:
+                result = original_provenance(root, engine)
+                entered.set()
+                assert release.wait(10), "status provenance was never released"
+                return result
+
+            with monkeypatch.context() as patch:
+                patch.setattr(environment_runtime, "engine_provenance", delayed)
+                pending = asyncio.create_task(client.get("/supervisor/status?project=film"))
+                try:
+                    assert await asyncio.to_thread(entered.wait, 10)
+                    assert (
+                        await client.post("/supervisor/engine", json={"root": str(roots[1])})
+                    ).status == 200
+                finally:
+                    release.set()
+                assert (await (await pending).json())["execution"] is None
+            current = await opened(roots[0], "alternate")
+            replacement = Home(installations=lambda: frozenset(roots), watch_interval=0.05)
+            async with TestClient(
+                TestServer(create_home_app(replacement, frontend=None))
+            ) as other_home:
+                assert (
+                    await other_home.post(
+                        "/supervisor/engine", json={"root": str(roots[0]), "engine": "alternate"}
+                    )
+                ).status == 200
+                new_home = await wait_for(
+                    other_home,
+                    lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
+                    "/supervisor/status?project=film",
+                )
+                assert new_home["homeId"] != current["homeId"]
+                assert new_home["execution"]["engine"] == current["execution"]["engine"]
+                assert new_home["execution"]["filesystem"] != current["execution"]["filesystem"]
+
+            async with aiohttp.ClientSession() as upstream:
+
+                async def forward(request: web.Request) -> web.Response:
+                    async with upstream.get(
+                        current["execution"]["engine"]["url"] + request.path_qs
+                    ) as response:
+                        return web.json_response(await response.json(), status=response.status)
+
+                forwarded = web.Application()
+                forwarded.router.add_get("/{path:.*}", forward)
+                async with TestServer(forwarded) as proxy:
+
+                    async def foreign_start(
+                        target: OpenTarget, found: Callable[[str], None]
+                    ) -> str:
+                        return str(proxy.make_url("")).rstrip("/")
+
+                    foreign = Home(installations=lambda: frozenset(roots), start=foreign_start)
+                    async with TestClient(
+                        TestServer(create_home_app(foreign, frontend=None))
+                    ) as foreign_home:
+                        assert (
+                            await foreign_home.post(
+                                "/supervisor/engine",
+                                json={"root": str(roots[0]), "engine": "alternate"},
+                            )
+                        ).status == 200
+                        refused = await wait_for(
+                            foreign_home,
+                            lambda s: s["state"] == "ready",
+                            "/supervisor/status?project=film",
+                        )
+                        assert refused["execution"]["host"]["kind"] == "unknown"
+                        assert refused["execution"]["filesystem"] is None
+
+            if home_module.sys.platform == "linux":
+                monkeypatch.setattr(home_module.platform, "release", lambda: "6.6-microsoft-WSL2")
+                original_read = Path.read_text
+                distribution = "Dinkster-Desktop-0123456789ab"
+
+                def read(path: Path, *args: Any, **kwargs: Any) -> str:
+                    if str(path) == "/etc/dinkster-desktop-owner":
+                        return distribution
+                    return original_read(path, *args, **kwargs)
+
+                monkeypatch.setattr(Path, "read_text", read)
+                wsl = await (await client.get("/supervisor/status?project=film")).json()
+                assert wsl["execution"]["host"] == {"kind": "wsl2", "distribution": distribution}
+                distribution = "Dinkster-Desktop-abcdef012345"
+                changed = await (await client.get("/supervisor/status?project=film")).json()
+                assert changed["execution"]["host"]["distribution"] == distribution
+                assert changed["execution"]["filesystem"] != wsl["execution"]["filesystem"]
+                distribution = "unowned-distribution"
+                unknown = await (await client.get("/supervisor/status?project=film")).json()
+                assert unknown["execution"]["host"]["kind"] == "unknown"
+                assert unknown["execution"]["filesystem"] is None
+            with LibraryClient(roots[0] / "library") as helper:
+                helper.call("projects.delete", id="film", revision=4)
+            assert (await (await client.get("/supervisor/status?project=film")).json())[
+                "execution"
+            ] is None
+            assert (await client.post("/supervisor/engine/stop")).status == 200
+            assert (await (await client.get("/supervisor/status?project=film")).json())[
+                "execution"
+            ] is None
+            await home.shutdown()
+
+    try:
+        run_scenario(scenario())
+    finally:
+        for root in roots:
+            for engine in ("main", "alternate"):
+                stop_engine(root, engine)
+
+
+def test_native_path_post_refuses_changed_execution_before_forwarding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor import environment_runtime
+
+    async def scenario() -> None:
+        roots = [tmp_path / "first", tmp_path / "second"]
+        received: list[tuple[int, bytes]] = []
+        checking, release = asyncio.Event(), asyncio.Event()
+        hold = False
+        verified = True
+        servers: list[TestServer] = []
+        for index in range(2):
+            app = make_engine(str(index))
+
+            async def project(request: web.Request) -> web.Response:
+                if hold:
+                    checking.set()
+                    await release.wait()
+                return web.json_response(
+                    {"project": {"id": "film", "revision": 1, "deleted": False}}
+                )
+
+            async def resolve(request: web.Request, recipient: int = index) -> web.Response:
+                assert request.headers["Origin"] == str(servers[recipient].make_url("").origin())
+                assert "X-Dinkster-Execution" not in request.headers
+                received.append((recipient, await request.read()))
+                return web.json_response({"recipient": recipient})
+
+            app.router.add_get("/api/projects/film", project)
+            app.router.add_post("/api/mounts/resolve-path", resolve)
+            server = TestServer(app)
+            await server.start_server()
+            servers.append(server)
+
+        def provenance(root: Path, name: str) -> dict[str, object] | None:
+            if not verified:
+                return None
+            index = roots.index(root)
+            return {
+                "installation": {"id": str(index), "root": str(root)},
+                "engine": {
+                    "name": name,
+                    "generation": 1,
+                    "instance": str(index),
+                    "url": str(servers[index].make_url("")).rstrip("/"),
+                },
+                "library": {"path": str(root / "library"), "device": 1, "inode": index},
+                "processInstance": str(index),
+            }
+
+        monkeypatch.setattr(environment_runtime, "engine_provenance", provenance)
+
+        async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+            return str(servers[roots.index(target.root)].make_url("")).rstrip("/")
+
+        home = Home(installations=lambda: frozenset(roots), start=start, watch_interval=0.02)
+        try:
+            async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+
+                async def opened(index: int) -> dict:
+                    response = await client.post(
+                        "/supervisor/engine", json={"root": str(roots[index])}
+                    )
+                    assert response.status == 200
+                    await wait_for(client, lambda s: s["state"] == "ready")
+                    return await (await client.get("/supervisor/status?project=film")).json()
+
+                first = await opened(0)
+                execution = first["execution"]
+                assert execution["filesystem"]["binding"]
+                body = {"path": "/private/native/selected.txt", "project": "film", "scope": "local"}
+                origin = str(client.make_url("").origin())
+                headers = {"X-Dinkster-Execution": json.dumps(execution), "Origin": origin}
+                path = "/api/mounts/resolve-path"
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 200
+                assert await response.json() == {"recipient": 0}
+                assert [(index, json.loads(data)) for index, data in received] == [(0, body)]
+                received.clear()
+
+                await opened(1)
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 409
+                assert (await response.json())["error"] == "execution-binding-mismatch"
+                assert received == []
+                await opened(0)
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 409
+                assert received == []
+
+                current = await (await client.get("/supervisor/status?project=film")).json()
+                headers = {
+                    "X-Dinkster-Execution": json.dumps(current["execution"]),
+                    "Origin": origin,
+                }
+                hold = True
+                pending = asyncio.create_task(client.post(path, json=body, headers=headers))
+                await checking.wait()
+                response = await client.post("/supervisor/engine", json={"root": str(roots[1])})
+                assert response.status == 200
+                release.set()
+                response = await pending
+                assert response.status == 409
+                assert (await response.json())["error"] == "execution-binding-mismatch"
+                assert received == []
+
+                hold = False
+                current = await opened(1)
+                headers = {
+                    "X-Dinkster-Execution": json.dumps(current["execution"]),
+                    "Origin": origin,
+                }
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 200
+                assert await response.json() == {"recipient": 1}
+                assert [(index, json.loads(data)) for index, data in received] == [(1, body)]
+                received.clear()
+                verified = False
+                response = await client.post(path, json=body, headers=headers)
+                assert response.status == 409
+                assert (await response.json())["error"] == "execution-binding-mismatch"
+                assert received == []
+
+                for supplied in (
+                    {},
+                    {"X-Dinkster-Execution": "not json"},
+                    {"X-Dinkster-Execution": "{}"},
+                ):
+                    response = await client.post(path, json=body, headers=supplied)
+                    assert response.status == 400
+                    assert received == []
+        finally:
+            for server in servers:
+                await server.close()
+
+    run_scenario(scenario())
+
+
 def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Path) -> None:
     import io
 
@@ -1121,6 +1535,255 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
     run_scenario(scenario())
 
 
+def test_home_creates_empty_workflow_and_copied_projects_without_an_engine(tmp_path: Path) -> None:
+    from dinkster_assets import MountTable
+    from dinkster_library import LibraryClient
+    from dinkster_library.asset_identity import digest_bytes
+
+    from dinkster.mounts_api import MountService
+
+    library = tmp_path / "library"
+    workflow = json.dumps(
+        {
+            "format": "dinkster-workflow",
+            "formatVersion": 1,
+            "lineage": "source-lineage",
+            "root": "root",
+            "graphs": {
+                "root": {
+                    "id": "root",
+                    "name": "Root",
+                    "nodes": {},
+                    "links": {},
+                    "nets": {},
+                    "reroutes": {},
+                    "nextOrdinal": 0,
+                }
+            },
+            "view": {"graphs": {}},
+            "ext": {"keep": "source", "notes": "x" * (1024 * 1024)},
+        }
+    )
+    digest = digest_bytes(workflow.encode())
+
+    async def scenario() -> None:
+        home = Home(installations=frozenset)
+        app = create_home_app(home, frontend=None, library=library)
+        async with TestClient(TestServer(app)) as process:
+            empty = await process.post(
+                "/api/projects",
+                json={"id": "empty", "name": "Empty", "filesFolder": str(tmp_path / "empty")},
+            )
+            assert empty.status == 200
+            assert (await (await process.get("/api/library?scope=local&project=empty")).json())[
+                "records"
+            ] == []
+            request = {
+                "id": "source",
+                "name": "Source",
+                "filesFolder": str(tmp_path / "source"),
+                "startWith": {"kind": "workflow", "name": "Scene", "content": workflow},
+            }
+            created = await process.post("/api/projects", json=request)
+            assert created.status == 200
+            source = (await created.json())["project"]
+            content = await process.get(f"/api/assets/{digest}")
+            assert content.status == 200 and await content.text() == workflow
+            assert await (await process.post("/api/projects", json=request)).json() == {
+                "project": source
+            }
+            await process.patch(
+                "/api/projects/source",
+                json={"revision": 1, "patch": {"packs": {"extra": ["example.extra"]}}},
+            )
+        with LibraryClient(library) as helper:
+            records = helper.call("records.list", scope="local", project="source")["records"]
+            assert len(cast(list[object], records)) == 1
+            original = cast(list[dict[str, Any]], records)[0]
+            helper.call(
+                "records.patch",
+                scope="local",
+                id=original["id"],
+                revision=1,
+                patch={"labels": ["favorite"], "folder": "Scenes/First"},
+            )
+            # An asset record is saved content, not a produced-output observation.
+            helper.call(
+                "records.create",
+                scope="local",
+                project="source",
+                record={"name": "Reference", "digest": digest, "mediaType": "application/json"},
+            )
+            helper.call(
+                "assets.record", scope="local", observation=observation("source", digest, 10.0)
+            )
+            helper.call("projects.opened", id="source")
+            helper.call(
+                "projects.patch",
+                id="source",
+                revision=2,
+                patch={
+                    "accountProject": {"issuer": "https://example.test", "id": "linked-source"},
+                    "environment": {
+                        "id": "old-installation",
+                        "lastSnapshot": "old-snapshot",
+                        "lastRunAt": "2026-01-01T00:00:00Z",
+                    },
+                },
+            )
+            grants = cast(dict[str, Any], helper.call("folders.grants.get")["folders"])
+            helper.call(
+                "folders.grants.patch",
+                revision=grants["revision"],
+                patch={
+                    "mounts": {
+                        key: {
+                            "path": str(tmp_path / key),
+                            "mode": "read",
+                            "kind": "model/checkpoint",
+                        }
+                        for key in ("shared-models", "excluded-models", "private-models")
+                    },
+                },
+            )
+            folders = cast(dict[str, Any], helper.call("folders.projects.get")["folders"])
+            helper.call(
+                "folders.projects.patch",
+                revision=folders["revision"],
+                patch={
+                    "shared": ["shared-models", "excluded-models"],
+                    "projects": {"source": ["source-output", "source-input", "private-models"]},
+                    "excluded": {"source": ["excluded-models"]},
+                    "hiddenModels": {
+                        "source": [
+                            {
+                                "name": "private.safetensors",
+                                "kind": "model/checkpoint",
+                                "identities": [digest],
+                            }
+                        ]
+                    },
+                },
+            )
+            before = helper.call("projects.get", id="source")
+        app = create_home_app(home, frontend=None, library=library)
+        async with TestClient(TestServer(app)) as process:
+            request = {
+                "id": "copy",
+                "name": "Copy",
+                "filesFolder": str(tmp_path / "copy"),
+                "startWith": {"kind": "project", "project": "source"},
+            }
+            copied = await process.post("/api/projects", json=request)
+            assert copied.status == 200
+            project = (await copied.json())["project"]
+            assert project["uid"] != source["uid"]
+            assert project["name"] == "Copy" and project["packs"] == {
+                "extra": ["example.extra"],
+                "allInstalled": True,
+            }
+            assert project["filesFolder"] == str(tmp_path / "copy")
+            assert project["folder"] == str(tmp_path / "copy" / "output")
+            assert project["lastOpenedAt"] is None and project["accountProject"] is None
+            assert project["environment"] is None
+            assert await (await process.get("/api/projects/source")).json() == before
+            results = (await (await process.get("/api/library?scope=local&project=copy")).json())[
+                "records"
+            ]
+            assert len(results) == 2
+            assert {r["name"] for r in results} == {"Scene", "Reference"}
+            scene = next(r for r in results if r["name"] == "Scene")
+            assert scene["id"] != original["id"] and scene["revision"] == 1
+            assert scene["labels"] == ["favorite"] and scene["folder"] == "Scenes/First"
+            assert scene["digest"] == digest
+            assert (await process.get(f"/api/assets/{digest}")).status == 200
+            assert (await (await process.get("/api/projects/copy/outputs")).json())["assets"] == []
+        with LibraryClient(library) as helper:
+            service = MountService(MountTable(), library=helper)
+            context = service.project_context("copy")
+            assert context.mounts == (
+                "source-output",
+                "source-input",
+                "private-models",
+                "copy-output",
+                "copy-input",
+                "shared-models",
+            )
+            assert context.hidden_models == (digest,)
+            assert context.output_mount == "copy-output"
+            assert service.projects.input("copy", None) == "copy-input"
+            helper.call("records.delete", scope="local", id=scene["id"], revision=1)
+            assert (
+                helper.call("records.get", scope="local", id=original["id"])["record"] is not None
+            )
+        assert home.engine_absent
+
+    run_scenario(scenario())
+
+
+def test_home_refused_copy_leaves_no_project_records_or_new_folders(tmp_path: Path) -> None:
+    import sqlite3
+
+    from dinkster_library import LibraryClient
+    from dinkster_library.asset_identity import digest_bytes
+
+    library = tmp_path / "library"
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="source")
+        for name in ("First", "Second"):
+            helper.call(
+                "records.create",
+                scope="local",
+                project="source",
+                record={
+                    "name": name,
+                    "digest": digest_bytes(b"{}"),
+                    "mediaType": "application/x-dinkster-workflow+json",
+                },
+            )
+        baseline = helper.call("folders.get")
+        cursor = helper.call("changes.head")["cursor"]
+    # A store refusal after registration exercises rollback after folders exist.
+    with sqlite3.connect(library / "records.sqlite") as db:
+        db.execute(
+            "CREATE TRIGGER refuse_copy BEFORE INSERT ON saved_records "
+            "WHEN NEW.project='refused' AND EXISTS("
+            "SELECT 1 FROM saved_records WHERE project='refused') "
+            "BEGIN SELECT RAISE(ABORT, 'copy refused'); END"
+        )
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    retained = existing / "keep.txt"
+    retained.write_text("keep", encoding="utf-8")
+
+    async def scenario() -> None:
+        app = create_home_app(Home(installations=frozenset), frontend=None, library=library)
+        async with TestClient(TestServer(app)) as process:
+            for parent in (tmp_path / "new-parent" / "project", existing):
+                refused = await process.post(
+                    "/api/projects",
+                    json={
+                        "id": "refused",
+                        "filesFolder": str(parent),
+                        "startWith": {"kind": "project", "project": "source"},
+                    },
+                )
+                assert refused.status == 503
+                assert (await (await process.get("/api/projects/refused")).json())[
+                    "project"
+                ] is None
+                listed = (await (await process.get("/api/library?scope=local")).json())["records"]
+                assert all(record["project"] != "refused" for record in listed)
+                assert not (parent / "input").exists() and not (parent / "output").exists()
+            assert not (tmp_path / "new-parent").exists()
+            assert retained.read_text("utf-8") == "keep"
+
+    run_scenario(scenario())
+    with LibraryClient(library) as helper:
+        assert helper.call("folders.get") == baseline
+        assert helper.call("changes", cursor=cursor)["items"] == []
+
+
 def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
     tmp_path: Path,
 ) -> None:
@@ -1248,13 +1911,29 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
             assert (deleted.status, (await deleted.json())["error"]) == (404, "no-folder")
             assert opened == [renders]
 
+            parent = tmp_path / "project-files"
+            created = await process.post(
+                "/api/projects", json={"id": "own-files", "filesFolder": str(parent)}
+            )
+            assert created.status == 200
+            record = (await created.json())["project"]
+            assert record["filesFolder"] == str(parent)
+            assert record["folder"] == str(parent / "output")
+            shown = await process.post(
+                "/supervisor/projects/own-files/folder", json={"folder": str(renders)}
+            )
+            assert (shown.status, await shown.json()) == (200, {"folder": str(parent)})
+            assert opened == [renders, parent]
+
             # With an engine open the record comes from the engine.
             renders.mkdir()
             await process.post("/supervisor/engine", json={"root": str(root)})
             await wait_for(process, lambda s: s["state"] == "ready")
             shown = await process.post("/supervisor/projects/plain/folder")
             assert (shown.status, await shown.json()) == (200, {"folder": str(renders)})
-            assert opened == [renders, renders]
+            shown = await process.post("/supervisor/projects/own-files/folder")
+            assert (shown.status, await shown.json()) == (200, {"folder": str(parent)})
+            assert opened == [renders, parent, renders, parent]
             async with asyncio.timeout(5):
                 while (await events.receive_json())["type"] != "library_changed":
                     pass

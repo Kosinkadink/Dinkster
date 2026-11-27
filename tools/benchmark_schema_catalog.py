@@ -98,7 +98,7 @@ def install_packs(root: Path, count: int) -> Path:
         (pack / f"{name}.py").write_text(
             "import os\n"
             "from pathlib import Path\n"
-            "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            "from dinkster_api.v1 import Node, NodeSchema, Output, TypeExpr\n"
             "if marker := os.environ.get('DINKSTER_BOOT_IMPORTS'):\n"
             "    with Path(marker).open('a') as stream:\n"
             f"        stream.write('{name}\\n')\n"
@@ -106,7 +106,7 @@ def install_packs(root: Path, count: int) -> Path:
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='{name}.constant', "
-            "outputs=(OutputSpec('value', TypeExpr.concrete('INT')),))\n"
+            "body=(Output('value', TypeExpr.concrete('INT')),))\n"
             "    @classmethod\n"
             "    def execute(cls):\n"
             "        return cls.outputs(value=1)\n"

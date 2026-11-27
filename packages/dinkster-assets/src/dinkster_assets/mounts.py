@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 import time
 import tomllib
@@ -304,6 +305,15 @@ class MountDef:
                 require_asset_kind(kind)
             except AssetError as exc:
                 raise MountsError(f"mount {self.id!r}: {exc}") from exc
+
+    def require_writable(self) -> None:
+        """Test actual create/write/remove access, including ACLs and read-only filesystems."""
+        try:
+            with tempfile.NamedTemporaryFile(prefix=".dinkster-write-", dir=self.path) as probe:
+                probe.write(b"\0")
+                probe.flush()
+        except OSError as exc:
+            raise MountsError(f"Cannot save here: {exc}") from exc
 
 
 @dataclass(frozen=True)
@@ -621,6 +631,7 @@ class _MountRow:
         self.kind = kind
         self.state = "pending"
         self.error: str | None = None
+        self.save_error: str | None = None
         self.library: LocalAssetLibrary | None = None
         self.entry_count: int | None = None
         self.missing_entry_count: int | None = None
@@ -774,6 +785,58 @@ class MountTable:
         with self._lock:
             return tuple(row.mount for row in self._rows.values() if row.source == "config")
 
+    def folder_sizes(self, mount_ids: Sequence[str]) -> dict[str, dict[str, object]]:
+        """Observe finished grants off-loop, sharing a one-second read budget.
+
+        Canonical-root identities let clients count alias grants once. Pending,
+        failed, replaced or incompletely observed grants have no byte count.
+        """
+        deadline = time.monotonic() + 1.0
+        with self._lock:
+            rows = {mount_id: self._rows.get(mount_id) for mount_id in mount_ids}
+        observations: dict[tuple[int, int], dict[str, object]] = {}
+        result: dict[str, dict[str, object]] = {}
+        for mount_id, row in rows.items():
+            observation: dict[str, object] = {"status": "unavailable"}
+            if row is not None and row.state == "ready" and row.library is not None:
+                try:
+                    if time.monotonic() >= deadline:
+                        result[mount_id] = observation
+                        continue
+                    root = row.mount.path.resolve(strict=True)
+                    original = root.stat()
+                    identity = original.st_dev, original.st_ino
+                    if not original.st_ino:
+                        result[mount_id] = observation
+                        continue
+                    if identity not in observations:
+                        size = row.library.folder_size(deadline=deadline)
+                        current = row.mount.path.stat()
+                        if row.mount.path.resolve(strict=True) != root or (
+                            original.st_dev,
+                            original.st_ino,
+                        ) != (current.st_dev, current.st_ino):
+                            size = None
+                        observations[identity] = (
+                            {
+                                "status": "available",
+                                "bytes": size,
+                                "folder": hashlib.sha256(
+                                    f"{original.st_dev}:{original.st_ino}".encode("ascii")
+                                ).hexdigest(),
+                            }
+                            if size is not None
+                            else {"status": "unavailable"}
+                        )
+                    observation = observations[identity]
+                except (OSError, RuntimeError):
+                    pass
+                with self._lock:
+                    if self._rows.get(mount_id) is not row or row.state != "ready":
+                        observation = {"status": "unavailable"}
+            result[mount_id] = observation
+        return result
+
     def descriptors(self) -> list[dict[str, object]]:
         """Wire rows for GET /api/mounts, sorted by id.
 
@@ -817,6 +880,10 @@ class MountTable:
                     }
                 if row.error is not None:
                     wire["error"] = "model root unavailable" if hidden_semantic_root else row.error
+                if row.save_error is not None:
+                    wire["saveError"] = (
+                        "Cannot save here" if hidden_semantic_root else row.save_error
+                    )
                 out.append(wire)
             return out
 
@@ -865,7 +932,14 @@ class MountTable:
         try:
             if not row.mount.path.is_dir():
                 raise AssetError(f"asset library root is not a directory: {row.mount.path}")
+            save_error = None
+            if row.mount.mode == "readwrite":
+                try:
+                    row.mount.require_writable()
+                except MountsError as exc:
+                    save_error = str(exc)
             with self._lock:
+                row.save_error = save_error
                 library = self._library_for(row)
 
             with self._lock:
@@ -1009,6 +1083,8 @@ class MountTable:
                 raise AssetError(
                     f"mount {mount_id!r} is granted read-only; saving needs a readwrite mount"
                 )
+            if row.save_error is not None:
+                raise AssetError(row.save_error)
             if row.state != "ready" and not (
                 row.kind.startswith("model/")
                 and row.state in {"pending", "scanning"}
@@ -1175,6 +1251,8 @@ class MountTable:
         return None
 
     def _bind_file(self, row: _MountRow, path: Path, name: str) -> AssetRef | LocalAssetRef | None:
+        if path.name.endswith(":Zone.Identifier"):
+            return None
         try:
             root = row.mount.path.resolve()
             if not path.is_file() or not path.resolve(strict=True).is_relative_to(root):
@@ -1435,6 +1513,7 @@ class MountTable:
                     "root": str(row.mount.path),
                     "index": str(row.library.index_path) if row.library is not None else "",
                     "mode": row.mount.mode,
+                    "saveError": row.save_error,
                     "kind": row.kind,
                     "priority": row.mount.priority,
                     "localBindingCapability": row.local_binding_capability,

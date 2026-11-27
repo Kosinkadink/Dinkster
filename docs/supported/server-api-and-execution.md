@@ -49,9 +49,10 @@
   Grants persist across controlled restarts. New grants default to read-only;
   writable access remains explicit. Remote connections and separately configured
   server launches do not gain mount-edit authority.
-- Schema wire version 1 with stored output descriptors, compact-storage and
-  stream input declarations, alpha and mask policies, range-aware inputs, and
-  chunk-safe declarations scoped to supported dynamic-combo options. Stream
+- Schema wire version 2, which carries each node's body tree, with described
+  rows, compact-storage and stream input declarations, alpha and mask
+  policies, range-aware inputs, and chunk-safe declarations scoped to
+  supported choice options. Stream
   execution is not exposed until a node pack supplies matching value codecs
 - Resident-resource consumers follow the validated producer execution arm
   without a node-name or native-arm-name allowlist; malformed, unknown, and
@@ -139,12 +140,14 @@
   updates return their owner; project-filtered library browsing selects only
   that owner's workflows, and its cursor binds the project and media type.
 - Saved workflows can belong to a project; putting one in another project
-  requires a copy. Project pack needs combine packs actually used by saved
-  workflows with explicitly added packs. Engines recompute needs from verified
+  requires a copy. New and Default projects enable every installed pack unless
+  the user explicitly selects a narrower set. Project pack needs combine packs
+  actually used by saved workflows with the selected packs. Engines recompute needs from verified
   workflow bytes, using saved node attribution or installed host attribution for
   unstamped nodes. Unrecognized workflows remain unknown rather than guessed.
   Project needs also report the running environment's installed pack IDs and
-  versions, including disabled packs and versionless local packs. These facts
+  versions, including disabled packs and versionless local packs, whether any
+  installed nodes exist, and whether the caller may change the project. These facts
   do not enable packs or approve software changes.
   `/api/nodes?project=ID` publishes only that project's enabled packs and core
   nodes; without a project it retains the installed catalog. Removing an extra
@@ -230,7 +233,12 @@
   selecting one file does not scan or retire its siblings.
   Outside, revoked, excluded, missing and unsafe paths return an explicit
   refusal without revealing host paths. Authentication, malformed requests and
-  server failures remain distinct errors, not upload-fallback signals.
+  server failures remain distinct errors, not upload-fallback signals. With
+  mount changes enabled, a separate operator-authorized file import can copy
+  an absolute regular file into the selected project import folder using
+  bounded chunks, the engine's upload limits and byte-derived classification.
+  Latents retain their validated scoped vault storage. Native import never
+  grants the source directory or puts its host path in the returned asset.
 - Setup, environment-managed snapshot serving, and serving with mount changes
   enabled initialize a writable
   `<library-root>/imports` folder and a selected writable
@@ -243,13 +251,19 @@
   New default folders become available to existing projects without resetting
   folder order, exclusions, project-only grants or output selections.
 - Managed environments can persist separate generic and classified image, audio,
-  video and model3d upload byte caps through `dinkster-env uploads`. Defaults
-  remain unchanged; overrides may lower but never bypass transport/media
-  ceilings. Declared and chunked lengths enforce the effective caps, oversized
+  video and model3d upload byte caps through `dinkster-env uploads`. Engines with
+  no saved policy enforce the default caps; existing saved lower limits remain
+  enabled. The off-by-default "No upload size limit" setting is enabled with
+  `uploads --no-upload-size-limit`, while standalone engines use
+  `--no-upload-size-limit`. An absent or null override policy does not disable
+  limits. Operator-authorized native file copies have no size cap, without
+  exempting ordinary HTTP uploads. Overrides may lower but never raise
+  enabled ceilings. Declared and chunked lengths enforce the effective caps, oversized
   requests return 413 without publishing partial assets, and restart retains
-  the policy. `GET /api/assets/upload-limits` reports the same effective caps
-  for clients. Codec, digest and decoded-media validation remain mandatory;
-  structured latent/image-document safety budgets are independent.
+  the policy. `GET /api/assets/upload-limits` and `/api/nodes`'s
+  `dinkster.uploadLimits` report null when uncapped or the effective caps when
+  enabled, including latents. Codec, digest, parser-integrity and decoded-media
+  validation remain mandatory; latent disk headroom is reserved as bytes stream.
 - Named file and classified media uploads in the managed server use original
   filenames in the configured imports folder, with collision-safe numbering and no durable
   vault duplicate. Requests can select another writable project folder and
@@ -367,23 +381,39 @@
   Operators with asset-read authority can POST `name`, `kind`, `project` and
   `scope` to `/api/models/downloads/plan`, optionally with a `source` HTTPS
   Hugging Face resolve URL or Civitai model/download URL without credentials.
+  An optional `asset` is an exact asset reference whose name must match `name`.
+  Its BLAKE3 digest is authoritative: local readiness requires that identity in
+  the project's enabled model kind, and the consented transfer verifies it
+  before publishing bytes or provenance. A same-named file with another hash
+  is not ready. Plans and transfers never submit a workflow run.
   The selected filename must match the needed model. Explicit sources can
   resolve files absent from the template catalog or select among ambiguous
   declarations. Civitai model links can specify `modelVersionId`; matching
   files across versions require a further source choice. Review shows the
   fixed revision/version, provider SHA-256, exact size, reported license and
-  physical destination. Civitai size comes from transfer headers, not rounded
+  physical destination. Downloadable plans include `destinationSpace`: either
+  `status: available`, `freeBytes` and an opaque `filesystem` identity, or
+  `status: unavailable` without a byte count. Free bytes are an observation,
+  not a reservation, and zero means measured zero. Missing destination folders
+  use their nearest existing ancestor's filesystem. Selected sizes sharing a
+  filesystem are summed before comparison; aliases do not create extra capacity.
+  Civitai size comes from transfer headers, not rounded
   `sizeKB`; review opens the response without consuming its body. No model
   file is written or BLAKE3 identity manufactured before explicit consent.
   Civitai access refusals are distinct from Hugging Face sign-in or grants;
   Hugging Face credentials are never sent to Civitai. Local files take
-  precedence; disabled folders, missing writable destinations and ambiguous or
-  absent declarations return distinct states. Plans expire after 15 minutes.
+  precedence; local names ambiguous under the same binding rules as execution
+  return `duplicate` without a source lookup or download plan. A `model-hidden`
+  answer includes `hiddenIdentities`, the matching opaque project preferences
+  accepted by the existing hidden-model DELETE operation, including revision-only
+  preferences for an exact model stored under another filename. Disabled folders,
+  missing writable destinations and ambiguous or absent declarations return
+  distinct states. Plans expire after 15 minutes.
   Operators with asset-read authority can POST `project`, `scope` and up to 256
   `models` (`name`, `kind`) to `/api/models/presence` to learn, in order, whether
   each name binds for that project: `local`, `model-hidden`, `folder-disabled`
-  (with `disabledLocations`), `duplicate` when more than one file in the
-  project's folders has the name, so it binds none of them, or `missing`, which
+  (with `disabledLocations`), `duplicate` when local name binding is ambiguous,
+  or `missing`, which
   says whether the download plan accepts the name (`plannable`). It reads only local folders, as plans do before
   any source lookup, and holds no plan.
   Operators can GET `/api/models/providers/huggingface?scope=local` with

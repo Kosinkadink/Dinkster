@@ -1,0 +1,634 @@
+[
+ {
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "text": "pixels"
+   }
+  },
+  "formula": "previous(unit)",
+  "id": "previous-gives-the-value-before-the-change",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "float": "4039000000000000"
+   }
+  },
+  "formula": "x * 100 / width(video)",
+  "id": "without-previous-the-value-is-the-one-after-the-change",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "float": "4039000000000000"
+   }
+  },
+  "formula": "previous(x) * 100 / previous(width(video))",
+  "id": "previous-of-a-fact-reads-the-old-wire",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "value",
+   "value": {
+    "bool": false
+   }
+  },
+  "formula": "previous(unit) == unit",
+  "id": "previous-and-current-compare",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "unknown"
+  },
+  "formula": "previous(seed)",
+  "id": "a-name-unknown-before-the-change-is-unknown",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "unknown"
+  },
+  "formula": "previous(unit)",
+  "id": "with-no-earlier-state-previous-is-unknown",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "refused"
+  },
+  "formula": "previous(unit)",
+  "id": "previous-outside-a-step-is-refused",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": false,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "refused"
+  },
+  "formula": "previous(previous(unit))",
+  "id": "previous-inside-previous-is-refused",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "refused"
+  },
+  "formula": "previous([previous(x) for n in [1, 2]])",
+  "id": "previous-inside-a-comprehension-inside-previous-is-refused",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ },
+ {
+  "expect": {
+   "outcome": "refused"
+  },
+  "formula": "previous(unit, x)",
+  "id": "previous-takes-one-argument",
+  "scope": {
+   "assets": [
+    "video"
+   ],
+   "in_on_edit": true,
+   "inputs": [
+    "video"
+   ],
+   "names": {
+    "seed": "int",
+    "unit": "text",
+    "video": "opaque",
+    "x": "int"
+   }
+  },
+  "values": {
+   "facts": [
+    [
+     "width",
+     "video",
+     {
+      "int": "0xc8"
+     }
+    ]
+   ],
+   "previous": {
+    "facts": [
+     [
+      "width",
+      "video",
+      {
+       "int": "0x190"
+      }
+     ]
+    ],
+    "values": {
+     "seed": "unknown",
+     "unit": {
+      "text": "pixels"
+     },
+     "x": {
+      "int": "0x64"
+     }
+    }
+   },
+   "values": {
+    "seed": {
+     "int": "0x7"
+    },
+    "unit": {
+     "text": "percent"
+    },
+    "x": {
+     "int": "0x32"
+    }
+   }
+  }
+ }
+]

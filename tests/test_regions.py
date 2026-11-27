@@ -19,6 +19,7 @@ from dinkster_engine import Engine, EngineEvent, ExecutionError
 from dinkster_graph import (
     PORTS_NODE_ID,
     REGION_INDEX_PORT_ID,
+    AbsentInput,
     Graph,
     GraphNode,
     GraphWireError,
@@ -37,19 +38,21 @@ from dinkster_schema import (
     ABSENT,
     AbsentOutput,
     ComboWidget,
-    InputFamilyOptionSource,
-    InputFamilySpec,
-    InputSpec,
+    Group,
+    Input,
+    Named,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     SelectorSpec,
     TypeExpr,
     build_node_types,
     build_schemas,
 )
+from dinkster_schema.nest import Item, Members
 from dinkster_values import (
     ABSENT_ORIGIN_META_KEY,
+    ABSENT_REASON_META_KEY,
     ABSENT_STANDS_FOR_META_KEY,
     TypeRegistry,
     Value,
@@ -73,8 +76,11 @@ class ListElement(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="std.list.element",
-            inputs=(InputSpec("list", TypeExpr.list_of(GENERIC)), InputSpec("index", INT)),
-            outputs=(OutputSpec("item", GENERIC),),
+            body=(
+                Input("list", TypeExpr.list_of(GENERIC)),
+                Input("index", INT),
+                Output("item", GENERIC),
+            ),
             input_values=True,
         )
 
@@ -85,60 +91,61 @@ class ListElement(Node):
         return cls.outputs(item=children[index])
 
 
+ROUTE_KEYS = Named(("first", "second", "false", "true", "unselected", "selected"))
+
+
 class RouteSwitch(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.route.switch",
-            inputs=(InputSpec("index", INT, default=0),),
-            input_families=(
-                InputFamilySpec("values", (InputSpec("value", GENERIC, lazy=True),), min_members=1),
+            body=(
+                Input("index", INT, default=0),
+                Group(
+                    "values",
+                    value=Input("value", GENERIC, lazy=True),
+                    keys=ROUTE_KEYS,
+                    min_members=1,
+                ),
+                Output("value", GENERIC),
             ),
-            outputs=(OutputSpec("value", GENERIC),),
         )
 
     @classmethod
-    def check_lazy_status(
-        cls, *, index: int, values: Mapping[str, object | None]
-    ) -> tuple[str, ...]:
-        suffix, value = tuple(values.items())[index]
-        return (f"values.{suffix}",) if value is None else ()
+    def check_lazy_status(cls, *, index: int, values: Members[Item]) -> tuple[str, ...]:
+        member = values[index]
+        return (f"values.{member.key}",) if member.value is None else ()
 
     @classmethod
-    def execute(cls, *, index: int, values: Mapping[str, object | None]) -> Mapping[str, object]:
-        return cls.outputs(value=tuple(values.values())[index])
+    def execute(cls, *, index: int, values: Members[Item]) -> Mapping[str, object]:
+        return cls.outputs(value=values[index].value)
 
 
 class RouteSwitchByName(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
+        names = ("stable_left", "stable_right")
         return NodeSchema(
             node_type="dinkster.route.switch_by_name",
-            editor_role="named-route-switch",
-            inputs=(
-                InputSpec(
-                    "choice",
-                    COMBO,
-                    widget=ComboWidget(
-                        option_source=InputFamilyOptionSource(input_family="values")
-                    ),
+            body=(
+                Input("choice", COMBO, widget=ComboWidget(options=names)),
+                Group(
+                    "values",
+                    value=Input("value", GENERIC, lazy=True),
+                    keys=Named(names),
+                    min_members=1,
                 ),
+                Output("value", GENERIC),
             ),
-            input_families=(
-                InputFamilySpec("values", (InputSpec("value", GENERIC, lazy=True),), min_members=1),
-            ),
-            outputs=(OutputSpec("value", GENERIC),),
         )
 
     @classmethod
-    def check_lazy_status(
-        cls, *, choice: str, values: Mapping[str, object | None]
-    ) -> tuple[str, ...]:
-        return (f"values.{choice}",) if values[choice] is None else ()
+    def check_lazy_status(cls, *, choice: str, values: Members[Item]) -> tuple[str, ...]:
+        return (f"values.{choice}",) if values.as_dict()[choice] is None else ()
 
     @classmethod
-    def execute(cls, *, choice: str, values: Mapping[str, object | None]) -> Mapping[str, object]:
-        return cls.outputs(value=values[choice])
+    def execute(cls, *, choice: str, values: Members[Item]) -> Mapping[str, object]:
+        return cls.outputs(value=values.as_dict()[choice])
 
 
 class RouteGate(Node):
@@ -146,8 +153,11 @@ class RouteGate(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.route.gate",
-            inputs=(InputSpec("condition", BOOL), InputSpec("value", GENERIC, lazy=True)),
-            outputs=(OutputSpec("value", GENERIC, optional=True),),
+            body=(
+                Input("condition", BOOL),
+                Input("value", GENERIC, lazy=True),
+                Output("value", GENERIC, optional=True),
+            ),
         )
 
     @classmethod
@@ -164,30 +174,22 @@ class ValueSelect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dinkster.value.select",
-            inputs=(
-                InputSpec("condition", BOOL),
-                InputSpec("on_false", GENERIC, lazy=True),
-                InputSpec("on_true", GENERIC, lazy=True),
+            body=(
+                Input("condition", TypeExpr.union("INT", "BOOLEAN"), required=False),
+                Group(
+                    "branch",
+                    value=Input("branch", GENERIC, required=False, lazy=True),
+                    keys=Named(("on_false", "on_true")),
+                    min_members=1,
+                ),
+                Output("value", GENERIC),
             ),
-            outputs=(OutputSpec("value", GENERIC),),
-            selector=SelectorSpec("condition", {"false": "on_false", "true": "on_true"}),
+            selector=SelectorSpec("condition", "branch"),
         )
 
     @classmethod
-    def check_lazy_status(
-        cls, *, condition: bool, on_false: object | None, on_true: object | None
-    ) -> tuple[str, ...]:
-        if condition and on_true is None:
-            return ("on_true",)
-        if not condition and on_false is None:
-            return ("on_false",)
-        return ()
-
-    @classmethod
-    def execute(
-        cls, *, condition: bool, on_false: object | None, on_true: object | None
-    ) -> Mapping[str, object]:
-        return cls.outputs(value=on_true if condition else on_false)
+    def execute(cls, *, condition: object, branch: Members[Item]) -> Mapping[str, object]:
+        raise AssertionError("the engine resolves a selector without invoking it")
 
 
 class AddOne(Node):
@@ -197,8 +199,7 @@ class AddOne(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_one",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT),),
+            body=(Input("value", INT), Output("out", INT)),
         )
 
     @classmethod
@@ -214,8 +215,7 @@ class AddPair(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_pair",
-            inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-            outputs=(OutputSpec("out", INT),),
+            body=(Input("a", INT), Input("b", INT), Output("out", INT)),
         )
 
     @classmethod
@@ -229,8 +229,7 @@ class Mul(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.mul",
-            inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-            outputs=(OutputSpec("out", INT),),
+            body=(Input("a", INT), Input("b", INT), Output("out", INT)),
         )
 
     @classmethod
@@ -243,8 +242,7 @@ class IsEven(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.is_even",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("result", BOOL),),
+            body=(Input("value", INT), Output("result", BOOL)),
         )
 
     @classmethod
@@ -257,8 +255,7 @@ class BelowLimit(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.below_limit",
-            inputs=(InputSpec("value", INT), InputSpec("limit", INT)),
-            outputs=(OutputSpec("result", BOOL),),
+            body=(Input("value", INT), Input("limit", INT), Output("result", BOOL)),
         )
 
     @classmethod
@@ -271,8 +268,7 @@ class ListIdentity(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.list_identity",
-            inputs=(InputSpec("value", TypeExpr.list_of(INT)),),
-            outputs=(OutputSpec("value", TypeExpr.list_of(INT)),),
+            body=(Input("value", TypeExpr.list_of(INT)), Output("value", TypeExpr.list_of(INT))),
         )
 
     @classmethod
@@ -287,8 +283,12 @@ class CounterStep(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.counter_step",
-            inputs=(InputSpec("count", INT), InputSpec("limit", INT)),
-            outputs=(OutputSpec("next", INT), OutputSpec("keep_going", BOOL)),
+            body=(
+                Input("count", INT),
+                Input("limit", INT),
+                Output("next", INT),
+                Output("keep_going", BOOL),
+            ),
         )
 
     @classmethod
@@ -303,8 +303,7 @@ class MaybeDouble(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_double",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT, optional=True),),
+            body=(Input("value", INT), Output("out", INT, optional=True)),
         )
 
     @classmethod
@@ -321,8 +320,7 @@ class MaybeList(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_list",
-            inputs=(InputSpec("produce", BOOL),),
-            outputs=(OutputSpec("values", TypeExpr.list_of(INT), optional=True),),
+            body=(Input("produce", BOOL), Output("values", TypeExpr.list_of(INT), optional=True)),
         )
 
     @classmethod
@@ -337,8 +335,7 @@ class FailOnOdd(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.fail_on_odd",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT),),
+            body=(Input("value", INT), Output("out", INT)),
         )
 
     @classmethod
@@ -358,8 +355,7 @@ class Sleeper(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.region_sleeper",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("out", INT),),
+            body=(Input("value", INT), Output("out", INT)),
             io_bound=True,  # a wait, not compute: overlaps freely
         )
 
@@ -377,8 +373,7 @@ class GenericIdentity(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.generic_identity",
-            inputs=(InputSpec("value", GENERIC),),
-            outputs=(OutputSpec("value", GENERIC),),
+            body=(Input("value", GENERIC), Output("value", GENERIC)),
         )
 
     @classmethod
@@ -870,8 +865,7 @@ def test_output_only_map_executes_declared_sink(items: list[int], nested: bool) 
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.sink",
-                inputs=(InputSpec("value", INT),),
-                outputs=(),
+                body=(Input("value", INT),),
                 output_node=True,
                 idempotent=False,
             )
@@ -1042,8 +1036,8 @@ def test_map_region_selects_lazy_branch_per_iteration() -> None:
                         "dinkster.value.select",
                         {
                             "condition": port("choose"),
-                            "on_false": Link("false", "out"),
-                            "on_true": Link("true", "out"),
+                            "branch.on_false": Link("false", "out"),
+                            "branch.on_true": Link("true", "out"),
                         },
                     ),
                 }
@@ -1076,8 +1070,8 @@ def test_region_selector_can_demand_direct_body_port() -> None:
                         "dinkster.value.select",
                         {
                             "condition": port("choose"),
-                            "on_false": port("left"),
-                            "on_true": port("right"),
+                            "branch.on_false": port("left"),
+                            "branch.on_true": port("right"),
                         },
                     )
                 }
@@ -1249,8 +1243,8 @@ def test_fold_region_selects_lazy_branch_from_prior_state() -> None:
                         "dinkster.value.select",
                         {
                             "condition": Link("even", "result"),
-                            "on_false": Link("multiply", "out"),
-                            "on_true": Link("add", "out"),
+                            "branch.on_false": Link("multiply", "out"),
+                            "branch.on_true": Link("add", "out"),
                         },
                     ),
                 }
@@ -1288,8 +1282,8 @@ def test_while_region_selects_lazy_continuation_branch() -> None:
                         "dinkster.value.select",
                         {
                             "condition": Link("even", "result"),
-                            "on_false": Link("short", "result"),
-                            "on_true": Link("long", "result"),
+                            "branch.on_false": Link("short", "result"),
+                            "branch.on_true": Link("long", "result"),
                         },
                     ),
                 }
@@ -1319,8 +1313,7 @@ def test_lazy_map_failure_cancels_selected_sibling_iteration() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.coordinated_branch",
-                inputs=(InputSpec("fail", BOOL),),
-                outputs=(OutputSpec("value", INT),),
+                body=(Input("fail", BOOL), Output("value", INT)),
                 io_bound=True,
             )
 
@@ -1349,8 +1342,8 @@ def test_lazy_map_failure_cancels_selected_sibling_iteration() -> None:
                         "dinkster.value.select",
                         {
                             "condition": port("choose"),
-                            "on_false": Link("fail", "value"),
-                            "on_true": Link("block", "value"),
+                            "branch.on_false": Link("fail", "value"),
+                            "branch.on_true": Link("block", "value"),
                         },
                     ),
                 }
@@ -1379,8 +1372,7 @@ def test_lazy_demanded_region_prepares_its_body_types() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.lazy-region-consumer",
-                inputs=(InputSpec("value", INT, lazy=True),),
-                outputs=(OutputSpec("value", INT),),
+                body=(Input("value", INT, lazy=True), Output("value", INT)),
             )
 
         @classmethod
@@ -2055,6 +2047,22 @@ def test_absent_region_input_skips_the_whole_region() -> None:
         assert "m" in result.skipped
         skip_event = next(e for e in events if e.kind == "node_skipped")
         assert skip_event.node_id == "m"
+
+    run_scenario(scenario())
+
+
+def test_region_input_whose_wire_gives_nothing_skips_the_whole_region() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        graph = Graph(nodes={"m": map_region(inputs={"item": AbsentInput("the list was removed")})})
+        result = await engine.run(graph, ["m"])
+        out = result.outputs["m"]["results"]
+        assert is_absent(out)
+        assert out.meta.get(ABSENT_ORIGIN_META_KEY) == "m/item"
+        assert out.meta.get(ABSENT_REASON_META_KEY) == "the list was removed"
+        assert AddOne.ran == []
+        assert "m" in result.skipped
 
     run_scenario(scenario())
 

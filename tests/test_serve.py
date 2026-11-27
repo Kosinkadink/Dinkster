@@ -648,7 +648,7 @@ from dinkster_api.v1 import (
     VIDEO_TYPE,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     register_video_value_type,
     video_from_source,
@@ -657,7 +657,7 @@ class Source(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="preview-source.clip",
-                          outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),))
+                          body=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),))
     @classmethod
     def execute(cls):
         source = Path(__file__).with_name("clip.mp4").read_bytes()
@@ -2679,14 +2679,14 @@ def test_degraded_default_ordering_composes_provider_before_consumer(
         nodes_entry="consumer_nodes:NODES",
     )
     (consumer.parent / "consumer_nodes.py").write_text("""
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 class Count(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(
             node_type="consumer.count",
-            inputs=(InputSpec("counts", TypeExpr.concrete("example-tally.counts")),),
-            outputs=(OutputSpec("count", TypeExpr.concrete("INT")),),
+            body=(Input("counts", TypeExpr.concrete("example-tally.counts")),
+            Output("count", TypeExpr.concrete("INT")),),
         )
     @classmethod
     def execute(cls, *, counts):
@@ -3483,6 +3483,216 @@ async def _peek_value(
     return data["descriptor"]["value"]
 
 
+def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> None:
+    """An agent or API client writing a workflow through a collaborative
+    session cannot store a number outside its field's limits or, for a whole
+    number, off its step, unless the field declares it special; a refused op
+    stores none of its parts."""
+    pack = tmp_path / "limits"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "limits"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "limits_nodes:NODES"\n'
+    )
+    (pack / "limits_nodes.py").write_text(
+        "from dinkster_api.v1 import CORE_FLOAT, CORE_INT, Input, Node, NodeSchema\n"
+        "from dinkster_api.v1 import Formula, NumberWidget, TypeExpr\n"
+        "INT, FLOAT = TypeExpr.concrete(CORE_INT), TypeExpr.concrete(CORE_FLOAT)\n"
+        "class Sampler(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('limits.sampler', display_name='Sampler', body=(\n"
+        "            Input('steps', INT, default=20, widget=NumberWidget(\n"
+        "                min=1, max=10000, special={-1: 'auto'}, reason='Slower above.')),\n"
+        "            Input('frames', INT, default=6, widget=NumberWidget(min=2, step=4)),\n"
+        "            Input('width', INT, default=64,\n"
+        "                  widget=NumberWidget(min=1, step=8, offset=0)),\n"
+        "            Input('cfg', FLOAT, default=7.5, widget=NumberWidget(max=30.0, step=0.1)),\n"
+        "            Input('depth', INT, default=8, widget=NumberWidget(\n"
+        "                min=0, max=Formula('steps'), step=4, offset=Formula('frames'))),\n"
+        "        ), output_node=True)\n"
+        "    @classmethod\n"
+        "    def execute(cls, **values):\n"
+        "        return {}\n"
+        "NODES = [Sampler]\n"
+    )
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port, tmp_path / "library", "--no-default-packs", "--pack", str(manifest)
+        ),
+        tmp_path,
+        env={**os.environ, "PYTHONPATH": str(pack)},
+    )
+    values = ["graphs", "root", "nodes", "s", "values"]
+
+    def write(**changes: object) -> list[dict[str, object]]:
+        return [
+            {"op": "replace", "path": [*values, field], "value": value}
+            for field, value in changes.items()
+        ]
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        agent = {"X-Dinkster-Actor-Kind": "agent"}
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5)) as session:
+            async with asyncio.timeout(60):
+                while True:
+                    assert process.poll() is None, "serve process died"
+                    try:
+                        async with session.get(base + "/api/nodes?wire=45") as resp:
+                            if (
+                                resp.status == 200
+                                and "limits.sampler" in (await resp.json())["nodes"]
+                            ):
+                                break
+                    except aiohttp.ClientError:
+                        pass
+                    await asyncio.sleep(0.05)
+            # The workflow already holds a number beyond its limit, as one
+            # opened from a file may until the editor corrects it.
+            document = {
+                "format": "dinkster-workflow",
+                "formatVersion": 1,
+                "graphs": {
+                    "root": {
+                        "nodes": {
+                            "s": {
+                                "type": "limits.sampler",
+                                "values": {
+                                    "steps": 12000,
+                                    "frames": 6,
+                                    "cfg": 7.5,
+                                    "width": 64,
+                                    "depth": 8,
+                                },
+                            }
+                        }
+                    }
+                },
+            }
+            async with session.post(
+                base + "/api/sessions",
+                json={"scope": "local", "documentId": "w", "snapshot": document},
+            ) as resp:
+                assert resp.status == 201, await resp.text()
+                ops = f"{base}/api/sessions/{(await resp.json())['sessionId']}/ops"
+            revision = 0
+
+            async def post(
+                patch: list[dict[str, object]],
+                corrections: list[dict[str, object]] | None = None,
+            ) -> tuple[int, dict[str, object]]:
+                nonlocal revision
+                body = {
+                    "protocolVersion": 1,
+                    "opId": f"op-{time.monotonic_ns()}",
+                    "actorId": "agent1",
+                    "baseRevision": revision,
+                    "patch": patch,
+                }
+                if corrections is not None:
+                    body["numericCorrections"] = corrections
+                async with session.post(ops, json=body, headers=agent) as resp:
+                    answer = await resp.json()
+                if resp.status == 200:
+                    revision = answer["revision"]
+                return resp.status, answer
+
+            # A field the write does not change is not judged.
+            assert (await post(write(cfg=8.0)))[0] == 200
+            status, refusal = await post(write(steps=10001))
+            assert status == 422
+            assert refusal["error"] == "value-outside-limits"
+            assert refusal["message"] == (
+                "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
+            )
+            assert refusal["problems"] == [
+                {
+                    "graph": "root",
+                    "node": "s",
+                    "field": "steps",
+                    "value": 10001,
+                    "min": 1,
+                    "max": 10000,
+                    "step": None,
+                    "message": "Sampler: steps = 10001 refused. Allowed: 1 to 10000. Slower above.",
+                }
+            ]
+            assert (await post(write(steps=0)))[0] == 422
+            assert (await post(write(cfg=30.5)))[0] == 422
+            owner = {"graphId": "root", "nodeId": "s", "valueKey": "steps"}
+            corrections: list[dict[str, object]] = [
+                {"owner": owner, "causes": [{**owner, "instancePath": [], "stamp": "limits"}]}
+            ]
+            status, annotated_refusal = await post(write(steps=10001, cfg=9.0), corrections)
+            assert status == 422
+            assert annotated_refusal["error"] == "value-outside-limits"
+            # Steps count from min: 2, 6, 10, 14 ... and a decimal is not judged on its step.
+            status, refusal = await post(write(frames=12))
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: frames = 12 refused. Not on the step of 4 from 2. Nothing stored."
+            )
+            assert (await post(write(frames=14)))[0] == 200
+            assert (await post(write(cfg=7.53)))[0] == 200
+            # A declared offset moves where the steps count from: 0, 8, 16 ... not 1, 9, 17.
+            assert (await post(write(width=9)))[0] == 422
+            assert (await post(write(width=16)))[0] == 200
+            # A limit or offset worked out in the editor is not known here: only
+            # the literal min holds, and with no known offset there is no step grid.
+            assert (await post(write(depth=99999)))[0] == 200
+            assert (await post(write(depth=5)))[0] == 200
+            status, refusal = await post(write(depth=-1))
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: depth = -1 refused. Allowed: at least 0. Nothing stored."
+            )
+            # A special value is allowed outside the limits.
+            assert (await post(write(steps=-1)))[0] == 200
+            # One bad part refuses the whole write.
+            assert (await post(write(steps=10000, frames=7)))[0] == 422
+            assert (await post(write(steps=10000)))[0] == 200
+            # Putting back a value the field held earlier, as undo does, is
+            # accepted even outside the limits; a new one is not.
+            assert (await post(write(steps=12000)))[0] == 200
+            assert (await post(write(steps=12001)))[0] == 422
+            # A pasted node is judged like any other write; it held nothing before.
+            pasted = {
+                "op": "add",
+                "path": ["graphs", "root", "nodes", "p"],
+                "value": {"type": "limits.sampler", "values": {"steps": 12000, "frames": 6}},
+            }
+            status, refusal = await post([pasted])
+            assert status == 422
+            assert refusal["message"] == (
+                "Sampler: steps = 12000 refused. Allowed: 1 to 10000. Slower above. Nothing stored."
+            )
+            async with session.get(ops + "?after=0") as resp:
+                stored = [op["patch"] for op in (await resp.json())["ops"]]
+            assert stored == [
+                write(cfg=8.0),
+                write(frames=14),
+                write(cfg=7.53),
+                write(width=16),
+                write(depth=99999),
+                write(depth=5),
+                write(steps=-1),
+                write(steps=10000),
+                write(steps=12000),
+            ]
+
+    pending_error: BaseException | None = None
+    try:
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
 @pytest.mark.parametrize("external", [True, False])
 @pytest.mark.parametrize("source", ["defaults", "generation"])
 def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credentials(
@@ -3590,13 +3800,13 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
     )
     (pack / "credential_probe.py").write_text(
         "import asyncio, hashlib, json, os\nfrom pathlib import Path\n"
-        "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+        "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr\n"
         "from dinkster_api.v1 import current_execution_context\n"
         "class Probe(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema(node_type='credentialprobe.read', idempotent=False, "
-        "outputs=(OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+        "body=(Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
         "    @classmethod\n"
         "    async def execute(cls):\n"
         "        if directory := os.environ.get('DINKSTER_REMOTE_RUN_TOKEN_DIRECTORY'):\n"
@@ -3792,8 +4002,8 @@ def test_serve_mounted_save_end_to_end(
     over the API while dinkster-serve runs, execute the PGM saver in
     that same process, verify the file landed inside the mount with the
     digest the job reported, stream it back via /api/assets, then revoke
-    the mount and prove the very next save job fails - no restart
-    anywhere."""
+    the mount and prove the very next save goes to the default output
+    mount instead - no restart anywhere."""
     from dinkster_assets import MountConfiguration, digest_bytes
     from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
     from dinkster_library import LibraryClient
@@ -3846,10 +4056,10 @@ def test_serve_mounted_save_end_to_end(
         env={**os.environ, "PYTHONPATH": str(pack)},
     )
 
-    def save_job(job_id: str) -> dict[str, object]:
+    def save_job(job_id: str, project: str = "default", width: int = 3) -> dict[str, object]:
         graph = Graph(
             nodes={
-                "g": GraphNode("mounted-save.gradient", {"width": 3, "height": 2}),
+                "g": GraphNode("mounted-save.gradient", {"width": width, "height": 2}),
                 "save": GraphNode(
                     "mounted-save.save_pgm",
                     {
@@ -3862,6 +4072,7 @@ def test_serve_mounted_save_end_to_end(
         return {
             "clientId": "e2e",
             "jobId": job_id,
+            "project": project,
             "graph": graph_to_wire(graph),
             "targets": ["save"],
         }
@@ -3889,13 +4100,15 @@ def test_serve_mounted_save_end_to_end(
                         break
                     await asyncio.sleep(0.05)
 
-            # Before any grant: the save refuses with the mount's name in
-            # the error - never a silent fallback directory.
+            # Before any grant the mount is not on this machine: the save
+            # lands in the default output mount.
             async with session.post(base + "/api/jobs", json=save_job("j0")) as resp:
                 assert resp.status == 202
             status = await _job_finish(session, base, "j0")
-            assert status["state"] == "failed"
-            assert "renders" in str(status["error"])
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "j0", "path") == (
+                "mounts/output/shots/frame_00001.pgm"
+            )
 
             # Grant the directory readwrite while the process runs.
             async with session.post(
@@ -3953,20 +4166,222 @@ def test_serve_mounted_save_end_to_end(
             )
             assert (outdir / "shots" / "frame_00002.pgm").read_bytes() == payload
 
-            # Revoke and save again in the same process: refusal, and the
-            # already-written files stay untouched on disk.
+            # Revoke and save again in the same process: the save goes to
+            # the default output mount, and the files already written to the
+            # revoked mount stay untouched on disk.
             async with session.delete(base + "/api/mounts/renders") as resp:
                 assert resp.status == 200
             async with session.post(base + "/api/jobs", json=save_job("j3")) as resp:
                 assert resp.status == 202
             status = await _job_finish(session, base, "j3")
-            assert status["state"] == "failed"
-            assert "renders" in str(status["error"])
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "j3", "path") == (
+                "mounts/output/shots/frame_00002.pgm"
+            )
             assert sorted(p.name for p in (outdir / "shots").iterdir()) == [
                 ".dinkster-asset-writer.lock",
                 "frame_00001.pgm",
                 "frame_00002.pgm",
             ]
+
+            for project, width in (("film", 4), ("portraits", 7)):
+                parent = tmp_path / project
+                async with session.post(
+                    base + "/api/projects", json={"id": project, "filesFolder": str(parent)}
+                ) as resp:
+                    assert resp.status == 200, await resp.text()
+                    document = (await resp.json())["project"]
+                assert document["filesFolder"] == str(parent)
+                assert document["folder"] == str(parent / "output")
+                async with session.post(
+                    base + "/api/jobs", json=save_job(project, project, width)
+                ) as resp:
+                    assert resp.status == 202, await resp.text()
+                status = await _job_finish(session, base, project)
+                assert status["state"] == "completed", status.get("error")
+                assert await _peek_value(session, base, project, "path") == (
+                    f"mounts/{project}-output/shots/frame_00001.pgm"
+                )
+                content = (parent / "output" / "shots" / "frame_00001.pgm").read_bytes()
+                header = f"P5 {width} 2 255\n".encode()
+                assert content.startswith(header)
+                assert len(content) == len(header) + width * 2
+                assert await _peek_value(session, base, project, "digest") == digest_bytes(content)
+
+            async with session.post(base + "/api/jobs", json=save_job("existing")) as resp:
+                assert resp.status == 202
+            status = await _job_finish(session, base, "existing")
+            assert status["state"] == "completed", status.get("error")
+            assert await _peek_value(session, base, "existing", "path") == (
+                "mounts/output/shots/frame_00003.pgm"
+            )
+
+    pending_error: BaseException | None = None
+    try:
+        run_scenario(scenario())
+    except BaseException as error:
+        pending_error = error
+        raise
+    finally:
+        stop_logged_serve(process, log, pending_error)
+
+
+def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
+    """A job submitted through the API meets the node's rules before any
+    node runs: a failed rule with no fix fails the run naming the node, a
+    failed rule with a fix leaves one warning on the node and the run goes
+    on, and a rule that reads a wired value has no answer yet and passes."""
+    from dinkster_graph import Graph, GraphNode, Link, graph_to_wire
+
+    pack = tmp_path / "rules"
+    pack.mkdir()
+    manifest = pack / "dinkster-pack.toml"
+    manifest.write_text(
+        '[pack]\nname = "rules"\npublisher = "dinkster"\n'
+        '[pack.entry]\nnodes = "rules_nodes:NODES"\n'
+    )
+    ran = tmp_path / "ran.txt"
+    (pack / "rules_nodes.py").write_text(
+        "import os\n"
+        "from dinkster_api.v1 import CORE_INT, Input, Node, NodeSchema, Output, TypeExpr\n"
+        "from dinkster_schema import Formula, NumberWidget, Rule\n"
+        "from dinkster_schema.body import Set\n"
+        "INT = TypeExpr.concrete(CORE_INT)\n"
+        "def mark(name):\n"
+        "    with open(os.environ['RULES_RAN'], 'a') as f:\n"
+        "        f.write(name + '\\n')\n"
+        "class Source(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('rules.source', body=(\n"
+        "            Input('value', INT, default=1), Output('value', INT)))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, value):\n"
+        "        mark('source')\n"
+        "        return cls.outputs(value=value)\n"
+        "class Sampler(Node):\n"
+        "    @classmethod\n"
+        "    def define_schema(cls):\n"
+        "        return NodeSchema('rules.sampler', display_name='Sampler', output_node=True,\n"
+        "            body=(Input('steps', INT, default=20,\n"
+        "                        widget=NumberWidget(min=8, max=50, step=4)),\n"
+        "                  Input('frames', INT, default=16)),\n"
+        "            validate=(\n"
+        "                Rule(Formula('steps <= 50'), 'steps must be 50 or fewer'),\n"
+        "                Rule(Formula('frames <= 32'), 'frames above 32 run slowly',\n"
+        "                     fix=(Set('frames', 32),), fix_label='Use 32 frames'),\n"
+        "            ))\n"
+        "    @classmethod\n"
+        "    def execute(cls, *, steps, frames):\n"
+        "        mark(f'sampler {steps} {frames}')\n"
+        "        return {}\n"
+        "NODES = [Source, Sampler]\n"
+    )
+    port = free_port()
+    process, log = start_logged_serve(
+        serve_with_library_command(
+            port, tmp_path / "library", "--no-default-packs", "--pack", str(manifest)
+        ),
+        tmp_path,
+        env={**os.environ, "PYTHONPATH": str(pack), "RULES_RAN": str(ran)},
+    )
+
+    async def scenario() -> None:
+        base = f"http://127.0.0.1:{port}"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with asyncio.timeout(60):
+                while True:
+                    assert process.poll() is None, "serve process died"
+                    try:
+                        async with session.get(base + "/api/nodes?wire=45") as resp:
+                            if (
+                                resp.status == 200
+                                and "rules.sampler" in (await resp.json())["nodes"]
+                            ):
+                                break
+                    except aiohttp.ClientError:
+                        pass
+                    await asyncio.sleep(0.05)
+
+            async def run(job: str, nodes: dict[str, GraphNode]) -> dict[str, object]:
+                async with session.post(
+                    base + "/api/jobs",
+                    json={
+                        "clientId": "e2e",
+                        "jobId": job,
+                        "graph": graph_to_wire(Graph(nodes=nodes)),
+                        "targets": ["s"],
+                    },
+                ) as resp:
+                    assert resp.status == 202, await resp.text()
+                return await _job_finish(session, base, job)
+
+            async def warnings(status: dict[str, object]) -> list[object]:
+                journal = f"{base}/api/runs/{status['jobRef']}/journal?scope=local"
+                # The journal writes in batches; wait for the run's final state.
+                async with asyncio.timeout(10):
+                    while True:
+                        async with session.get(journal) as resp:
+                            records = (await resp.json())["records"] if resp.status == 200 else []
+                        if any(
+                            record["name"] == "job_state"
+                            and record["payload"].get("state") == status["state"]
+                            for record in records
+                        ):
+                            break
+                        await asyncio.sleep(0.05)
+                return [
+                    (record["payload"].get("nodeId"), record["payload"]["data"]["message"])
+                    for record in records
+                    if record["name"] == "log"
+                    and record["payload"]["data"].get("level") == "warning"
+                ]
+
+            refused = await run(
+                "too-many-steps", {"s": GraphNode("rules.sampler", {"steps": 12000})}
+            )
+            assert refused["state"] == "failed", refused
+            assert refused["error"] == {
+                "kind": "validation",
+                "diagnostics": [
+                    {
+                        "severity": "error",
+                        "code": "rule-failed",
+                        "nodeId": "s",
+                        "inputId": None,
+                        "message": "rules.sampler: steps must be 50 or fewer",
+                    }
+                ],
+            }
+            assert not ran.exists()
+
+            slow = await run("slow-frames", {"s": GraphNode("rules.sampler", {"frames": 48})})
+            assert slow["state"] == "completed", slow
+            assert await warnings(slow) == [("s", "rules.sampler: frames above 32 run slowly")]
+            # The engine does not run the fix: the node receives the value as stored.
+            assert ran.read_text().splitlines() == ["sampler 20 48"]
+
+            wired = await run(
+                "wired-steps",
+                {
+                    "src": GraphNode("rules.source", {"value": 12000}),
+                    "s": GraphNode("rules.sampler", {"steps": Link("src", "value")}),
+                },
+            )
+            assert wired["state"] == "completed", wired
+            assert await warnings(wired) == []
+            assert ran.read_text().splitlines()[1:] == ["source", "sampler 12000 16"]
+
+            off_step = await run(
+                "wired-off-step",
+                {
+                    "src": GraphNode("rules.source", {"value": 12001}),
+                    "s": GraphNode("rules.sampler", {"steps": Link("src", "value")}),
+                },
+            )
+            assert off_step["state"] == "completed", off_step
+            assert await warnings(off_step) == []
+            assert ran.read_text().splitlines()[3:] == ["source", "sampler 12001 16"]
 
     pending_error: BaseException | None = None
     try:

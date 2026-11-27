@@ -26,8 +26,7 @@ class DiagnosticString(api.Node):
     def define_schema(cls):
         return api.NodeSchema(
             node_type="diagnostic.string",
-            inputs=(api.InputSpec("value", STRING),),
-            outputs=(api.OutputSpec("value", STRING),),
+            body=(api.Input("value", STRING), api.Output("value", STRING)),
         )
 
     @classmethod
@@ -197,8 +196,12 @@ class PreservingFallback(api.Node):
     def define_schema(cls):
         return api.NodeSchema(
             node_type="diagnostic.fallback",
-            inputs=(api.InputSpec("image", IMAGE), api.InputSpec("mask", MASK)),
-            outputs=(api.OutputSpec("video", IMAGE), api.OutputSpec("receipt", STRING)),
+            body=(
+                api.Input("image", IMAGE),
+                api.Input("mask", MASK),
+                api.Output("video", IMAGE),
+                api.Output("receipt", STRING),
+            ),
         )
 
     @classmethod
@@ -216,11 +219,11 @@ class DroppingFallback(PreservingFallback):
     def define_schema(cls):
         return api.NodeSchema(
             node_type="diagnostic.drop",
-            inputs=(
-                api.InputSpec("image", IMAGE),
-                api.InputSpec("mask", MASK, mask_polarity="coverage"),
+            body=(
+                api.Input("image", IMAGE),
+                api.Input("mask", MASK, mask_polarity="coverage"),
+                api.Output("image", IMAGE),
             ),
-            outputs=(api.OutputSpec("image", IMAGE),),
         )
 
     @classmethod

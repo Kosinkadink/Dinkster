@@ -1,16 +1,17 @@
 {
   "schemas": [
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "nodeType": "fixture.dynamic-legacy",
       "version": 1,
       "displayName": "",
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "input",
+          "kind": "input",
           "id": "color_value",
           "type": {
             "kind": "concrete",
@@ -21,7 +22,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "tolerance",
           "type": {
             "kind": "concrete",
@@ -32,7 +33,7 @@
           "required": true
         },
         {
-          "role": "input",
+          "kind": "input",
           "id": "metric",
           "type": {
             "kind": "concrete",
@@ -45,23 +46,24 @@
       ]
     },
     {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "nodeType": "fixture.dynamic-target",
       "version": 1,
       "displayName": "",
       "category": "",
       "description": "",
       "idempotent": true,
-      "interface": [
+      "interface": [],
+      "body": [
         {
-          "role": "dynamicCombo",
+          "kind": "choice",
           "id": "policy",
           "options": [
             {
               "key": "channel",
-              "inputs": [
+              "rows": [
                 {
-                  "role": "input",
+                  "kind": "input",
                   "id": "channel",
                   "type": {
                     "kind": "concrete",
@@ -75,168 +77,22 @@
             },
             {
               "key": "exact_color",
-              "inputs": [
+              "rows": [
                 {
-                  "role": "dynamicCombo",
-                  "id": "color_source",
-                  "options": [
-                    {
-                      "key": "hex",
-                      "inputs": [
-                        {
-                          "role": "input",
-                          "id": "color",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "STRING"
-                            ]
-                          },
-                          "required": true
-                        }
-                      ]
-                    },
-                    {
-                      "key": "integer",
-                      "inputs": [
-                        {
-                          "role": "input",
-                          "id": "color_value",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        }
-                      ]
-                    },
-                    {
-                      "key": "channels",
-                      "inputs": [
-                        {
-                          "role": "input",
-                          "id": "red",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        },
-                        {
-                          "role": "input",
-                          "id": "green",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        },
-                        {
-                          "role": "input",
-                          "id": "blue",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        }
-                      ]
-                    }
-                  ],
-                  "required": true
+                  "kind": "use",
+                  "id": "color_source"
                 }
               ]
             },
             {
               "key": "tolerance_color",
-              "inputs": [
+              "rows": [
                 {
-                  "role": "dynamicCombo",
-                  "id": "color_source",
-                  "options": [
-                    {
-                      "key": "hex",
-                      "inputs": [
-                        {
-                          "role": "input",
-                          "id": "color",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "STRING"
-                            ]
-                          },
-                          "required": true
-                        }
-                      ]
-                    },
-                    {
-                      "key": "integer",
-                      "inputs": [
-                        {
-                          "role": "input",
-                          "id": "color_value",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        }
-                      ]
-                    },
-                    {
-                      "key": "channels",
-                      "inputs": [
-                        {
-                          "role": "input",
-                          "id": "red",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        },
-                        {
-                          "role": "input",
-                          "id": "green",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        },
-                        {
-                          "role": "input",
-                          "id": "blue",
-                          "type": {
-                            "kind": "concrete",
-                            "types": [
-                              "INT"
-                            ]
-                          },
-                          "required": true
-                        }
-                      ]
-                    }
-                  ],
-                  "required": true
+                  "kind": "use",
+                  "id": "color_source"
                 },
                 {
-                  "role": "input",
+                  "kind": "input",
                   "id": "tolerance",
                   "type": {
                     "kind": "concrete",
@@ -247,7 +103,7 @@
                   "required": true
                 },
                 {
-                  "role": "input",
+                  "kind": "input",
                   "id": "metric",
                   "type": {
                     "kind": "concrete",
@@ -260,7 +116,84 @@
               ]
             }
           ],
-          "required": true
+          "shared": [
+            {
+              "kind": "choice",
+              "id": "color_source",
+              "options": [
+                {
+                  "key": "hex",
+                  "rows": [
+                    {
+                      "kind": "input",
+                      "id": "color",
+                      "type": {
+                        "kind": "concrete",
+                        "types": [
+                          "STRING"
+                        ]
+                      },
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "key": "integer",
+                  "rows": [
+                    {
+                      "kind": "input",
+                      "id": "color_value",
+                      "type": {
+                        "kind": "concrete",
+                        "types": [
+                          "INT"
+                        ]
+                      },
+                      "required": true
+                    }
+                  ]
+                },
+                {
+                  "key": "channels",
+                  "rows": [
+                    {
+                      "kind": "input",
+                      "id": "red",
+                      "type": {
+                        "kind": "concrete",
+                        "types": [
+                          "INT"
+                        ]
+                      },
+                      "required": true
+                    },
+                    {
+                      "kind": "input",
+                      "id": "green",
+                      "type": {
+                        "kind": "concrete",
+                        "types": [
+                          "INT"
+                        ]
+                      },
+                      "required": true
+                    },
+                    {
+                      "kind": "input",
+                      "id": "blue",
+                      "type": {
+                        "kind": "concrete",
+                        "types": [
+                          "INT"
+                        ]
+                      },
+                      "required": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
         }
       ],
       "replacements": [

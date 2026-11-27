@@ -12,8 +12,10 @@ from collections.abc import Awaitable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .body import declared_calls
 from .expansion import Expansion
 from .model import NodeSchema
+from .nest import OutputShapeError, flatten_outputs
 
 
 class NodeOutputError(ValueError):
@@ -78,6 +80,11 @@ class Node:
         cached = cls.__dict__.get("_cached_schema")
         if cached is None:
             cached = cls.define_schema()
+            for call in declared_calls(cached.body, cached.menu):
+                if isinstance(call.function, str):
+                    raise ValueError(
+                        f"{cached.node_type}: Call requires a function object with annotations"
+                    )
             cls._cached_schema = cached
         return cached
 
@@ -89,27 +96,19 @@ class Node:
         not later at the worker shim. Sugar only: returning a plain mapping
         stays equally valid (the mapping is the canonical representation).
 
-        Output families are returned as one nested mapping per family:
-        ``cls.outputs(parts={"a": ..., "b": ...})``. Exact member checking
-        against the document's elaborated membership happens at the worker
-        (the base schema cannot know which members exist)."""
+        A group, choice or type choice that holds outputs is returned as one
+        nested mapping: ``cls.outputs(parts={"1": ..., "2": ...})``. Which
+        members exist is checked at the worker against the run's interface
+        (the declaration cannot know them)."""
         schema = cls.schema()
-        static = {out.id for out in schema.outputs}
-        families = {fam.id for fam in schema.output_families}
-        returned = set(values)
         problems: list[str] = []
-        missing = static - returned
-        extra = returned - static - families
+        missing = {out.id for out in schema.outputs} - set(values)
         if missing:
             problems.append("missing outputs: " + ", ".join(sorted(missing)))
-        if extra:
-            problems.append("undeclared outputs: " + ", ".join(sorted(extra)))
-        for family_id in families & returned:
-            if not isinstance(values[family_id], Mapping):
-                problems.append(
-                    f"output family '{family_id}' must be a mapping of "
-                    f"member suffix -> value, got {type(values[family_id]).__name__}"
-                )
+        try:
+            flatten_outputs(schema.body, values)
+        except OutputShapeError as exc:
+            problems.append(str(exc))
         if problems:
             raise NodeOutputError(f"{schema.node_type}: " + "; ".join(problems))
         return values

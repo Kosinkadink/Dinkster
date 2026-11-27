@@ -54,14 +54,39 @@ def _freeze_json_mapping(value: Mapping[str, JsonValue]) -> Mapping[str, JsonVal
     return MappingProxyType(frozen)
 
 
+def editor_row_names(writes: object, reads: object, what: str) -> tuple[Mapping[str, str], ...]:
+    """An editor's ``writes`` and ``reads``: its own name for a part -> a row id.
+
+    The ids are checked against the body when the pack loads; here only the
+    shape, and that no row is both written and read."""
+    frozen: list[Mapping[str, str]] = []
+    for name, value in (("writes", writes), ("reads", reads)):
+        if not isinstance(value, Mapping):
+            raise ValueError(f"{what} {name} must be a mapping of part names to row ids")
+        items = cast("Mapping[object, object]", value)
+        for part, row_id in items.items():
+            if not isinstance(part, str) or not part or not isinstance(row_id, str) or not row_id:
+                raise ValueError(f"{what} {name} maps non-empty part names to row ids")
+        frozen.append(MappingProxyType(dict(cast("Mapping[str, str]", items))))
+    both = set(frozen[0].values()) & set(frozen[1].values())
+    if both:
+        raise ValueError(f"{what}: {', '.join(sorted(both))} is in both writes and reads")
+    return tuple(frozen)
+
+
 @dataclass(frozen=True)
 class CustomWidgetDescriptor:
-    """Pack-defined input presentation transported as inert JSON data."""
+    """Pack-defined input presentation transported as inert JSON data.
+
+    ``writes`` and ``reads`` map the widget's own name for a part to the id of
+    a row it writes or reads, so the widget assumes no row id."""
 
     widget_type: str
     params: Mapping[str, JsonValue] = field(
         default_factory=lambda: cast("Mapping[str, JsonValue]", {})
     )
+    writes: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
+    reads: Mapping[str, str] = field(default_factory=lambda: cast("Mapping[str, str]", {}))
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.widget_type), str) or not self.widget_type:
@@ -84,8 +109,12 @@ class CustomWidgetDescriptor:
             raise ValueError(f"custom widget type {self.widget_type!r} is reserved")
         if not isinstance(cast("object", self.params), Mapping):
             raise ValueError("custom widget params must be a mapping")
-        if "type" in self.params:
-            raise ValueError("custom widget params must not contain 'type'")
+        for name in ("type", "writes", "reads"):
+            if name in self.params:
+                raise ValueError(f"custom widget params must not contain {name!r}")
+        writes, reads = editor_row_names(self.writes, self.reads, "custom widget")
+        object.__setattr__(self, "writes", writes)
+        object.__setattr__(self, "reads", reads)
         try:
             frozen = _freeze_json_mapping(self.params)
         except (TypeError, ValueError) as exc:
@@ -195,6 +224,13 @@ class ValueMeta:
 
     def get(self, key: str, default: object = None) -> object:
         return self.entries.get(key, default)
+
+    @property
+    def codec_entries(self) -> Mapping[str, object]:
+        """Type metadata excludes the host's diagnostic producer attribution."""
+        if "producer.pack" not in self.entries:
+            return self.entries
+        return {key: value for key, value in self.entries.items() if key != "producer.pack"}
 
 
 @runtime_checkable
@@ -323,6 +359,8 @@ class EncodedPayload:
     data: bytes
     decoder: Callable[[bytes], object] | None
     transport: str = "inline"
+    storing: str | None = None
+    """The pack whose codec wrote these bytes, when the writer recorded it."""
     _encoded: ClassVar[bytes | _EncodedBufferStorage]
 
     def __init__(
@@ -331,11 +369,13 @@ class EncodedPayload:
         data: bytes,
         decoder: Callable[[bytes], object] | None,
         transport: str = "inline",
+        storing: str | None = None,
     ) -> None:
         object.__setattr__(self, "type_id", type_id)
         object.__setattr__(self, "_encoded", data)
         object.__setattr__(self, "decoder", decoder)
         object.__setattr__(self, "transport", transport)
+        object.__setattr__(self, "storing", storing)
 
     @classmethod
     def from_buffer(
@@ -346,12 +386,13 @@ class EncodedPayload:
         transport: str,
         release: Callable[[], None],
         size: int | None = None,
+        storing: str | None = None,
     ) -> EncodedPayload:
         """Take ownership of ``view`` and release its backing store when unused."""
         logical_size = view.nbytes if size is None else size
         if logical_size < 0 or logical_size > view.nbytes:
             raise ValueError("encoded buffer size must fit its backing view")
-        payload = cls(type_id, b"", decoder, transport)
+        payload = cls(type_id, b"", decoder, transport, storing)
         object.__setattr__(
             payload,
             "_encoded",
@@ -368,7 +409,7 @@ class EncodedPayload:
     def __reduce__(self) -> tuple[object, tuple[object, ...]]:
         return (
             EncodedPayload,
-            (self.type_id, self.data, self.decoder, self.transport),
+            (self.type_id, self.data, self.decoder, self.transport, self.storing),
         )
 
     @property

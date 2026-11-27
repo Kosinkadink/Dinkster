@@ -35,7 +35,7 @@ MODULE_TEMPLATE = '''\
 
 from collections.abc import Mapping
 
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 
 STRING = TypeExpr.concrete("STRING")
 
@@ -46,8 +46,8 @@ class Echo(Node):
         return NodeSchema(
             node_type="{name}.echo",
             display_name="Echo {name}",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING),
+            Output("out", STRING),),
         )
 
     @classmethod

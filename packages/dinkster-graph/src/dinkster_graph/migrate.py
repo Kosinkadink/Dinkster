@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import cast
 
 from dinkster_schema import (
-    MAX_FAMILY_MEMBERS,
-    InputSpec,
     MappingSource,
     NodeSchema,
     ReplacementCase,
@@ -18,8 +18,25 @@ from dinkster_schema import (
     elaborate,
     schema_signature,
 )
+from dinkster_schema.body import Group, InputGroupView, input_group_view, scope_rows
 
-from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral
+from .model import Graph, GraphNode, Link, RegionNode, TypedLiteral, is_link, literal_value
+
+_log = logging.getLogger(__name__)
+
+
+def _input_family(schema: NodeSchema, family_id: str) -> InputGroupView | None:
+    """The target's group of inputs with this id."""
+    return input_group_view(schema.body, family_id)
+
+
+def _stores_members(schema: NodeSchema, family_id: str) -> bool:
+    """Whether a node stores this group's members: a group grown by a button
+    has no wires or count to derive them from."""
+    return any(
+        isinstance(row, Group) and row.id == family_id and row.grows == "button"
+        for row in scope_rows(schema.body)
+    )
 
 
 def _equal_value(left: object, right: object) -> bool:
@@ -39,6 +56,9 @@ def _equal_value(left: object, right: object) -> bool:
             _equal_value(value, right_dict[key]) for key, value in left_dict.items()
         )
     return type(cast("object", left)) is type(right) and left == right
+
+
+_UNION_STAMPS: dict[type, str] = {bool: "BOOLEAN", int: "INT", float: "FLOAT", str: "STRING"}
 
 
 def _stored_value(node: GraphNode, input_id: str) -> tuple[bool, object]:
@@ -146,23 +166,46 @@ def _apply_case(
         if present:
             inputs[local_id][port] = value
             consume(mapping.input, mapping)
+    input_membership: dict[str, dict[str, tuple[str, ...]]] = {local_id: {} for local_id in targets}
     for raw, mapping in case.input_families:
         local_id, family_id = address(raw)
-        family = next(
-            (
-                family
-                for family in schemas[targets[local_id][1]].input_families
-                if family.id == family_id
-            ),
-            None,
-        )
+        family = _input_family(schemas[targets[local_id][1]], family_id)
         if family is None:
             raise ValueError(f"replacement input family {raw!r} is unavailable")
-        template = family.template
-        if not all(isinstance(spec, InputSpec) for spec in template):
+        if family.rows is None:
             raise ValueError(f"replacement input family {raw!r} needs a static template")
+        template = family.rows
         input_members: list[tuple[str, tuple[tuple[str, MappingSource], ...], GraphNode]]
-        if mapping.kind == "members":
+        spread_items: dict[str, object] = {}
+        if mapping.kind == "spread":
+            present, stored = _stored_value(source, mapping.source_input)
+            if present and not isinstance(stored, list):
+                raise ValueError(
+                    f"replace: stored value of '{mapping.source_input}' is not a list; "
+                    "cannot spread"
+                )
+            items = cast("list[object]", stored) if present else []
+            if len(items) > family.limit:
+                dropped = ", ".join(
+                    item if isinstance(item, str) else json.dumps(item, separators=(",", ":"))
+                    for item in items[family.limit :]
+                )
+                _log.warning(
+                    "replace: kept the first %d of %d items of '%s'; dropped %s",
+                    family.limit,
+                    len(items),
+                    mapping.source_input,
+                    dropped,
+                )
+                items = items[: family.limit]
+            if family.position_key is None:
+                raise ValueError("replacement target family has no positional naming")
+            suffixes = [
+                family.position_key(index) for index in range(max(len(items), family.min_members))
+            ]
+            input_members = [(suffix, (), source) for suffix in suffixes]
+            spread_items = dict(zip(suffixes, items, strict=False))
+        elif mapping.kind == "members":
             input_members = [(member.suffix, member.inputs, source) for member in mapping.members]
             for member in mapping.members:
                 for _, value_mapping in member.inputs:
@@ -180,14 +223,14 @@ def _apply_case(
             for index, suffix in enumerate(suffixes):
                 target_suffix = suffix
                 if mapping.member_ids == "targetPositions":
-                    if family.member_names is not None:
-                        if index >= len(family.member_names):
-                            raise ValueError("replacement input family exceeds target positions")
-                        target_suffix = family.member_names[index]
-                    elif family.member_prefix is not None:
-                        target_suffix = f"{family.member_prefix}{index}"
-                    else:
+                    if family.position_key is None:
                         raise ValueError("replacement target family has no positional naming")
+                    try:
+                        target_suffix = family.position_key(index)
+                    except IndexError:
+                        raise ValueError(
+                            "replacement input family exceeds target positions"
+                        ) from None
                 source_inputs: dict[str, object] = {}
                 source_variants: dict[str, str] = {}
                 for input_id in mapping.source_template:
@@ -214,18 +257,22 @@ def _apply_case(
                         replace(source, inputs=source_inputs, slot_variants=source_variants),
                     )
                 )
+        if _stores_members(schemas[targets[local_id][1]], family_id):
+            input_membership[local_id][family_id] = tuple(suffix for suffix, _, _ in input_members)
         for suffix, mappings, member_source in input_members:
             member_path = f"{family_id}.{suffix}"
             for spec in template:
-                assert isinstance(spec, InputSpec)
-                port = member_path if len(template) == 1 else f"{member_path}.{spec.id}"
+                port = f"{member_path}.{spec.id}" if family.records else member_path
                 if spec.default is not None:
                     inputs[local_id][port] = spec.default
             for input_id, value_mapping in mappings:
-                port = member_path if len(template) == 1 else f"{member_path}.{input_id}"
+                port = f"{member_path}.{input_id}" if family.records else member_path
                 present, value = _mapped_value(value_mapping, member_source)
                 if present:
                     inputs[local_id][port] = value
+            if suffix in spread_items:
+                port = f"{member_path}.{mapping.member_input}" if family.records else member_path
+                inputs[local_id][port] = spread_items[suffix]
     for input_id, value in source.inputs.items():
         if isinstance(value, Link) and input_id not in consumed_connections:
             raise ValueError(f"replacement would drop incoming connection {input_id!r}")
@@ -273,28 +320,23 @@ def _apply_case(
 
     nodes = dict(graph.nodes)
     for local_id, (target_id, target_type) in targets.items():
-        membership = dict(output_members) if not local_id else {}
-        for family in schemas[target_type].output_families:
-            if family.count is None:
-                continue
-            count = inputs[local_id].get(family.count.input)
-            if type(count) is not int or not 0 <= count <= MAX_FAMILY_MEMBERS:
-                raise ValueError(
-                    f"replacement output family {family.id!r} requires a stored count "
-                    f"from 0 to {MAX_FAMILY_MEMBERS}"
-                )
-            canonical = tuple(str(index) for index in range(count))
-            if family.id in membership and membership[family.id] != canonical:
-                raise ValueError(
-                    f"replacement output family {family.id!r} has incompatible membership"
-                )
-            membership[family.id] = canonical
+        membership = {**input_membership[local_id], **(output_members if not local_id else {})}
         effective = elaborate(
-            schemas[target_type], inputs[local_id], membership, variants[local_id]
+            schemas[target_type],
+            inputs[local_id],
+            membership,
+            variants[local_id],
+            linked=is_link,
+            literal=literal_value,
         )
         for spec in effective.inputs:
             if spec.default is not None:
                 inputs[local_id].setdefault(spec.id, spec.default)
+            value = inputs[local_id].get(spec.id)
+            stamp = _UNION_STAMPS.get(type(value)) if spec.type.kind == "union" else None
+            # A plain literal needs a concrete input; on a union it carries its member type.
+            if stamp is not None and stamp in spec.type.types:
+                inputs[local_id][spec.id] = TypedLiteral(stamp, value)
         nodes[target_id] = GraphNode(
             target_type,
             inputs[local_id],
@@ -320,7 +362,7 @@ def migrate_node_replacements(graph: Graph, schemas: Mapping[str, NodeSchema]) -
     rules: dict[str, list[ReplacementRule]] = {}
     for schema in schemas.values():
         for rule in schema.replacements:
-            if rule.migration is None and not rule.from_version:
+            if not rule.from_version:
                 rules.setdefault(rule.from_type, []).append(rule)
     return _migrate(graph, schemas, rules)[0]
 

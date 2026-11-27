@@ -21,10 +21,10 @@ from dinkster_protocol import (
     WorkGroupReleased,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     pack_logger,
     report_event,
@@ -101,11 +101,11 @@ class Sleepy(Node):
             node_type="iso.sleepy",
             display_name="Sleepy",
             category="test",
-            inputs=(
-                InputSpec("value", STRING),
-                InputSpec("seconds", FLOAT, default=0.05),
+            body=(
+                Input("value", STRING),
+                Input("seconds", FLOAT, default=0.05),
+                Output("value", STRING),
             ),
-            outputs=(OutputSpec("value", STRING),),
             io_bound=True,
         )
 
@@ -128,11 +128,11 @@ class Chatty(Node):
             node_type="iso.chatty",
             display_name="Chatty",
             category="test",
-            inputs=(
-                InputSpec("value", STRING),
-                InputSpec("seconds", FLOAT, default=0.0),
+            body=(
+                Input("value", STRING),
+                Input("seconds", FLOAT, default=0.0),
+                Output("value", STRING),
             ),
-            outputs=(OutputSpec("value", STRING),),
             io_bound=True,
         )
 
@@ -158,8 +158,7 @@ class Talky(Node):
             node_type="iso.talky",
             display_name="Talky",
             category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            body=(Input("value", STRING), Output("value", STRING)),
         )
 
     @classmethod
@@ -178,8 +177,7 @@ class Boom(Node):
             node_type="iso.boom",
             display_name="Boom",
             category="test",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            body=(Input("tag", STRING), Output("value", STRING)),
         )
 
     @classmethod
@@ -197,11 +195,11 @@ class LazyProbe(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="iso.lazy_probe",
-            inputs=(
-                InputSpec("mode", STRING),
-                InputSpec("value", STRING, lazy=True),
+            body=(
+                Input("mode", STRING),
+                Input("value", STRING, lazy=True),
+                Output("value", STRING),
             ),
-            outputs=(OutputSpec("value", STRING),),
         )
 
     @classmethod
@@ -269,8 +267,7 @@ class Exiter(Node):
             node_type="iso.exit",
             display_name="Exiter",
             category="test",
-            inputs=(InputSpec("code", INT, default=3),),
-            outputs=(OutputSpec("value", STRING),),
+            body=(Input("code", INT, default=3), Output("value", STRING)),
         )
 
     @classmethod
@@ -287,8 +284,8 @@ class BlobOut(Node):
             node_type="iso.blob_out",
             display_name="Blob Out",
             category="test",
-            inputs=(
-                InputSpec(
+            body=(
+                Input(
                     "size",
                     INT,
                     default=8,
@@ -297,8 +294,8 @@ class BlobOut(Node):
                         {"min": 1, "max": 12, "unit": "bytes"},
                     ),
                 ),
+                Output("blob", BLOB),
             ),
-            outputs=(OutputSpec("blob", BLOB),),
         )
 
     @classmethod
@@ -315,8 +312,7 @@ class BlobLen(Node):
             node_type="iso.blob_len",
             display_name="Blob Len",
             category="test",
-            inputs=(InputSpec("blob", BLOB),),
-            outputs=(OutputSpec("length", INT),),
+            body=(Input("blob", BLOB), Output("length", INT)),
         )
 
     @classmethod
@@ -337,12 +333,12 @@ class Hog(Node):
             node_type="iso.hog",
             display_name="Hog",
             category="test",
-            inputs=(
-                InputSpec("nbytes", INT),
-                InputSpec("seconds", FLOAT, default=0.0),
-                InputSpec("residency", STRING, default="ram"),
+            body=(
+                Input("nbytes", INT),
+                Input("seconds", FLOAT, default=0.0),
+                Input("residency", STRING, default="ram"),
+                Output("nbytes", INT),
             ),
-            outputs=(OutputSpec("nbytes", INT),),
             io_bound=True,
         )
 
@@ -362,8 +358,7 @@ class GpuBlobOut(Node):
             node_type="iso.gpu_blob_out",
             display_name="GPU Blob Out",
             category="test",
-            inputs=(),
-            outputs=(OutputSpec("blob", GPU_BLOB),),
+            body=(Output("blob", GPU_BLOB),),
         )
 
     @classmethod
@@ -376,8 +371,7 @@ class GpuBlobIdentity(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="iso.gpu_blob_identity",
-            inputs=(InputSpec("blob", GPU_BLOB),),
-            outputs=(OutputSpec("value", STRING),),
+            body=(Input("blob", GPU_BLOB), Output("value", STRING)),
         )
 
     @classmethod
@@ -393,7 +387,7 @@ class ExecutionContextProbe(Node):
             node_type="iso.execution_context",
             display_name="Execution Context",
             category="test",
-            outputs=(OutputSpec("snapshot", STRING),),
+            body=(Output("snapshot", STRING),),
             output_node=True,
         )
 
@@ -424,7 +418,7 @@ class IdentityEcho(Node):
             node_type="iso.identity_echo",
             display_name="Identity Echo",
             category="test",
-            outputs=(OutputSpec("identity", STRING),),
+            body=(Output("identity", STRING),),
         )
 
     @classmethod

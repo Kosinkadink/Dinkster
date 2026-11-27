@@ -37,10 +37,10 @@ from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, TypedLiteral
 from dinkster_schema import (
     AssetWidget,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -400,8 +400,8 @@ def test_text_encoder_relative_preflight_preserves_ranked_file_authority(
     assert table.bind_name("encoder.bin", "model/text-encoder") is None
     schema = NodeSchema(
         "encoder.load",
-        inputs=(
-            InputSpec(
+        body=(
+            Input(
                 "file", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind="model/text-encoder")
             ),
         ),
@@ -447,9 +447,7 @@ def test_missing_model_names_offer_template_leads_without_download_authority(
     schemas = {
         kind: NodeSchema(
             kind,
-            inputs=(
-                InputSpec("file", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind=kind)),
-            ),
+            body=(Input("file", TypeExpr.concrete(ASSET_TYPE), widget=AssetWidget(kind=kind)),),
         )
         for kind in ("model/vae", "model/diffusion", "model/text-encoder", "model/checkpoint")
     }
@@ -586,8 +584,7 @@ class AssetStat(Node):
             node_type="test.asset.stat",
             display_name="Asset Stat",
             category="test",
-            inputs=(InputSpec("asset", ASSET),),
-            outputs=(OutputSpec("bytes", INT), OutputSpec("name", STRING)),
+            body=(Input("asset", ASSET), Output("bytes", INT), Output("name", STRING)),
         )
 
     @classmethod
@@ -636,8 +633,7 @@ def test_engine_cache_separates_asset_and_audio_record_type(tmp_path: Path) -> N
             generic = TypeExpr.variable("T")
             return NodeSchema(
                 node_type="test.asset.identity",
-                inputs=(InputSpec("asset", generic),),
-                outputs=(OutputSpec("asset", generic),),
+                body=(Input("asset", generic), Output("asset", generic)),
             )
 
         @classmethod
@@ -733,7 +729,7 @@ def test_file3d_canonical_submission_checks_declared_resources(
     literal = TypedLiteral(FILE_3D_TYPE, wire)
     graph = Graph({"preview": GraphNode("preview-file", {"model": literal})})
     schema = NodeSchema(
-        "preview-file", inputs=(InputSpec("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
+        "preview-file", body=(Input("model", TypeExpr.union(CORE_STRING, FILE_3D_TYPE)),)
     )
     library = ServerLibrary(
         AssetVault(tmp_path / "vault"), LibraryStore(tmp_path / "library.sqlite"), resolver=table

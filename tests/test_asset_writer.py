@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import time
 from collections.abc import Iterator
@@ -23,6 +24,7 @@ from typing import BinaryIO, Protocol, cast
 
 import pytest
 from dinkster_assets import (
+    MOUNT_TYPE,
     AssetError,
     AssetRef,
     AssetWriter,
@@ -33,6 +35,7 @@ from dinkster_assets import (
     MountTable,
     SaveTarget,
     digest_bytes,
+    register_mount_type,
     register_save_target_type,
 )
 from dinkster_protocol import AssetFolderContext
@@ -76,6 +79,57 @@ def test_save_target_rejects_unsafe(mount: str, prefix: str) -> None:
         codec.decode(wire, blobs, [])
 
 
+def test_mount_boundary_preserves_selection_without_granting_writes(tmp_path: Path) -> None:
+    from dinkster_workers.boundary import EncodedPayloadValidationError, ValueCodec
+
+    registry = TypeRegistry()
+    register_mount_type(registry)
+    codec = ValueCodec(registry)
+    default_root, selected_root = tmp_path / "default", tmp_path / "selected"
+    default_root.mkdir()
+    selected_root.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    mounts = [
+        {"id": "default", "root": str(default_root), "mode": "readwrite"},
+        {"id": "renders-7", "root": str(selected_root), "mode": "readwrite"},
+    ]
+    snapshot.write_text(json.dumps({"mounts": mounts, "outputMount": "default"}))
+    writer = AssetWriter(MountSnapshotWriter(snapshot))
+    fingerprints = set()
+    for selection, root in ((None, default_root), ("renders-7", selected_root)):
+        wrapped = registry.wrap(MOUNT_TYPE, selection)
+        fingerprints.add(wrapped.fingerprint)
+        blobs, segments = [], []
+        wire, _ = codec.encode(wrapped, blobs, segments)
+        received, _ = codec.decode(wire, blobs, [])
+        mount = cast("str | None", registry.input_object(MOUNT_TYPE, received))
+        assert mount == selection
+        assert received.fingerprint == wrapped.fingerprint
+        for name, content in (("left/first", b"left-37"), ("right/second", b"right-91")):
+            writer.save_bytes(writer.output_target(name, mount), content, suffix=".bin")
+            assert (root / f"{name}_00001.bin").read_bytes() == content
+        with pytest.raises(AssetError):
+            writer.save_bytes(writer.output_target("../escape", mount), b"no", suffix=".bin")
+    assert len(fingerprints) == 2
+    for invalid in ("", "../outside", "UPPER", "-leading", 37, {"root": "/tmp"}):
+        with pytest.raises(AssetError):
+            registry.wrap(MOUNT_TYPE, invalid)
+        with pytest.raises(AssetError):
+            registry.input_object(MOUNT_TYPE, invalid)
+        blobs, segments = [], []
+        wire, _ = codec.encode(registry.wrap(MOUNT_TYPE, "renders-7"), blobs, segments)
+        payload = cast("dict[str, object]", wire["payload"])
+        blobs[cast(int, payload["blob"])] = json.dumps(invalid).encode()
+        with pytest.raises(EncodedPayloadValidationError):
+            codec.decode(wire, blobs, [])
+    mounts[1]["mode"] = "read"
+    snapshot.write_text(json.dumps({"mounts": mounts, "outputMount": "default"}))
+    with pytest.raises(AssetError, match="read-only"):
+        writer.save_bytes(writer.output_target("refused", "renders-7"), b"no", suffix=".bin")
+    assert not (default_root / "refused_00001.bin").exists()
+    assert not (selected_root / "refused_00001.bin").exists()
+
+
 # ---------------------------------------------------------------------------
 # Write authority: who may write where, live
 
@@ -91,7 +145,8 @@ def one_mount_snapshot(tmp_path: Path, root: Path, mode: str = "readwrite") -> P
 
 def test_snapshot_writer_sees_live_grant_and_revoke(tmp_path: Path) -> None:
     """The snapshot is re-read per call: a revoke lands on the NEXT save
-    with no restart - the runtime-mounts contract, held for writes."""
+    with no restart - the runtime-mounts contract, held for writes. With no
+    default output mount to fall back to, that save refuses."""
     root = tmp_path / "root"
     root.mkdir()
     snapshot = one_mount_snapshot(tmp_path, root)
@@ -101,7 +156,7 @@ def test_snapshot_writer_sees_live_grant_and_revoke(tmp_path: Path) -> None:
     assert ref.digest == digest_bytes(b"first")
     # Revoke: rewrite the snapshot without the mount.
     snapshot.write_text(json.dumps({"mounts": []}), "utf-8")
-    with pytest.raises(AssetError, match="no ready mount"):
+    with pytest.raises(AssetError, match="'out' is not on this machine"):
         writer.save_bytes({"mount": "out", "prefix": "a"}, b"second", suffix=".bin")
     # Re-grant: the next save works again, counter continues.
     one_mount_snapshot(tmp_path, root)
@@ -344,9 +399,24 @@ def test_separate_prefix_and_mount_write_to_selected_grant(tmp_path: Path) -> No
     with pytest.raises(AssetError, match="read-only"):
         writer.save_bytes(writer.output_target("blocked", "readonly"), b"no", suffix=".png")
     snapshot.write_text(json.dumps({"mounts": mounts[:1], "outputMount": "default"}), "utf-8")
-    with pytest.raises(AssetError, match="no ready mount"):
-        writer.save_bytes(selected_target, b"revoked", suffix=".png")
+    warnings: list[str] = []
+    handler = logging.Handler(logging.WARNING)
+    handler.emit = lambda record: warnings.append(record.getMessage())
+    assets_logger = logging.getLogger("dinkster.assets")
+    assets_logger.addHandler(handler)
+    try:
+        revoked = writer.save_bytes(selected_target, b"revoked", suffix=".png")
+        again = writer.save_bytes(selected_target, b"again", suffix=".png")
+    finally:
+        assets_logger.removeHandler(handler)
+    assert revoked.virtual_path == "mounts/default/other/selected_00001.png"
+    assert again.virtual_path == "mounts/default/other/selected_00002.png"
     assert len(list(roots["selected"].rglob("*.png"))) == 1
+    # A node saving a batch through one writer warns once, not per file.
+    assert warnings == [
+        "mount 'selected' is not on this machine; "
+        "saving to the default output mount 'default' instead"
+    ]
 
 
 @pytest.mark.parametrize(

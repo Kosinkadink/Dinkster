@@ -1,0 +1,9612 @@
+{
+ "cases": [
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "images",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "image",
+       "start": 0
+      }
+     },
+     "kind": "group",
+     "value": {
+      "id": "image",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "STRING"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-of-values/ids-are-group-dot-key-in-run-order",
+   "inputs": [
+    [
+     "images.image2",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "images.image0",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "images.image2",
+     "b"
+    ],
+    [
+     "images.image0",
+     "a"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "loras",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "default": 1.0,
+       "id": "strength",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      },
+      {
+       "id": "name",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "STRING"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-of-records/ids-are-group-dot-key-dot-row",
+   "inputs": [
+    [
+     "loras.3.name",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "loras.3.strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.1.name",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "loras.1.strength",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "loras.3.name",
+     "x"
+    ],
+    [
+     "loras.1.name",
+     "y"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "named": [
+       "a",
+       "b"
+      ]
+     },
+     "kind": "group",
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "group/key-the-naming-rule-cannot-make-is-refused",
+   "members": {},
+   "message": "naming rule cannot make",
+   "outcome": "refused",
+   "stored": [
+    [
+     "g.c",
+     1
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 2,
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "group/more-members-than-the-maximum-is-refused",
+   "members": {},
+   "message": "more than 2 members",
+   "outcome": "refused",
+   "stored": [
+    [
+     "g.1",
+     1
+    ],
+    [
+     "g.2",
+     2
+    ],
+    [
+     "g.3",
+     3
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "any",
+     "keys": {
+      "numbered": {
+       "pad": 2,
+       "prefix": "any_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "minMembers": 5,
+     "value": {
+      "id": "any",
+      "kind": "input",
+      "required": false,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "STRING"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-minimum/optional-rows-run-with-fewer-members",
+   "inputs": [
+    [
+     "any.any_05",
+     "STRING",
+     false,
+     null
+    ],
+    [
+     "any.any_02",
+     "STRING",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "any.any_05",
+     "x"
+    ],
+    [
+     "any.any_02",
+     "y"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "pairs",
+     "keys": {
+      "numbered": {
+       "pad": 2,
+       "prefix": "m_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "x",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ],
+     "minMembers": 2
+    }
+   ],
+   "choices": {},
+   "id": "group-minimum/a-required-row-with-fewer-members-is-refused-naming-the-group",
+   "members": {},
+   "message": "pairs needs at least 2 members; the run has 1",
+   "outcome": "refused",
+   "stored": [
+    [
+     "pairs.m_01.x",
+     1
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 2,
+       "prefix": "m_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "x",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ],
+     "minMembers": 2,
+     "optionalAfterMinimum": true
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-minimum/optional-after-minimum-counts-the-run-order",
+   "inputs": [
+    [
+     "g.m_03.x",
+     "INT",
+     true,
+     null
+    ],
+    [
+     "g.m_01.x",
+     "INT",
+     true,
+     null
+    ],
+    [
+     "g.m_07.x",
+     "INT",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g.m_03.x",
+     3
+    ],
+    [
+     "g.m_01.x",
+     1
+    ],
+    [
+     "g.m_07.x",
+     7
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "webm",
+    "format.audio": "none"
+   },
+   "chose": {
+    "format": "webm",
+    "format.audio": "none"
+   },
+   "id": "choice/shared-row-under-the-chosen-option-with-its-override",
+   "inputs": [
+    [
+     "format.crf",
+     "INT",
+     true,
+     31
+    ],
+    [
+     "format.deadline",
+     "STRING",
+     true,
+     "good"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "webm",
+    "format.audio": "opus"
+   },
+   "chose": {
+    "format": "webm",
+    "format.audio": "opus"
+   },
+   "id": "choice/nested-choice-rows-join-the-path",
+   "inputs": [
+    [
+     "format.audio.bitrate",
+     "INT",
+     true,
+     96
+    ],
+    [
+     "format.crf",
+     "INT",
+     true,
+     31
+    ],
+    [
+     "format.deadline",
+     "STRING",
+     true,
+     "good"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "format.audio.bitrate",
+     128
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "mp4"
+   },
+   "chose": {
+    "format": "mp4"
+   },
+   "id": "choice/the-other-option-keeps-the-shared-row-id",
+   "inputs": [
+    [
+     "format.crf",
+     "INT",
+     true,
+     23
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "resize",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "keep resolution",
+       "rows": []
+      },
+      {
+       "key": "scale-to fit",
+       "rows": [
+        {
+         "default": 512,
+         "id": "width",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "resize": "scale-to fit"
+   },
+   "chose": {
+    "resize": "scale-to fit"
+   },
+   "id": "choice/an-option-key-is-a-stored-value-and-may-hold-spaces-and-hyphens",
+   "inputs": [
+    [
+     "resize.width",
+     "INT",
+     true,
+     512
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "c",
+       "kind": "choice",
+       "options": [
+        {
+         "key": "x",
+         "rows": []
+        },
+        {
+         "key": "y",
+         "rows": [
+          {
+           "default": 1,
+           "id": "v",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "g.1.c": "y",
+    "g.2.c": "y"
+   },
+   "chose": {
+    "g.1.c": "y",
+    "g.2.c": "y"
+   },
+   "id": "group/the-runs-member-list-orders-members-with-no-stored-input",
+   "inputs": [
+    [
+     "g.2.c.v",
+     "INT",
+     true,
+     1
+    ],
+    [
+     "g.1.c.v",
+     "INT",
+     true,
+     1
+    ]
+   ],
+   "members": {
+    "g": [
+     "2",
+     "1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g.1.c.v",
+     5
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "mp4",
+       "rows": [
+        {
+         "id": "crf",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "default": 31,
+         "id": "crf",
+         "kind": "use"
+        },
+        {
+         "default": "good",
+         "id": "deadline",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        },
+        {
+         "id": "audio",
+         "kind": "choice",
+         "options": [
+          {
+           "key": "none",
+           "rows": []
+          },
+          {
+           "key": "opus",
+           "rows": [
+            {
+             "default": 96,
+             "id": "bitrate",
+             "kind": "input",
+             "required": true,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "INT"
+              ]
+             }
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 23,
+       "id": "crf",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "choice/a-required-choice-with-nothing-stored-is-refused",
+   "members": {},
+   "message": "has no stored option",
+   "outcome": "refused",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "extra",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "on",
+       "rows": [
+        {
+         "default": 0,
+         "id": "x",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ],
+     "required": false
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "choice/an-optional-choice-with-nothing-chosen-has-no-rows",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "mode",
+     "kind": "choice",
+     "leader": "\"decode\" if linked(vae) else \"plain\"",
+     "options": [
+      {
+       "key": "plain",
+       "rows": []
+      },
+      {
+       "key": "decode",
+       "rows": [
+        {
+         "default": 64,
+         "id": "tile",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "mode": "decode"
+   },
+   "id": "choice-leader/a-wired-pin-picks-the-option",
+   "inputs": [
+    [
+     "mode.tile",
+     "INT",
+     true,
+     64
+    ],
+    [
+     "vae",
+     "INT",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "vae",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "mode",
+     "kind": "choice",
+     "leader": "\"decode\" if linked(vae) else \"plain\"",
+     "options": [
+      {
+       "key": "plain",
+       "rows": []
+      },
+      {
+       "key": "decode",
+       "rows": [
+        {
+         "default": 64,
+         "id": "tile",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "mode": "plain"
+   },
+   "id": "choice-leader/no-wire-picks-the-other-option",
+   "inputs": [
+    [
+     "vae",
+     "INT",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "mode",
+     "kind": "choice",
+     "leader": "\"decode\" if linked(vae) else \"plain\"",
+     "options": [
+      {
+       "key": "plain",
+       "rows": []
+      },
+      {
+       "key": "decode",
+       "rows": [
+        {
+         "default": 64,
+         "id": "tile",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "mode": "plain"
+   },
+   "id": "choice-leader/a-stored-key-that-disagrees-is-refused",
+   "members": {},
+   "message": "led by a formula",
+   "outcome": "refused",
+   "stored": [
+    [
+     "vae",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "default": 2,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": {
+      "count": "n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "default": 0,
+       "id": "w",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-count/members-are-the-first-keys-of-the-naming-rule",
+   "inputs": [
+    [
+     "layers.1.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "layers.2.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     2
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "n",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "default": 2,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": {
+      "count": "n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "default": 0,
+       "id": "w",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-count/a-count-above-the-maximum-uses-the-maximum",
+   "inputs": [
+    [
+     "layers.1.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "layers.2.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "layers.3.w",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     2
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "n",
+     5
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 1,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/a-row-under-an-option-not-chosen-is-unknown-outside-the-choice",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "mode.n",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 1,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": [
+        {
+         "grows": {
+          "count": "n"
+         },
+         "id": "layers",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "maxMembers": 3,
+         "value": {
+          "id": "layer",
+          "kind": "output",
+          "type": {
+           "kind": "concrete",
+           "types": [
+            "INT"
+           ]
+          }
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/a-row-of-another-option-is-unknown-inside-the-choice",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "mode.n",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 2,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 4,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "a"
+   },
+   "chose": {
+    "mode": "a"
+   },
+   "id": "group-count/a-row-under-the-chosen-option-counts-by-its-default",
+   "inputs": [
+    [
+     "mode.n",
+     "INT",
+     true,
+     2
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1",
+    "layers.2"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 3,
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": [
+        {
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 1,
+       "id": "n",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 4,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "a"
+   },
+   "chose": {
+    "mode": "a"
+   },
+   "id": "group-count/a-shared-row-counts-by-the-default-its-use-gives",
+   "inputs": [
+    [
+     "mode.n",
+     "INT",
+     true,
+     3
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1",
+    "layers.2",
+    "layers.3"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 3,
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": [
+        {
+         "id": "n",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": 1,
+       "id": "n",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 4,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/the-same-shared-row-keeps-its-own-default-under-another-option",
+   "inputs": [
+    [
+     "mode.n",
+     "INT",
+     true,
+     1
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "c",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "grows": "link",
+         "id": "g",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "default": 1,
+           "id": "s",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "len(c.g)"
+     },
+     "id": "o",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 5,
+     "minMembers": 1,
+     "value": {
+      "id": "v",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    },
+    {
+     "grows": {
+      "count": "sum(c.g.s)"
+     },
+     "id": "p",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 5,
+     "minMembers": 1,
+     "value": {
+      "id": "v",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "c": "b"
+   },
+   "chose": {
+    "c": "b"
+   },
+   "id": "group-count/a-group-under-an-option-not-chosen-has-no-size",
+   "inputs": [],
+   "members": {
+    "c.g": [
+     "1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "o.1",
+    "p.1"
+   ],
+   "stored": [
+    [
+     "c.g.1.s",
+     4
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": 1,
+         "id": "n",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "mode.n"
+     },
+     "id": "layers",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "minMembers": 2,
+     "value": {
+      "id": "layer",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "mode": "b"
+   },
+   "id": "group-count/a-count-that-reads-unknown-gives-min-members",
+   "inputs": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "layers.1",
+    "layers.2"
+   ],
+   "stored": [
+    [
+     "mode.n",
+     3
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "a",
+       "rows": [
+        {
+         "default": "y",
+         "id": "k",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "STRING"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "b",
+       "rows": []
+      }
+     ]
+    },
+    {
+     "id": "led",
+     "kind": "choice",
+     "leader": "mode.k",
+     "options": [
+      {
+       "key": "x",
+       "rows": [
+        {
+         "default": 0,
+         "id": "w",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "y",
+       "rows": []
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "mode": "b"
+   },
+   "chose": {
+    "led": "x",
+    "mode": "b"
+   },
+   "id": "choice-leader/a-leader-that-reads-unknown-gives-the-first-option",
+   "inputs": [
+    [
+     "led.w",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "mode.k",
+     "y"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "default": 2,
+       "id": "s",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      },
+      {
+       "default": 0,
+       "id": "t",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "sum(g.s)"
+     },
+     "id": "o",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 9,
+     "value": {
+      "id": "v",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-count/a-member-row-with-nothing-stored-counts-by-its-default",
+   "inputs": [
+    [
+     "g.1.s",
+     "INT",
+     true,
+     2
+    ],
+    [
+     "g.1.t",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "g.2.s",
+     "INT",
+     true,
+     2
+    ],
+    [
+     "g.2.t",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "o.1",
+    "o.2",
+    "o.3",
+    "o.4",
+    "o.5"
+   ],
+   "stored": [
+    [
+     "g.1.t",
+     5
+    ],
+    [
+     "g.2.s",
+     3
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "parts",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "text",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "STRING"
+        ]
+       }
+      },
+      {
+       "id": "shout",
+       "kind": "output",
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "STRING"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-outputs/an-output-in-a-member-exists-with-its-member",
+   "inputs": [
+    [
+     "parts.2.text",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "parts.2.shout"
+   ],
+   "stored": [
+    [
+     "parts.2.text",
+     "a"
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "parts",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "value": {
+      "id": "part",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "STRING"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "group-outputs/a-group-of-outputs-takes-its-stored-membership",
+   "inputs": [],
+   "members": {
+    "parts": [
+     "2",
+     "1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "parts.2",
+    "parts.1"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "exposed",
+     "kind": "described",
+     "kinds": [
+      {
+       "id": "number",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ],
+     "maxEntries": 4
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "described/entries-become-rows-under-the-described-id",
+   "inputs": [
+    [
+     "exposed",
+     "STRING",
+     false,
+     null
+    ],
+    [
+     "exposed.a",
+     "INT",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "exposed",
+     "{\"entries\": [{\"id\": \"a\", \"label\": \"A\", \"kind\": \"number\"}]}"
+    ],
+    [
+     "exposed.a",
+     5
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "pixels",
+     "kind": "typeChoice",
+     "required": true,
+     "variants": [
+      {
+       "key": "int",
+       "rows": [
+        {
+         "default": 1,
+         "id": "scale",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ],
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      },
+      {
+       "key": "float",
+       "rows": [],
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "pixels": "int"
+   },
+   "chose": {
+    "pixels": "int"
+   },
+   "id": "type-choice/the-chosen-variant-types-the-pin-and-adds-its-rows",
+   "inputs": [
+    [
+     "pixels",
+     "INT",
+     true,
+     null
+    ],
+    [
+     "pixels.scale",
+     "INT",
+     true,
+     1
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": 0,
+     "id": "z",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "id": "size",
+     "kind": "section",
+     "rows": [
+      {
+       "kind": "row",
+       "rows": [
+        {
+         "default": 8,
+         "id": "width",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        },
+        {
+         "default": 8,
+         "id": "height",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "layout/sections-and-rows-open-no-scope",
+   "inputs": [
+    [
+     "height",
+     "INT",
+     true,
+     8
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     8
+    ],
+    [
+     "z",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "s1",
+     "kind": "section",
+     "rows": [
+      {
+       "grows": "link",
+       "id": "g2",
+       "keys": {
+        "numbered": {
+         "pad": 0,
+         "prefix": "",
+         "start": 1
+        }
+       },
+       "kind": "group",
+       "member": [
+        {
+         "id": "s3",
+         "kind": "section",
+         "rows": [
+          {
+           "grows": "link",
+           "id": "g4",
+           "keys": {
+            "numbered": {
+             "pad": 0,
+             "prefix": "",
+             "start": 1
+            }
+           },
+           "kind": "group",
+           "member": [
+            {
+             "id": "s5",
+             "kind": "section",
+             "rows": [
+              {
+               "grows": "link",
+               "id": "g6",
+               "keys": {
+                "numbered": {
+                 "pad": 0,
+                 "prefix": "",
+                 "start": 1
+                }
+               },
+               "kind": "group",
+               "member": [
+                {
+                 "id": "s7",
+                 "kind": "section",
+                 "rows": [
+                  {
+                   "grows": "link",
+                   "id": "g8",
+                   "keys": {
+                    "numbered": {
+                     "pad": 0,
+                     "prefix": "",
+                     "start": 1
+                    }
+                   },
+                   "kind": "group",
+                   "member": [
+                    {
+                     "id": "s9",
+                     "kind": "section",
+                     "rows": [
+                      {
+                       "grows": "link",
+                       "id": "g10",
+                       "keys": {
+                        "numbered": {
+                         "pad": 0,
+                         "prefix": "",
+                         "start": 1
+                        }
+                       },
+                       "kind": "group",
+                       "member": [
+                        {
+                         "id": "s11",
+                         "kind": "section",
+                         "rows": [
+                          {
+                           "grows": "link",
+                           "id": "g12",
+                           "keys": {
+                            "numbered": {
+                             "pad": 0,
+                             "prefix": "",
+                             "start": 1
+                            }
+                           },
+                           "kind": "group",
+                           "member": [
+                            {
+                             "id": "s13",
+                             "kind": "section",
+                             "rows": [
+                              {
+                               "grows": "link",
+                               "id": "g14",
+                               "keys": {
+                                "numbered": {
+                                 "pad": 0,
+                                 "prefix": "",
+                                 "start": 1
+                                }
+                               },
+                               "kind": "group",
+                               "member": [
+                                {
+                                 "id": "s15",
+                                 "kind": "section",
+                                 "rows": [
+                                  {
+                                   "kind": "row",
+                                   "rows": [
+                                    {
+                                     "default": 0,
+                                     "id": "a",
+                                     "kind": "input",
+                                     "required": true,
+                                     "type": {
+                                      "kind": "concrete",
+                                      "types": [
+                                       "INT"
+                                      ]
+                                     }
+                                    },
+                                    {
+                                     "default": 0,
+                                     "id": "b",
+                                     "kind": "input",
+                                     "required": true,
+                                     "type": {
+                                      "kind": "concrete",
+                                      "types": [
+                                       "INT"
+                                      ]
+                                     }
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "depth/16-boxes-of-sections-groups-and-a-row-load",
+   "inputs": [
+    [
+     "g2.1.g4.1.g6.1.g8.1.g10.1.g12.1.g14.1.a",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "g2.1.g4.1.g6.1.g8.1.g10.1.g12.1.g14.1.b",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g2.1.g4.1.g6.1.g8.1.g10.1.g12.1.g14.1.a",
+     1
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "s1",
+     "kind": "section",
+     "rows": [
+      {
+       "grows": "link",
+       "id": "g2",
+       "keys": {
+        "numbered": {
+         "pad": 0,
+         "prefix": "",
+         "start": 1
+        }
+       },
+       "kind": "group",
+       "member": [
+        {
+         "id": "s3",
+         "kind": "section",
+         "rows": [
+          {
+           "grows": "link",
+           "id": "g4",
+           "keys": {
+            "numbered": {
+             "pad": 0,
+             "prefix": "",
+             "start": 1
+            }
+           },
+           "kind": "group",
+           "member": [
+            {
+             "id": "s5",
+             "kind": "section",
+             "rows": [
+              {
+               "grows": "link",
+               "id": "g6",
+               "keys": {
+                "numbered": {
+                 "pad": 0,
+                 "prefix": "",
+                 "start": 1
+                }
+               },
+               "kind": "group",
+               "member": [
+                {
+                 "id": "s7",
+                 "kind": "section",
+                 "rows": [
+                  {
+                   "grows": "link",
+                   "id": "g8",
+                   "keys": {
+                    "numbered": {
+                     "pad": 0,
+                     "prefix": "",
+                     "start": 1
+                    }
+                   },
+                   "kind": "group",
+                   "member": [
+                    {
+                     "id": "s9",
+                     "kind": "section",
+                     "rows": [
+                      {
+                       "grows": "link",
+                       "id": "g10",
+                       "keys": {
+                        "numbered": {
+                         "pad": 0,
+                         "prefix": "",
+                         "start": 1
+                        }
+                       },
+                       "kind": "group",
+                       "member": [
+                        {
+                         "id": "s11",
+                         "kind": "section",
+                         "rows": [
+                          {
+                           "grows": "link",
+                           "id": "g12",
+                           "keys": {
+                            "numbered": {
+                             "pad": 0,
+                             "prefix": "",
+                             "start": 1
+                            }
+                           },
+                           "kind": "group",
+                           "member": [
+                            {
+                             "id": "s13",
+                             "kind": "section",
+                             "rows": [
+                              {
+                               "grows": "link",
+                               "id": "g14",
+                               "keys": {
+                                "numbered": {
+                                 "pad": 0,
+                                 "prefix": "",
+                                 "start": 1
+                                }
+                               },
+                               "kind": "group",
+                               "member": [
+                                {
+                                 "id": "s15",
+                                 "kind": "section",
+                                 "rows": [
+                                  {
+                                   "grows": "link",
+                                   "id": "g16",
+                                   "keys": {
+                                    "numbered": {
+                                     "pad": 0,
+                                     "prefix": "",
+                                     "start": 1
+                                    }
+                                   },
+                                   "kind": "group",
+                                   "member": [
+                                    {
+                                     "kind": "row",
+                                     "rows": [
+                                      {
+                                       "default": 0,
+                                       "id": "a",
+                                       "kind": "input",
+                                       "required": true,
+                                       "type": {
+                                        "kind": "concrete",
+                                        "types": [
+                                         "INT"
+                                        ]
+                                       }
+                                      },
+                                      {
+                                       "default": 0,
+                                       "id": "b",
+                                       "kind": "input",
+                                       "required": true,
+                                       "type": {
+                                        "kind": "concrete",
+                                        "types": [
+                                         "INT"
+                                        ]
+                                       }
+                                      }
+                                     ]
+                                    }
+                                   ]
+                                  }
+                                 ]
+                                }
+                               ]
+                              }
+                             ]
+                            }
+                           ]
+                          }
+                         ]
+                        }
+                       ]
+                      }
+                     ]
+                    }
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "depth/17-boxes-are-refused-when-the-pack-loads",
+   "members": {},
+   "message": "nests deeper than 16",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 6,
+           "id": "level",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "exr",
+       "rows": [
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 0,
+           "id": "half",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "exr"
+   },
+   "chose": {
+    "format": "exr"
+   },
+   "id": "ids/options-of-one-choice-may-each-hold-a-section-with-one-id",
+   "inputs": [
+    [
+     "format.half",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "about",
+         "kind": "note",
+         "text": "Lossless"
+        }
+       ]
+      },
+      {
+       "key": "jpg",
+       "rows": [
+        {
+         "id": "about",
+         "kind": "note",
+         "text": "Lossy"
+        },
+        {
+         "default": 90,
+         "id": "quality",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {
+    "format": "jpg"
+   },
+   "chose": {
+    "format": "jpg"
+   },
+   "id": "ids/options-of-one-choice-may-each-hold-a-note-with-one-id",
+   "inputs": [
+    [
+     "format.quality",
+     "INT",
+     true,
+     90
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "level",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "id": "level",
+       "kind": "section",
+       "rows": [
+        {
+         "default": 6,
+         "id": "level",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "INT"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "shared/a-section-in-shared-is-refused-when-the-pack-loads",
+   "members": {},
+   "message": "in shared is layout",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "about",
+         "kind": "use"
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "id": "about",
+       "kind": "note",
+       "text": "Lossless"
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "shared/a-note-in-shared-is-refused-when-the-pack-loads",
+   "members": {},
+   "message": "in shared holds no value",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": {
+      "count": "n"
+     },
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 5,
+     "member": [
+      {
+       "default": 2,
+       "id": "s",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "grows": {
+      "count": "sum(g.s)"
+     },
+     "id": "o",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 9,
+     "value": {
+      "id": "v",
+      "kind": "output",
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "counted/reading-across-a-counted-group-is-refused-when-the-pack-loads",
+   "members": {},
+   "message": "is not built yet",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "png",
+       "rows": [
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 6,
+           "id": "level",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        },
+        {
+         "id": "advanced",
+         "kind": "section",
+         "rows": [
+          {
+           "default": 0,
+           "id": "fast",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "ids/one-option-may-not-hold-two-sections-with-one-id",
+   "members": {},
+   "message": "declared twice",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "format",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "webm",
+       "rows": [
+        {
+         "id": "audio",
+         "kind": "use",
+         "required": false
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "opus",
+       "id": "audio",
+       "kind": "choice",
+       "options": [
+        {
+         "key": "opus",
+         "rows": []
+        },
+        {
+         "key": "none",
+         "rows": []
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "id": "choice/a-use-may-not-make-a-choice-with-a-default-optional",
+   "members": {},
+   "message": "an optional choice cannot declare a default",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": 0,
+     "id": "loras",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "grows": "link",
+     "id": "loras",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "ids/a-group-and-an-input-of-one-scope-may-not-share-an-id",
+   "members": {},
+   "message": "loras",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "memberLabel": {
+      "formula": "key()"
+     },
+     "value": {
+      "id": "v",
+      "kind": "input",
+      "required": true,
+      "type": {
+       "kind": "concrete",
+       "types": [
+        "INT"
+       ]
+      }
+     }
+    }
+   ],
+   "choices": {},
+   "id": "member-label/key-in-a-numbered-group-is-refused",
+   "members": {},
+   "message": "key()",
+   "outcome": "refused-at-load",
+   "stored": []
+  },
+  {
+   "automatic": {
+    "b": [
+     10.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/worked-out-from-another-field",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     5.0
+    ]
+   ]
+  },
+  {
+   "automatic": {},
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-stored-value-is-fixed",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     5.0
+    ],
+    [
+     "b",
+     10.0
+    ]
+   ]
+  },
+  {
+   "automatic": {},
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-wired-field-is-not-worked-out",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "b",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "b": [
+     1.0,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/reading-a-wired-field-gives-the-default",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "fps": [
+     24.0,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": 48.0,
+     "id": "rate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "default": 2,
+     "id": "divisor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "rate / divisor"
+     },
+     "default": 24.0,
+     "id": "fps",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-failing-formula-gives-the-default",
+   "inputs": [
+    [
+     "divisor",
+     "INT",
+     true,
+     2
+    ],
+    [
+     "fps",
+     "FLOAT",
+     true,
+     24.0
+    ],
+    [
+     "rate",
+     "FLOAT",
+     true,
+     48.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "divisor",
+     0
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "n": [
+     4,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/an-exactly-whole-decimal-fills-a-whole-number-field",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     3
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "n": [
+     3,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a / 4"
+     },
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-decimal-that-is-not-whole-for-a-whole-number-gives-the-default",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "n",
+     "INT",
+     true,
+     3
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "x": [
+     6.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 3,
+     "id": "n",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "n * 2"
+     },
+     "default": 1.0,
+     "id": "x",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-whole-number-fills-a-decimal-field",
+   "inputs": [
+    [
+     "n",
+     "INT",
+     true,
+     3
+    ],
+    [
+     "x",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "b": [
+     10.0,
+     "worked-out"
+    ],
+    "c": [
+     11.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 2"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "b + 1"
+     },
+     "default": 0.0,
+     "id": "c",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-formula-reads-the-worked-out-value-of-another",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "c",
+     "FLOAT",
+     true,
+     0.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "a",
+     5.0
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "b": [
+     200.0,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "default": 2.0,
+     "id": "a",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "a * 100"
+     },
+     "default": 1.0,
+     "id": "b",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10,
+      "min": 1,
+      "type": "NUMBER"
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/outside-the-limits-is-used-as-it-is",
+   "inputs": [
+    [
+     "a",
+     "FLOAT",
+     true,
+     2.0
+    ],
+    [
+     "b",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "mode": [
+     "fast",
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": "slow",
+     "id": "name",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "formula": "name"
+     },
+     "default": "fast",
+     "id": "mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "fast",
+       "slow"
+      ],
+      "type": "COMBO"
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-choice-not-in-the-options-gives-the-default",
+   "inputs": [
+    [
+     "mode",
+     "COMBO",
+     true,
+     "fast"
+    ],
+    [
+     "name",
+     "STRING",
+     true,
+     "slow"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "name",
+     "medium"
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "g.m1.t": [
+     0.25,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "grows": "link",
+     "id": "g",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "m",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "default": 1.0,
+       "id": "s",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      },
+      {
+       "automatic": {
+        "formula": "s"
+       },
+       "default": 1.0,
+       "id": "t",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "FLOAT"
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/each-member-works-out-its-own",
+   "inputs": [
+    [
+     "g.m1.s",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "g.m1.t",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "g.m2.s",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "g.m2.t",
+     "FLOAT",
+     true,
+     1.0
+    ]
+   ],
+   "members": {
+    "g": [
+     "m1",
+     "m2"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "g.m1.s",
+     0.25
+    ],
+    [
+     "g.m2.s",
+     0.5
+    ],
+    [
+     "g.m2.t",
+     0.1
+    ]
+   ]
+  },
+  {
+   "automatic": {
+    "fps": [
+     24.0,
+     "default"
+    ]
+   },
+   "body": [
+    {
+     "default": "x",
+     "id": "name",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "automatic": {
+      "args": [
+       "name"
+      ],
+      "lookup": "cases.case_rate"
+     },
+     "default": 24.0,
+     "id": "fps",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "automatic/a-lookup-argument-of-none-gives-the-default-without-a-call",
+   "inputs": [
+    [
+     "fps",
+     "FLOAT",
+     true,
+     24.0
+    ],
+    [
+     "name",
+     "STRING",
+     true,
+     "x"
+    ]
+   ],
+   "lookupCalls": [],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [],
+   "stored": [
+    [
+     "name",
+     null
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "images",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "default": 4,
+     "id": "split_count",
+     "kind": "input",
+     "pin": false,
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 50,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "grows": {
+      "count": "split_count"
+     },
+     "id": "images_out",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "image_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 50,
+     "member": [
+      {
+       "id": "image",
+       "kind": "output",
+       "label": {
+        "formula": "\"image \" + str(index() + 1)"
+       },
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      }
+     ]
+    },
+    {
+     "id": "remained",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/3-image-batch-splitter",
+   "inputs": [
+    [
+     "images",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "split_count",
+     "INT",
+     true,
+     4
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "images_out.image_1.image",
+    "images_out.image_2.image",
+    "remained"
+   ],
+   "stored": [
+    [
+     "split_count",
+     2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     },
+     "widget": {
+      "type": "alekpet.painter"
+     }
+    },
+    {
+     "id": "images",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "image",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/11-painter",
+   "inputs": [
+    [
+     "image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "images",
+     "IMAGE",
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "image",
+    "mask"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": 0.0,
+     "id": "start_percent",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "prev_timestep_kf",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "TIMESTEP_KEYFRAME"
+      ]
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "strength",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10.0,
+      "min": 0.0,
+      "step": 0.001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "cn_weights",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONTROL_NET_WEIGHTS"
+      ]
+     }
+    },
+    {
+     "id": "latent_keyframe",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT_KEYFRAME"
+      ]
+     }
+    },
+    {
+     "default": 0.0,
+     "id": "null_latent_kf_strength",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10.0,
+      "min": 0.0,
+      "step": 0.001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": true,
+     "id": "inherit_missing",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 1,
+     "id": "guarantee_steps",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 9007199254740991,
+      "min": 0,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "mask_optional",
+     "kind": "input",
+     "label": "mask",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "id": "TIMESTEP_KF",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "TIMESTEP_KEYFRAME"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/12-timestep-keyframe",
+   "inputs": [
+    [
+     "cn_weights",
+     "CONTROL_NET_WEIGHTS",
+     false,
+     null
+    ],
+    [
+     "guarantee_steps",
+     "INT",
+     false,
+     1
+    ],
+    [
+     "inherit_missing",
+     "BOOLEAN",
+     false,
+     true
+    ],
+    [
+     "latent_keyframe",
+     "LATENT_KEYFRAME",
+     false,
+     null
+    ],
+    [
+     "mask_optional",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "null_latent_kf_strength",
+     "FLOAT",
+     false,
+     0.0
+    ],
+    [
+     "prev_timestep_kf",
+     "TIMESTEP_KEYFRAME",
+     false,
+     null
+    ],
+    [
+     "start_percent",
+     "FLOAT",
+     true,
+     0.0
+    ],
+    [
+     "strength",
+     "FLOAT",
+     false,
+     1.0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "TIMESTEP_KF"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "negative_prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "cfg_scale",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 1.0,
+      "min": 0.0,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "16:9",
+     "id": "aspect_ratio",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "16:9",
+       "9:16",
+       "1:1"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "pro mode / 5s duration / kling-v2-5-turbo",
+     "id": "mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "pro mode / 5s duration / kling-v2-5-turbo",
+       "pro mode / 10s duration / kling-v2-5-turbo"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "id": "video",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VIDEO"
+      ]
+     }
+    },
+    {
+     "id": "video_id",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "id": "duration",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/14-kling-text-to-video",
+   "inputs": [
+    [
+     "aspect_ratio",
+     "COMBO",
+     true,
+     "16:9"
+    ],
+    [
+     "cfg_scale",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "mode",
+     "COMBO",
+     true,
+     "pro mode / 5s duration / kling-v2-5-turbo"
+    ],
+    [
+     "negative_prompt",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "prompt",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "duration",
+    "video",
+    "video_id"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "string",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "regex_pattern",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "replace",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "collapsed": true,
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": true,
+       "id": "case_insensitive",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "BOOLEAN"
+        ]
+       }
+      },
+      {
+       "default": false,
+       "id": "multiline",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "BOOLEAN"
+        ]
+       }
+      },
+      {
+       "default": false,
+       "id": "dotall",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "BOOLEAN"
+        ]
+       }
+      },
+      {
+       "default": 0,
+       "id": "count",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 100,
+        "min": 0,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "id": "STRING",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/15-replace-text-regex",
+   "inputs": [
+    [
+     "case_insensitive",
+     "BOOLEAN",
+     false,
+     true
+    ],
+    [
+     "count",
+     "INT",
+     false,
+     0
+    ],
+    [
+     "dotall",
+     "BOOLEAN",
+     false,
+     false
+    ],
+    [
+     "multiline",
+     "BOOLEAN",
+     false,
+     false
+    ],
+    [
+     "regex_pattern",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "replace",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "string",
+     "STRING",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "STRING"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": "",
+     "id": "switch_cases",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "dynamicPrompts": false,
+      "multiline": true,
+      "placeholder": "case_1:output_1\ncase_2:output_2",
+      "type": "STRING"
+     }
+    },
+    {
+     "default": "",
+     "id": "default_value",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": ":",
+     "id": "delimiter",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "",
+     "id": "condition",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "id": "STRING",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/5-text-switch-case",
+   "inputs": [
+    [
+     "condition",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "default_value",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "delimiter",
+     "STRING",
+     true,
+     ":"
+    ],
+    [
+     "switch_cases",
+     "STRING",
+     true,
+     ""
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "STRING"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "WANVAE"
+      ]
+     }
+    },
+    {
+     "id": "samples",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    },
+    {
+     "default": false,
+     "id": "enable_vae_tiling",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 272,
+     "id": "tile_x",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2048,
+      "min": 40,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 272,
+     "id": "tile_y",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2048,
+      "min": 40,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 144,
+     "id": "tile_stride_x",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2040,
+      "min": 32,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 128,
+     "id": "tile_stride_y",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 2040,
+      "min": 32,
+      "step": 8,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": "default",
+       "id": "normalization",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "default",
+         "minmax",
+         "none"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "id": "images",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/6-wanvideo-decode-tiles",
+   "inputs": [
+    [
+     "enable_vae_tiling",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "normalization",
+     "COMBO",
+     false,
+     "default"
+    ],
+    [
+     "samples",
+     "LATENT",
+     true,
+     null
+    ],
+    [
+     "tile_stride_x",
+     "INT",
+     true,
+     144
+    ],
+    [
+     "tile_stride_y",
+     "INT",
+     true,
+     128
+    ],
+    [
+     "tile_x",
+     "INT",
+     true,
+     272
+    ],
+    [
+     "tile_y",
+     "INT",
+     true,
+     272
+    ],
+    [
+     "vae",
+     "WANVAE",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "images"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "app",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "{}",
+     "id": "overrides",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "source",
+     "kind": "choice",
+     "leader": "\"wired\" if linked(app) else \"picked\"",
+     "options": [
+      {
+       "key": "picked",
+       "rows": [
+        {
+         "id": "load_inputs",
+         "kind": "button",
+         "label": "Load inputs",
+         "steps": [
+          {
+           "args": [
+            "app"
+           ],
+           "function": "app_pack.exposure",
+           "step": "call",
+           "writes": [
+            "exposed",
+            "overrides"
+           ]
+          }
+         ]
+        },
+        {
+         "id": "exposed",
+         "kind": "described",
+         "kinds": [
+          {
+           "id": "number",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          },
+          {
+           "id": "decimal",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "FLOAT"
+            ]
+           }
+          },
+          {
+           "id": "toggle",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "BOOLEAN"
+            ]
+           }
+          },
+          {
+           "id": "text",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "choice",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "COMBO"
+            ]
+           }
+          },
+          {
+           "id": "color",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "wire",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          },
+          {
+           "id": "result",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ],
+         "maxEntries": 32
+        }
+       ]
+      },
+      {
+       "key": "wired",
+       "rows": [
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_in",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "input_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "input",
+           "required": false,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        },
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_out",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "output_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "exposed_info",
+     "kind": "output",
+     "label": "exposed",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "DICT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "source": "picked"
+   },
+   "id": "example/7-app-workflow-picked",
+   "inputs": [
+    [
+     "app",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "overrides",
+     "STRING",
+     true,
+     "{}"
+    ],
+    [
+     "source.exposed",
+     "STRING",
+     false,
+     null
+    ],
+    [
+     "source.exposed.steps",
+     "INT",
+     true,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "exposed_info",
+    "source.exposed.upscaled"
+   ],
+   "stored": [
+    [
+     "app",
+     "upscale.app.json"
+    ],
+    [
+     "source.exposed",
+     "{\"entries\": [{\"id\": \"steps\", \"label\": \"Steps\", \"kind\": \"number\"}, {\"id\": \"upscaled\", \"label\": \"Upscaled\", \"kind\": \"result\"}]}"
+    ],
+    [
+     "source.exposed.steps",
+     20
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "app",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "{}",
+     "id": "overrides",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "source",
+     "kind": "choice",
+     "leader": "\"wired\" if linked(app) else \"picked\"",
+     "options": [
+      {
+       "key": "picked",
+       "rows": [
+        {
+         "id": "load_inputs",
+         "kind": "button",
+         "label": "Load inputs",
+         "steps": [
+          {
+           "args": [
+            "app"
+           ],
+           "function": "app_pack.exposure",
+           "step": "call",
+           "writes": [
+            "exposed",
+            "overrides"
+           ]
+          }
+         ]
+        },
+        {
+         "id": "exposed",
+         "kind": "described",
+         "kinds": [
+          {
+           "id": "number",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           }
+          },
+          {
+           "id": "decimal",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "FLOAT"
+            ]
+           }
+          },
+          {
+           "id": "toggle",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "BOOLEAN"
+            ]
+           }
+          },
+          {
+           "id": "text",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "choice",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "COMBO"
+            ]
+           }
+          },
+          {
+           "id": "color",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "STRING"
+            ]
+           }
+          },
+          {
+           "id": "wire",
+           "kind": "input",
+           "required": true,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          },
+          {
+           "id": "result",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ],
+         "maxEntries": 32
+        }
+       ]
+      },
+      {
+       "key": "wired",
+       "rows": [
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_in",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "input_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "input",
+           "required": false,
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        },
+        {
+         "grows": {
+          "count": "4"
+         },
+         "id": "generic_out",
+         "keys": {
+          "numbered": {
+           "pad": 0,
+           "prefix": "output_",
+           "start": 1
+          }
+         },
+         "kind": "group",
+         "member": [
+          {
+           "id": "value",
+           "kind": "output",
+           "type": {
+            "kind": "variable",
+            "templateId": "A"
+           }
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "exposed_info",
+     "kind": "output",
+     "label": "exposed",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "DICT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {
+    "source": "wired"
+   },
+   "id": "example/7-app-workflow-wired",
+   "inputs": [
+    [
+     "app",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "overrides",
+     "STRING",
+     true,
+     "{}"
+    ],
+    [
+     "source.generic_in.input_1.value",
+     null,
+     false,
+     null
+    ],
+    [
+     "source.generic_in.input_2.value",
+     null,
+     false,
+     null
+    ],
+    [
+     "source.generic_in.input_3.value",
+     null,
+     false,
+     null
+    ],
+    [
+     "source.generic_in.input_4.value",
+     null,
+     false,
+     null
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "exposed_info",
+    "source.generic_out.output_1.value",
+    "source.generic_out.output_2.value",
+    "source.generic_out.output_3.value",
+    "source.generic_out.output_4.value"
+   ],
+   "stored": [
+    [
+     "app",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "model",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "clip",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    },
+    {
+     "id": "latent",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    },
+    {
+     "default": "",
+     "id": "global_prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "default": 129,
+     "id": "max_frames",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 10000,
+      "min": 1,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "",
+     "id": "timeline_data",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "reads": {
+       "fps": "fps",
+       "frames": "max_frames",
+       "units": "time_units"
+      },
+      "type": "promptrelay.timeline",
+      "writes": {
+       "lengths": "segment_lengths",
+       "prompts": "local_prompts"
+      }
+     }
+    },
+    {
+     "default": "",
+     "hidden": true,
+     "id": "local_prompts",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": "",
+     "hidden": true,
+     "id": "segment_lengths",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    },
+    {
+     "default": 0.001,
+     "id": "epsilon",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 0.99,
+      "min": 1e-06,
+      "step": 0.0001,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 24.0,
+     "id": "fps",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 240.0,
+      "min": 0.1,
+      "step": 0.1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "frames",
+     "id": "time_units",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "frames",
+       "seconds"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "id": "relay_options",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "RELAY_OPTIONS"
+      ]
+     }
+    },
+    {
+     "id": "model",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/10-prompt-relay-timeline",
+   "inputs": [
+    [
+     "clip",
+     "CLIP",
+     true,
+     null
+    ],
+    [
+     "epsilon",
+     "FLOAT",
+     true,
+     0.001
+    ],
+    [
+     "fps",
+     "FLOAT",
+     false,
+     24.0
+    ],
+    [
+     "global_prompt",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "latent",
+     "LATENT",
+     true,
+     null
+    ],
+    [
+     "local_prompts",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "max_frames",
+     "INT",
+     true,
+     129
+    ],
+    [
+     "model",
+     "MODEL",
+     true,
+     null
+    ],
+    [
+     "relay_options",
+     "RELAY_OPTIONS",
+     false,
+     null
+    ],
+    [
+     "segment_lengths",
+     "STRING",
+     true,
+     ""
+    ],
+    [
+     "time_units",
+     "COMBO",
+     false,
+     "frames"
+    ],
+    [
+     "timeline_data",
+     "STRING",
+     true,
+     ""
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "model",
+    "positive"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": "single_speaker",
+     "id": "mode",
+     "kind": "choice",
+     "options": [
+      {
+       "key": "single_speaker",
+       "rows": []
+      },
+      {
+       "key": "two_speakers",
+       "rows": [
+        {
+         "id": "audio_encoder_output_2",
+         "kind": "input",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "AUDIO_ENCODER_OUTPUT"
+          ]
+         }
+        },
+        {
+         "id": "mask_1",
+         "kind": "input",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "MASK"
+          ]
+         }
+        },
+        {
+         "id": "mask_2",
+         "kind": "input",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "MASK"
+          ]
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "model",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "model_patch",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL_PATCH"
+      ]
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "negative",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VAE"
+      ]
+     }
+    },
+    {
+     "default": 832,
+     "id": "width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 16,
+      "step": 16,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 480,
+     "id": "height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 16,
+      "step": 16,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 81,
+     "id": "length",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 1,
+      "step": 4,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "clip_vision_output",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP_VISION_OUTPUT"
+      ]
+     }
+    },
+    {
+     "id": "start_image",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "audio_encoder_output_1",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "AUDIO_ENCODER_OUTPUT"
+      ]
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "audio_scale",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 10.0,
+      "min": -10.0,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "previous_frames",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": 9,
+       "id": "motion_frame_count",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 33,
+        "min": 1,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "id": "model",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "negative",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "latent",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    },
+    {
+     "id": "trim_image",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {
+    "mode": "two_speakers"
+   },
+   "chose": {
+    "mode": "two_speakers"
+   },
+   "id": "example/17-wan-infinite-talk-two-speakers",
+   "inputs": [
+    [
+     "audio_encoder_output_1",
+     "AUDIO_ENCODER_OUTPUT",
+     true,
+     null
+    ],
+    [
+     "audio_scale",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "clip_vision_output",
+     "CLIP_VISION_OUTPUT",
+     false,
+     null
+    ],
+    [
+     "height",
+     "INT",
+     true,
+     480
+    ],
+    [
+     "length",
+     "INT",
+     true,
+     81
+    ],
+    [
+     "mode.audio_encoder_output_2",
+     "AUDIO_ENCODER_OUTPUT",
+     false,
+     null
+    ],
+    [
+     "mode.mask_1",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "mode.mask_2",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "model",
+     "MODEL",
+     true,
+     null
+    ],
+    [
+     "model_patch",
+     "MODEL_PATCH",
+     true,
+     null
+    ],
+    [
+     "motion_frame_count",
+     "INT",
+     true,
+     9
+    ],
+    [
+     "negative",
+     "CONDITIONING",
+     true,
+     null
+    ],
+    [
+     "positive",
+     "CONDITIONING",
+     true,
+     null
+    ],
+    [
+     "previous_frames",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "start_image",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "vae",
+     "VAE",
+     true,
+     null
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     832
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "latent",
+    "model",
+    "negative",
+    "positive",
+    "trim_image"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "clip",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    },
+    {
+     "id": "vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VAE"
+      ]
+     }
+    },
+    {
+     "id": "audio_vae",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "VAE"
+      ]
+     }
+    },
+    {
+     "id": "prompt",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "dynamicPrompts": true,
+      "multiline": true,
+      "type": "STRING"
+     }
+    },
+    {
+     "default": 1344,
+     "id": "width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 32,
+      "step": 32,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 768,
+     "id": "height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 32,
+      "step": 32,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 124,
+     "id": "length",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 3600,
+      "min": 5,
+      "step": 17,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "match",
+     "id": "ref_image_size",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "match",
+       "max"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "grows": "link",
+     "id": "ref_images",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "ref_image_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 9,
+     "member": [
+      {
+       "id": "image",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      }
+     ],
+     "memberLabel": {
+      "formula": "\"Picture \" + str(index() + 1)"
+     }
+    },
+    {
+     "grows": "link",
+     "id": "ref_videos",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "ref_video_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "id": "frames",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      },
+      {
+       "id": "audio",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "AUDIO"
+        ]
+       }
+      }
+     ],
+     "memberLabel": {
+      "formula": "\"Video \" + str(index() + 1)"
+     }
+    },
+    {
+     "grows": "link",
+     "id": "ref_audios",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "ref_audio_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "maxMembers": 3,
+     "member": [
+      {
+       "id": "audio",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "AUDIO"
+        ]
+       }
+      }
+     ],
+     "memberLabel": {
+      "formula": "\"Audio \" + str(index() + 1)"
+     }
+    },
+    {
+     "id": "positive",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CONDITIONING"
+      ]
+     }
+    },
+    {
+     "id": "LATENT",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "LATENT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/21-minimax-reference-prompt",
+   "inputs": [
+    [
+     "audio_vae",
+     "VAE",
+     false,
+     null
+    ],
+    [
+     "clip",
+     "CLIP",
+     true,
+     null
+    ],
+    [
+     "height",
+     "INT",
+     true,
+     768
+    ],
+    [
+     "length",
+     "INT",
+     true,
+     124
+    ],
+    [
+     "prompt",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "ref_image_size",
+     "COMBO",
+     true,
+     "match"
+    ],
+    [
+     "ref_images.ref_image_2.image",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "ref_images.ref_image_1.image",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "ref_videos.ref_video_1.audio",
+     "AUDIO",
+     false,
+     null
+    ],
+    [
+     "ref_videos.ref_video_1.frames",
+     "IMAGE",
+     false,
+     null
+    ],
+    [
+     "vae",
+     "VAE",
+     false,
+     null
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     1344
+    ]
+   ],
+   "members": {
+    "ref_images": [
+     "ref_image_2",
+     "ref_image_1"
+    ],
+    "ref_videos": [
+     "ref_video_1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "LATENT",
+    "positive"
+   ],
+   "stored": [
+    [
+     "ref_images.ref_image_2.image",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "default": "bilinear",
+     "id": "downscale_algorithm",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "nearest",
+       "bilinear",
+       "bicubic",
+       "lanczos",
+       "box",
+       "hamming"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "bicubic",
+     "id": "upscale_algorithm",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "nearest",
+       "bilinear",
+       "bicubic",
+       "lanczos",
+       "box",
+       "hamming"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": false,
+     "id": "preresize",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": "ensure minimum resolution",
+     "id": "preresize_mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "ensure minimum resolution",
+       "ensure maximum resolution",
+       "ensure minimum and maximum resolution"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": 1024,
+     "id": "preresize_min_width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1024,
+     "id": "preresize_min_height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 16384,
+     "id": "preresize_max_width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 16384,
+     "id": "preresize_max_height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": true,
+     "id": "mask_fill_holes",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 0,
+     "id": "mask_expand_pixels",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": false,
+     "id": "mask_invert",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 32,
+     "id": "mask_blend_pixels",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 256,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 0.1,
+     "id": "mask_hipass_filter",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 1.0,
+      "min": 0.0,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": false,
+     "id": "extend_for_outpainting",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_up_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_down_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_left_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.0,
+     "id": "extend_right_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 0.01,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 1.2,
+     "id": "context_from_mask_extend_factor",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "FLOAT"
+      ]
+     },
+     "widget": {
+      "max": 100.0,
+      "min": 1.0,
+      "step": 0.01,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": true,
+     "id": "output_resize_to_target_size",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "default": 512,
+     "id": "output_target_width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 64,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 512,
+     "id": "output_target_height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 16384,
+      "min": 64,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "32",
+     "id": "output_padding",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "0",
+       "8",
+       "16",
+       "32",
+       "64",
+       "128",
+       "256",
+       "512"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "cpu (compatible)",
+     "id": "device_mode",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "cpu (compatible)",
+       "gpu (much faster)"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "id": "optional_context_mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "id": "stitcher",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STITCHER"
+      ]
+     }
+    },
+    {
+     "id": "cropped_image",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    },
+    {
+     "id": "cropped_mask",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/2-inpaint-crop",
+   "inputs": [
+    [
+     "context_from_mask_extend_factor",
+     "FLOAT",
+     true,
+     1.2
+    ],
+    [
+     "device_mode",
+     "COMBO",
+     true,
+     "cpu (compatible)"
+    ],
+    [
+     "downscale_algorithm",
+     "COMBO",
+     true,
+     "bilinear"
+    ],
+    [
+     "extend_down_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "extend_for_outpainting",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "extend_left_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "extend_right_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "extend_up_factor",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "mask_blend_pixels",
+     "INT",
+     true,
+     32
+    ],
+    [
+     "mask_expand_pixels",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "mask_fill_holes",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "mask_hipass_filter",
+     "FLOAT",
+     true,
+     0.1
+    ],
+    [
+     "mask_invert",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "optional_context_mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "output_padding",
+     "COMBO",
+     true,
+     "32"
+    ],
+    [
+     "output_resize_to_target_size",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "output_target_height",
+     "INT",
+     true,
+     512
+    ],
+    [
+     "output_target_width",
+     "INT",
+     true,
+     512
+    ],
+    [
+     "preresize",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "preresize_max_height",
+     "INT",
+     true,
+     16384
+    ],
+    [
+     "preresize_max_width",
+     "INT",
+     true,
+     16384
+    ],
+    [
+     "preresize_min_height",
+     "INT",
+     true,
+     1024
+    ],
+    [
+     "preresize_min_width",
+     "INT",
+     true,
+     1024
+    ],
+    [
+     "preresize_mode",
+     "COMBO",
+     true,
+     "ensure minimum resolution"
+    ],
+    [
+     "upscale_algorithm",
+     "COMBO",
+     true,
+     "bicubic"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "cropped_image",
+    "cropped_mask",
+    "stitcher"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "grows": "link",
+     "id": "images",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "image_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "id": "image",
+       "kind": "input",
+       "required": true,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      },
+      {
+       "id": "image",
+       "kind": "output",
+       "label": {
+        "formula": "\"image_\" + str(index() + 1)"
+       },
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "IMAGE"
+        ]
+       }
+      }
+     ],
+     "reorderable": true
+    },
+    {
+     "default": 0,
+     "id": "width",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 8192,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 0,
+     "id": "height",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 8192,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": "lanczos",
+     "id": "interpolation",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "lanczos",
+       "nearest",
+       "bilinear",
+       "bicubic",
+       "area",
+       "nearest-exact"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "keep proportion",
+     "id": "resize_method",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "keep proportion",
+       "stretch",
+       "pad",
+       "pad green",
+       "crop"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": 32,
+     "id": "multiple_of",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 512,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "default": 18,
+     "id": "img_compression",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 100,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "multi_output",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "IMAGE"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/9-multi-image-loader",
+   "inputs": [
+    [
+     "height",
+     "INT",
+     true,
+     0
+    ],
+    [
+     "images.image_2.image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "images.image_1.image",
+     "IMAGE",
+     true,
+     null
+    ],
+    [
+     "img_compression",
+     "INT",
+     true,
+     18
+    ],
+    [
+     "interpolation",
+     "COMBO",
+     true,
+     "lanczos"
+    ],
+    [
+     "multiple_of",
+     "INT",
+     true,
+     32
+    ],
+    [
+     "resize_method",
+     "COMBO",
+     true,
+     "keep proportion"
+    ],
+    [
+     "width",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {
+    "images": [
+     "image_2",
+     "image_1"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "images.image_2.image",
+    "images.image_1.image",
+    "multi_output"
+   ],
+   "stored": [
+    [
+     "images.image_2.image",
+     {
+      "link": true
+     }
+    ],
+    [
+     "images.image_1.image",
+     {
+      "link": true
+     }
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "default": "dimensions",
+     "id": "target",
+     "kind": "choice",
+     "label": "Target",
+     "options": [
+      {
+       "key": "dimensions",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        },
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "width",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "height",
+       "rows": [
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "longest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "shortest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "factor",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "factor",
+         "kind": "input",
+         "label": "Scale factor",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 64.0,
+          "min": 0.01,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        }
+       ]
+      },
+      {
+       "key": "total_pixels",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "megapixels",
+         "kind": "input",
+         "label": "Megapixels",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 268.0,
+          "min": 0.001,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        },
+        {
+         "id": "target_advanced",
+         "kind": "section",
+         "label": "Advanced",
+         "rows": [
+          {
+           "default": 1,
+           "id": "resolution_steps",
+           "kind": "input",
+           "label": "Resolution steps",
+           "required": false,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           },
+           "widget": {
+            "max": 1024,
+            "min": 1,
+            "step": 1,
+            "type": "NUMBER"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "match",
+       "rows": [
+        {
+         "id": "reference",
+         "kind": "input",
+         "label": "Reference image or mask",
+         "required": false,
+         "type": {
+          "kind": "union",
+          "types": [
+           "IMAGE",
+           "MASK"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "multiple_cover",
+       "rows": []
+      }
+     ],
+     "shared": [
+      {
+       "default": 512,
+       "id": "width",
+       "kind": "input",
+       "label": "Width",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "height",
+       "kind": "input",
+       "label": "Height",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "size",
+       "kind": "input",
+       "label": "Size",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 1,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "default": "stretch",
+     "id": "mode",
+     "kind": "choice",
+     "label": "Mode",
+     "options": [
+      {
+       "key": "stretch",
+       "rows": []
+      },
+      {
+       "key": "fit",
+       "rows": []
+      },
+      {
+       "key": "fill",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "mode_padding",
+         "kind": "choice",
+         "label": "Padding style",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "mode_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "mode_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": "none",
+     "id": "divisibility",
+     "kind": "choice",
+     "label": "Divisibility finalization",
+     "options": [
+      {
+       "key": "none",
+       "rows": []
+      },
+      {
+       "key": "nearest",
+       "rows": []
+      },
+      {
+       "key": "crop",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "final_padding",
+         "kind": "choice",
+         "label": "Final pad",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "final_pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "final_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "final_pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "final_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": 8,
+     "id": "multiple_of",
+     "kind": "input",
+     "label": "Multiple of",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "visible": {
+      "formula": "target == \"multiple_cover\" or divisibility != \"none\""
+     },
+     "widget": {
+      "max": 1024,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": "round",
+       "id": "fit_rounding",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "round",
+         "floor"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "always",
+       "id": "apply",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "always",
+         "only_if_bigger",
+         "only_if_smaller",
+         "only_if_bigger_area",
+         "only_if_smaller_area"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "bilinear",
+       "id": "interpolation",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "nearest",
+         "nearest-exact",
+         "bilinear",
+         "bicubic",
+         "lanczos",
+         "area"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "id": "image",
+     "kind": "output",
+     "preview": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "output",
+     "optional": true,
+     "preview": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {
+    "divisibility": "none",
+    "mode": "pad",
+    "mode.mode_padding": "constant",
+    "target": "dimensions"
+   },
+   "chose": {
+    "divisibility": "none",
+    "mode": "pad",
+    "mode.mode_padding": "constant",
+    "target": "dimensions"
+   },
+   "id": "example/16-resize-image-or-mask-pad",
+   "inputs": [
+    [
+     "apply",
+     "COMBO",
+     false,
+     "always"
+    ],
+    [
+     "fit_rounding",
+     "COMBO",
+     false,
+     "round"
+    ],
+    [
+     "image",
+     null,
+     true,
+     null
+    ],
+    [
+     "interpolation",
+     "COMBO",
+     false,
+     "bilinear"
+    ],
+    [
+     "mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "mode.mode_anchor",
+     "COMBO",
+     false,
+     "center"
+    ],
+    [
+     "mode.mode_padding.pad_color",
+     "STRING",
+     false,
+     ""
+    ],
+    [
+     "mode.mode_padding.pad_value",
+     "FLOAT",
+     false,
+     0.0
+    ],
+    [
+     "multiple_of",
+     "INT",
+     false,
+     8
+    ],
+    [
+     "target.height",
+     "INT",
+     false,
+     512
+    ],
+    [
+     "target.width",
+     "INT",
+     false,
+     512
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "image",
+    "mask"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "id": "image",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    },
+    {
+     "default": "dimensions",
+     "id": "target",
+     "kind": "choice",
+     "label": "Target",
+     "options": [
+      {
+       "key": "dimensions",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        },
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "width",
+       "rows": [
+        {
+         "id": "width",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "height",
+       "rows": [
+        {
+         "id": "height",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "longest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "shortest",
+       "rows": [
+        {
+         "id": "size",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "factor",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "factor",
+         "kind": "input",
+         "label": "Scale factor",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 64.0,
+          "min": 0.01,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        }
+       ]
+      },
+      {
+       "key": "total_pixels",
+       "rows": [
+        {
+         "default": 1.0,
+         "id": "megapixels",
+         "kind": "input",
+         "label": "Megapixels",
+         "required": false,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "max": 268.0,
+          "min": 0.001,
+          "step": 0.01,
+          "type": "NUMBER"
+         }
+        },
+        {
+         "id": "target_advanced",
+         "kind": "section",
+         "label": "Advanced",
+         "rows": [
+          {
+           "default": 1,
+           "id": "resolution_steps",
+           "kind": "input",
+           "label": "Resolution steps",
+           "required": false,
+           "type": {
+            "kind": "concrete",
+            "types": [
+             "INT"
+            ]
+           },
+           "widget": {
+            "max": 1024,
+            "min": 1,
+            "step": 1,
+            "type": "NUMBER"
+           }
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "key": "match",
+       "rows": [
+        {
+         "id": "reference",
+         "kind": "input",
+         "label": "Reference image or mask",
+         "required": false,
+         "type": {
+          "kind": "union",
+          "types": [
+           "IMAGE",
+           "MASK"
+          ]
+         }
+        }
+       ]
+      },
+      {
+       "key": "multiple_cover",
+       "rows": []
+      }
+     ],
+     "shared": [
+      {
+       "default": 512,
+       "id": "width",
+       "kind": "input",
+       "label": "Width",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "height",
+       "kind": "input",
+       "label": "Height",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 0,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      },
+      {
+       "default": 512,
+       "id": "size",
+       "kind": "input",
+       "label": "Size",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "INT"
+        ]
+       },
+       "widget": {
+        "max": 16384,
+        "min": 1,
+        "step": 1,
+        "type": "NUMBER"
+       }
+      }
+     ]
+    },
+    {
+     "default": "stretch",
+     "id": "mode",
+     "kind": "choice",
+     "label": "Mode",
+     "options": [
+      {
+       "key": "stretch",
+       "rows": []
+      },
+      {
+       "key": "fit",
+       "rows": []
+      },
+      {
+       "key": "fill",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "mode_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "mode_padding",
+         "kind": "choice",
+         "label": "Padding style",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "mode_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "mode_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": "none",
+     "id": "divisibility",
+     "kind": "choice",
+     "label": "Divisibility finalization",
+     "options": [
+      {
+       "key": "none",
+       "rows": []
+      },
+      {
+       "key": "nearest",
+       "rows": []
+      },
+      {
+       "key": "crop",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        }
+       ]
+      },
+      {
+       "key": "pad",
+       "rows": [
+        {
+         "id": "final_anchor",
+         "kind": "use"
+        },
+        {
+         "default": "constant",
+         "id": "final_padding",
+         "kind": "choice",
+         "label": "Final pad",
+         "options": [
+          {
+           "key": "constant",
+           "rows": [
+            {
+             "default": 0.0,
+             "id": "final_pad_value",
+             "kind": "input",
+             "label": "Value",
+             "required": false,
+             "type": {
+              "kind": "concrete",
+              "types": [
+               "FLOAT"
+              ]
+             },
+             "widget": {
+              "max": 1.0,
+              "min": 0.0,
+              "step": 0.01,
+              "type": "NUMBER"
+             }
+            },
+            {
+             "id": "final_padding_advanced",
+             "kind": "section",
+             "label": "Advanced",
+             "rows": [
+              {
+               "default": "",
+               "id": "final_pad_color",
+               "kind": "input",
+               "label": "Color override",
+               "required": false,
+               "type": {
+                "kind": "concrete",
+                "types": [
+                 "STRING"
+                ]
+               },
+               "widget": {
+                "multiline": false,
+                "type": "STRING"
+               }
+              }
+             ]
+            }
+           ]
+          },
+          {
+           "key": "edge_average",
+           "rows": []
+          },
+          {
+           "key": "edge_pixel",
+           "rows": []
+          },
+          {
+           "key": "blurred_background",
+           "rows": []
+          }
+         ]
+        }
+       ]
+      }
+     ],
+     "shared": [
+      {
+       "default": "center",
+       "id": "final_anchor",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "center",
+         "top",
+         "bottom",
+         "left",
+         "right"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "default": 8,
+     "id": "multiple_of",
+     "kind": "input",
+     "label": "Multiple of",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "visible": {
+      "formula": "target == \"multiple_cover\" or divisibility != \"none\""
+     },
+     "widget": {
+      "max": 1024,
+      "min": 0,
+      "step": 1,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "advanced",
+     "kind": "section",
+     "label": "Advanced",
+     "rows": [
+      {
+       "default": "round",
+       "id": "fit_rounding",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "round",
+         "floor"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "always",
+       "id": "apply",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "always",
+         "only_if_bigger",
+         "only_if_smaller",
+         "only_if_bigger_area",
+         "only_if_smaller_area"
+        ],
+        "type": "COMBO"
+       }
+      },
+      {
+       "default": "bilinear",
+       "id": "interpolation",
+       "kind": "input",
+       "required": false,
+       "type": {
+        "kind": "concrete",
+        "types": [
+         "COMBO"
+        ]
+       },
+       "widget": {
+        "options": [
+         "nearest",
+         "nearest-exact",
+         "bilinear",
+         "bicubic",
+         "lanczos",
+         "area"
+        ],
+        "type": "COMBO"
+       }
+      }
+     ]
+    },
+    {
+     "id": "image",
+     "kind": "output",
+     "preview": true,
+     "type": {
+      "allowed": [
+       "IMAGE",
+       "MASK"
+      ],
+      "kind": "variable",
+      "templateId": "input_type"
+     }
+    },
+    {
+     "id": "mask",
+     "kind": "output",
+     "optional": true,
+     "preview": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MASK"
+      ]
+     }
+    }
+   ],
+   "choices": {
+    "divisibility": "crop",
+    "mode": "fit",
+    "target": "total_pixels"
+   },
+   "chose": {
+    "divisibility": "crop",
+    "mode": "fit",
+    "target": "total_pixels"
+   },
+   "id": "example/16-resize-image-or-mask-total-pixels",
+   "inputs": [
+    [
+     "apply",
+     "COMBO",
+     false,
+     "always"
+    ],
+    [
+     "divisibility.final_anchor",
+     "COMBO",
+     false,
+     "center"
+    ],
+    [
+     "fit_rounding",
+     "COMBO",
+     false,
+     "round"
+    ],
+    [
+     "image",
+     null,
+     true,
+     null
+    ],
+    [
+     "interpolation",
+     "COMBO",
+     false,
+     "bilinear"
+    ],
+    [
+     "mask",
+     "MASK",
+     false,
+     null
+    ],
+    [
+     "multiple_of",
+     "INT",
+     false,
+     8
+    ],
+    [
+     "target.megapixels",
+     "FLOAT",
+     false,
+     1.0
+    ],
+    [
+     "target.resolution_steps",
+     "INT",
+     false,
+     1
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "image",
+    "mask"
+   ],
+   "stored": []
+  },
+  {
+   "body": [
+    {
+     "default": "auto",
+     "id": "from_translate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "auto",
+       "de",
+       "en",
+       "fr",
+       "ja"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": "en",
+     "id": "to_translate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "COMBO"
+      ]
+     },
+     "widget": {
+      "options": [
+       "de",
+       "en",
+       "fr",
+       "ja"
+      ],
+      "type": "COMBO"
+     }
+    },
+    {
+     "default": false,
+     "id": "manual_translate",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "disabledReason": "Manual translate is off. The translation works when you press Run.",
+     "enabled": {
+      "formula": "manual_translate"
+     },
+     "id": "translate",
+     "kind": "button",
+     "label": "Manual Translate",
+     "steps": [
+      {
+       "args": [
+        "text",
+        "from_translate",
+        "to_translate"
+       ],
+       "function": "translate_pack.translate_now",
+       "step": "call",
+       "writes": [
+        "text"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "text",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     },
+     "widget": {
+      "multiline": true,
+      "placeholder": "Input prompt",
+      "type": "STRING"
+     }
+    },
+    {
+     "id": "text",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "STRING"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/24-translate-with-a-button",
+   "inputs": [
+    [
+     "from_translate",
+     "COMBO",
+     true,
+     "auto"
+    ],
+    [
+     "manual_translate",
+     "BOOLEAN",
+     true,
+     false
+    ],
+    [
+     "text",
+     "STRING",
+     true,
+     null
+    ],
+    [
+     "to_translate",
+     "COMBO",
+     true,
+     "en"
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "text"
+   ],
+   "stored": []
+  },
+  {
+   "automatic": {
+    "loras.lora_1.clip_strength": [
+     0.75,
+     "worked-out"
+    ]
+   },
+   "body": [
+    {
+     "id": "model",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "clip",
+     "kind": "input",
+     "required": false,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    },
+    {
+     "default": false,
+     "id": "separate_clip",
+     "kind": "input",
+     "label": "Separate model and clip strength",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "BOOLEAN"
+      ]
+     }
+    },
+    {
+     "grows": "button",
+     "id": "loras",
+     "keys": {
+      "numbered": {
+       "pad": 0,
+       "prefix": "lora_",
+       "start": 1
+      }
+     },
+     "kind": "group",
+     "member": [
+      {
+       "kind": "row",
+       "rows": [
+        {
+         "default": true,
+         "id": "on",
+         "kind": "input",
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "BOOLEAN"
+          ]
+         }
+        },
+        {
+         "id": "lora",
+         "kind": "input",
+         "pin": false,
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "ASSET"
+          ]
+         },
+         "widget": {
+          "accept": [],
+          "kind": "model/lora",
+          "type": "ASSET"
+         }
+        },
+        {
+         "default": 1.0,
+         "id": "strength",
+         "kind": "input",
+         "label": {
+          "formula": "\"Model\" if separate_clip else \"Strength\""
+         },
+         "pin": false,
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "widget": {
+          "round": 0.01,
+          "step": 0.05,
+          "type": "NUMBER"
+         }
+        },
+        {
+         "automatic": {
+          "formula": "strength"
+         },
+         "default": 1.0,
+         "id": "clip_strength",
+         "kind": "input",
+         "label": "Clip",
+         "pin": false,
+         "required": true,
+         "type": {
+          "kind": "concrete",
+          "types": [
+           "FLOAT"
+          ]
+         },
+         "visible": {
+          "formula": "separate_clip"
+         },
+         "widget": {
+          "round": 0.01,
+          "step": 0.05,
+          "type": "NUMBER"
+         }
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "id": "toggle_all",
+     "kind": "button",
+     "label": "Toggle all",
+     "steps": [
+      {
+       "field": "on",
+       "group": "loras",
+       "step": "setEach",
+       "value": {
+        "formula": "not all(loras.on)"
+       }
+      }
+     ]
+    },
+    {
+     "id": "MODEL",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "MODEL"
+      ]
+     }
+    },
+    {
+     "id": "CLIP",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "CLIP"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/18-lora-stack",
+   "inputs": [
+    [
+     "clip",
+     "CLIP",
+     false,
+     null
+    ],
+    [
+     "loras.lora_1.clip_strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.lora_1.lora",
+     "ASSET",
+     true,
+     null
+    ],
+    [
+     "loras.lora_1.on",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "loras.lora_1.strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.lora_2.clip_strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "loras.lora_2.lora",
+     "ASSET",
+     true,
+     null
+    ],
+    [
+     "loras.lora_2.on",
+     "BOOLEAN",
+     true,
+     true
+    ],
+    [
+     "loras.lora_2.strength",
+     "FLOAT",
+     true,
+     1.0
+    ],
+    [
+     "model",
+     "MODEL",
+     false,
+     null
+    ],
+    [
+     "separate_clip",
+     "BOOLEAN",
+     true,
+     false
+    ]
+   ],
+   "members": {
+    "loras": [
+     "lora_1",
+     "lora_2"
+    ]
+   },
+   "outcome": "flattened",
+   "outputs": [
+    "CLIP",
+    "MODEL"
+   ],
+   "stored": [
+    [
+     "separate_clip",
+     true
+    ],
+    [
+     "loras.lora_1.strength",
+     0.75
+    ],
+    [
+     "loras.lora_2.strength",
+     0.5
+    ],
+    [
+     "loras.lora_2.clip_strength",
+     0.2
+    ]
+   ]
+  },
+  {
+   "body": [
+    {
+     "afterRun": "randomize",
+     "default": 0,
+     "id": "seed",
+     "kind": "input",
+     "required": true,
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     },
+     "widget": {
+      "max": 1125899906842624,
+      "min": -1125899906842624,
+      "type": "NUMBER"
+     }
+    },
+    {
+     "id": "new_fixed_random",
+     "kind": "button",
+     "label": "New fixed random",
+     "steps": [
+      {
+       "field": "seed",
+       "mode": "fixed",
+       "step": "setMode"
+      },
+      {
+       "field": "seed",
+       "step": "randomize"
+      }
+     ]
+    },
+    {
+     "id": "SEED",
+     "kind": "output",
+     "type": {
+      "kind": "concrete",
+      "types": [
+       "INT"
+      ]
+     }
+    }
+   ],
+   "choices": {},
+   "chose": {},
+   "id": "example/23-seed-with-reuse",
+   "inputs": [
+    [
+     "seed",
+     "INT",
+     true,
+     0
+    ]
+   ],
+   "members": {},
+   "outcome": "flattened",
+   "outputs": [
+    "SEED"
+   ],
+   "stored": []
+  }
+ ],
+ "schemaVersion": 2
+}

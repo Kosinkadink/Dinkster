@@ -17,10 +17,10 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_graph import Graph, GraphNode, graph_to_wire
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -251,8 +251,7 @@ class Chatty(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="journal.chatty",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
             idempotent=False,  # never cached: events must fire every run
         )
 

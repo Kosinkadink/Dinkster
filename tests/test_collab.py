@@ -348,6 +348,124 @@ def test_session_edit_permission_tracks_role_and_scope_without_exposing_acl() ->
     run_scenario(scenario())
 
 
+def test_numeric_correction_provenance_reaches_peers_and_survives_restart(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "sessions.sqlite"
+        store = SessionStore(path)
+        client = await make_authenticated_client(SessionService(store=store))
+        writer = {"X-Principal": "writer"}
+        viewer = {"X-Principal": "viewer"}
+        owner = {"graphId": "g", "nodeId": "n", "valueKey": "strength"}
+        correction = [
+            {"owner": owner, "causes": [{**owner, "instancePath": ["instance"], "stamp": "sdxl"}]}
+        ]
+        patch = [
+            {
+                "op": "replace",
+                "path": ["graphs", "g", "nodes", "n", "values", "strength"],
+                "value": 2,
+            }
+        ]
+        body = op_body("automatic", 0, patch=patch, numericCorrections=correction)
+        try:
+            created = await (
+                await client.post(
+                    "/api/sessions",
+                    headers=writer,
+                    json={
+                        "scope": "team",
+                        "documentId": "d",
+                        "snapshot": {
+                            "graphs": {"g": {"nodes": {"n": {"values": {"strength": 4.25}}}}}
+                        },
+                    },
+                )
+            ).json()
+            sid = created["sessionId"]
+            url = f"/api/sessions/{sid}/ops"
+            await client.put(
+                f"/api/sessions/{sid}/acl",
+                headers=writer,
+                json={"defaultRole": "viewer", "entries": {"writer": "owner"}},
+            )
+            ws = await client.ws_connect(f"/api/sessions/{sid}/events", headers=viewer)
+            await ws.receive_json()
+            try:
+                denied = await client.post(url, headers=viewer, json=body)
+                assert denied.status == 403
+                for invalid in (
+                    None,
+                    [{"owner": owner, "causes": []}],
+                    [
+                        {
+                            "owner": owner,
+                            "causes": [{**owner, "instancePath": "instance", "stamp": "sdxl"}],
+                        }
+                    ],
+                    [correction[0], correction[0]],
+                    [{**correction[0], "oldValue": 4.25}],
+                    [{**correction[0], "owner": {**owner, "nodeId": "missing"}}],
+                ):
+                    refused = await client.post(
+                        url, headers=writer, json={**body, "numericCorrections": invalid}
+                    )
+                    assert refused.status == 400
+                    assert (await refused.json())["error"] == "numeric-corrections-invalid"
+                unchanged = await client.post(
+                    url, headers=writer, json={**body, "patch": [{**patch[0], "value": 4.25}]}
+                )
+                assert unchanged.status == 400
+                response = await client.post(url, headers=writer, json=body)
+                assert response.status == 200
+                envelope = await response.json()
+                assert envelope["revision"] == 1
+                assert envelope["numericCorrections"] == correction
+                assert await ws.receive_json() == {"type": "op", **envelope}
+                competing = await client.post(
+                    url, headers=writer, json={**body, "opId": "competing", "actorId": "u2"}
+                )
+                assert competing.status == 409
+                assert (await competing.json())["error"] == "stale-base"
+                page = await (await client.get(url + "?after=0", headers=viewer)).json()
+                assert page["ops"] == [envelope]
+            finally:
+                await ws.close()
+        finally:
+            await client.close()
+            store.close()
+
+        # Reopen the actual database, not the previous service's in-memory state.
+        store = SessionStore(path)
+        client = await make_authenticated_client(SessionService(store=store))
+        try:
+            page = await (await client.get(url + "?after=0", headers=viewer)).json()
+            assert page["ops"] == [envelope]
+            replay = await client.post(url, headers=writer, json=body)
+            assert await replay.json() == {**envelope, "replayed": True}
+            changed = deepcopy(correction)
+            changed[0]["causes"][0]["stamp"] = "other"
+            for annotations in (changed, []):
+                refused = await client.post(
+                    url, headers=writer, json={**body, "numericCorrections": annotations}
+                )
+                assert refused.status == 409
+                assert (await refused.json())["error"] == "op-content-mismatch"
+            ordinary = await client.post(
+                url, headers=writer, json=op_body("personal", 1, patch=[{**patch[0], "value": 1.5}])
+            )
+            assert ordinary.status == 200
+            assert "numericCorrections" not in await ordinary.json()
+            page = await (await client.get(url + "?after=0", headers=viewer)).json()
+            assert len(page["ops"]) == 2
+            assert page["ops"][0] == envelope
+            assert "numericCorrections" not in page["ops"][1]
+        finally:
+            await client.close()
+            store.close()
+
+    run_scenario(scenario())
+
+
 def test_image_session_kind_and_snapshot_validation_over_http() -> None:
     def validator(document_kind: str, document_id: str, snapshot: object) -> str | None:
         if document_kind == "image" and snapshot != {"lineage": document_id}:
@@ -432,6 +550,185 @@ def board_snapshot() -> dict[str, Any]:
         "items": items,
         "order": list(items),
     }
+
+
+def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "cards.sqlite"
+        store = SessionStore(path)
+        client = await make_client(SessionService(store=store))
+        document = board_snapshot()
+        input_key = '["g0","node","prompt"]'
+        for key, kind, source in (
+            ("first", "workflow", {"kind": "library", "recordId": "saved-workflow"}),
+            ("second", "workflow", {"kind": "library", "recordId": "saved-workflow"}),
+            ("saved", "blueprint", {"kind": "library", "recordId": "saved-blueprint"}),
+            (
+                "pack",
+                "blueprint",
+                {
+                    "kind": "pack",
+                    "packId": "example.pack",
+                    "blueprintId": "rain",
+                    "digest": "sha256:" + "a" * 64,
+                },
+            ),
+        ):
+            document["items"][key] = {
+                "id": key,
+                "kind": kind,
+                "name": "Rain",
+                "source": source,
+                "values": {input_key: "Original"},
+                "rect": {"x": 20, "y": 40, "width": 340, "height": 240},
+            }
+            document["order"].append(key)
+        document["items"]["first"]["controllers"] = {input_key: "increment"}
+        document["items"]["saved"]["controllers"] = {input_key: "decrement"}
+        document["items"]["pack"]["controllers"] = {input_key: "randomize"}
+        document["items"]["first"]["autoSize"] = True
+        document["items"]["saved"]["autoSize"] = True
+        document["runs"] = {"native-run-one": {"card": "first", "items": ["picture", "video"]}}
+        try:
+            created = await client.post(
+                "/api/sessions",
+                json={
+                    "scope": "local",
+                    "documentKind": "board",
+                    "documentId": "board-one",
+                    "snapshot": document,
+                },
+            )
+            assert created.status == 201
+            sid = (await created.json())["sessionId"]
+            changed = await client.post(
+                f"/api/sessions/{sid}/ops",
+                json=op_body(
+                    "input-change",
+                    0,
+                    patch=[
+                        {
+                            "op": "replace",
+                            "path": ["items", "first", "values", input_key],
+                            "value": {"text": "Rain at night", "variants": [2, 5]},
+                        },
+                        {
+                            "op": "replace",
+                            "path": ["items", "first", "controllers", input_key],
+                            "value": "fixed",
+                        },
+                        {
+                            "op": "replace",
+                            "path": ["items", "first", "autoSize"],
+                            "value": False,
+                        },
+                        {"op": "remove", "path": ["items", "picture"]},
+                        {
+                            "op": "replace",
+                            "path": ["order"],
+                            "value": [key for key in document["order"] if key != "picture"],
+                        },
+                        {
+                            "op": "add",
+                            "path": ["runs", "native-run-two"],
+                            "value": {"card": "removed-card", "items": []},
+                        },
+                    ],
+                ),
+            )
+            assert changed.status == 200
+            document["items"]["first"]["values"][input_key] = {
+                "text": "Rain at night",
+                "variants": [2, 5],
+            }
+            document["items"]["first"]["controllers"][input_key] = "fixed"
+            document["items"]["first"]["autoSize"] = False
+            del document["items"]["picture"]
+            document["order"].remove("picture")
+            document["runs"]["native-run-two"] = {"card": "removed-card", "items": []}
+            assert (
+                await client.put(
+                    f"/api/sessions/{sid}/snapshot", json={"revision": 1, "document": document}
+                )
+            ).status == 200
+        finally:
+            await client.close()
+            store.close()
+        store = SessionStore(path)
+        client = await make_client(SessionService(store=store))
+        try:
+            reopened = await (await client.get(f"/api/sessions/{sid}/snapshot")).json()
+            assert reopened == {"revision": 1, "document": document}
+            assert reopened["document"]["items"]["second"]["values"][input_key] == "Original"
+            assert "controllers" not in reopened["document"]["items"]["second"]
+            assert reopened["document"]["runs"] == {
+                "native-run-one": {"card": "first", "items": ["picture", "video"]},
+                "native-run-two": {"card": "removed-card", "items": []},
+            }
+            for changes in (
+                {"source": {"kind": "library", "recordId": ""}},
+                {
+                    "source": {
+                        "kind": "pack",
+                        "packId": "p",
+                        "blueprintId": "b",
+                        "digest": "sha256:" + "b" * 64,
+                    }
+                },
+                {"values": []},
+                {"controllers": []},
+                {"controllers": None},
+                {"controllers": {input_key: "after_run"}},
+                {"controllers": {input_key: {"mode": "fixed"}}},
+                {"autoSize": None},
+                {"autoSize": 0},
+                {"autoSize": 1},
+                {"autoSize": "true"},
+                {"autoSize": {}},
+            ):
+                refused = await client.post(
+                    f"/api/sessions/{sid}/ops",
+                    json=op_body(
+                        "invalid-card",
+                        1,
+                        patch=[
+                            {
+                                "op": "replace",
+                                "path": ["items", "first"],
+                                "value": {**document["items"]["first"], **changes},
+                            }
+                        ],
+                    ),
+                )
+                assert refused.status == 400
+            for runs in (
+                None,
+                [],
+                {"": {"card": "first", "items": []}},
+                {"native-run-one": None},
+                {"native-run-one": {"card": "First", "items": []}},
+                {"native-run-one": {"card": "first", "items": None}},
+                {"native-run-one": {"card": "first", "items": ["picture", "picture"]}},
+                {"native-run-one": {"card": "first", "items": [False]}},
+                {"native-run-one": {"card": "first", "items": ["bad/id"]}},
+                {"native-run-one": {"card": "first", "items": [], "extra": True}},
+            ):
+                refused = await client.post(
+                    f"/api/sessions/{sid}/ops",
+                    json=op_body(
+                        "invalid-runs",
+                        1,
+                        patch=[{"op": "replace", "path": ["runs"], "value": runs}],
+                    ),
+                )
+                assert refused.status == 400
+            assert (await (await client.get(f"/api/sessions/{sid}")).json())["revision"] == 1
+            assert (await (await client.get(f"/api/sessions/{sid}/snapshot")).json()) == reopened
+        finally:
+            await client.close()
+            store.close()
+
+    run_scenario(scenario())
 
 
 def test_board_session_refuses_invalid_edits_and_reconnects(tmp_path: Path) -> None:

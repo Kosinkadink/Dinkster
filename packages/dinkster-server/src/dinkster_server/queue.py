@@ -49,6 +49,7 @@ from dinkster_engine import (
     GraphValidationError,
     RunResult,
 )
+from dinkster_engine.automatic import AutomaticRecord
 from dinkster_graph import Graph, graph_to_wire, lower_selectors
 from dinkster_protocol import (
     AttentionPolicyConfig,
@@ -112,6 +113,11 @@ class Job:
     graph execution or cache identity; it rides the job wire and history
     so any run can answer "what exact document produced this". Empty
     means unset (omitted on the wire, never null)."""
+    workflow_name: str = field(default="", kw_only=True)
+    """The workflow's name as it read when the job was submitted. Like
+    ``source_document`` it is execution-opaque, and history keeps it, so a
+    later rename leaves past runs as they were. Empty means none was sent
+    (omitted on the wire, never null)."""
     export_snapshot: ExportSnapshot | None = None
     """Opaque compat export payload carried only to output-node invocations."""
     execution: ExecutionRuntime | None = None
@@ -127,6 +133,9 @@ class Job:
     """Effective run-scoped single-job multi-GPU mode and CUDA lanes."""
     cache_enabled: bool = True
     """Whether native result reuse and single-flight coalescing apply."""
+    automatic: tuple[AutomaticRecord, ...] = ()
+    """Each automatic field the run uses: the value written into ``graph`` and
+    whether it was worked out or was the field's default."""
     attempt: int = 1
     """Engine-side execution attempt for this jobRef. Retry plumbing is not
     implemented yet, so every current job has exactly one attempt."""
@@ -142,6 +151,9 @@ class Job:
     node_receipts: dict[str, dict[str, str]] = field(default_factory=lambda: {})
     result_offers: dict[str, dict[str, dict[str, object]]] = field(default_factory=lambda: {})
     artifact_offers: list[dict[str, object]] = field(default_factory=lambda: [])
+    artifacts: tuple[SavedArtifact, ...] = ()
+    artifacts_publication_started: bool = False
+    artifacts_published: bool = False
     task: asyncio.Task[None] | None = None
 
 
@@ -272,6 +284,7 @@ class JobQueue:
         principal_id: str = "local",
         principal_kind: str = "human",
         source_document: str = "",
+        workflow_name: str = "",
         fingerprint: str = "",
         execution: ExecutionRuntime | None = None,
         compiled_graph: CompiledGraph | None = None,
@@ -280,6 +293,7 @@ class JobQueue:
         attention_config: AttentionPolicyConfig | None = None,
         single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
+        automatic: tuple[AutomaticRecord, ...] = (),
     ) -> Job:
         """Queue a lowered graph under an optional pre-pinned execution."""
         if self._closed:
@@ -373,12 +387,14 @@ class JobQueue:
             principal_id=principal_id,
             principal_kind=principal_kind,
             source_document=source_document,
+            workflow_name=workflow_name,
             export_snapshot=export_snapshot,
             execution=execution,
             preview_policy=previews,
             attention_config=attention_config,
             single_job_multi_gpu=single_job_multi_gpu,
             cache_enabled=cache_enabled,
+            automatic=automatic,
         )
         if self._store is not None:
             # Durability before acknowledgment: if the accepted-job record
@@ -567,6 +583,12 @@ class JobQueue:
                 await self._prepare_job(job)
             if self._job_context is not None:
                 ownership.enter_context(self._job_context(job))
+            if job.execution is not None:
+
+                def receive_artifacts(artifacts: tuple[SavedArtifact, ...]) -> None:
+                    job.artifacts = artifacts
+
+                job.execution = replace(job.execution, on_artifacts=receive_artifacts)
             job.execution_started_at = time.time()
             if job.compiled_graph is not None:
                 result = await self._engine.run_compiled(
@@ -594,7 +616,16 @@ class JobQueue:
                     cache_enabled=job.cache_enabled,
                 )
             if self._complete_result is not None:
-                result = await self._complete_result(job, result)
+                completion = asyncio.ensure_future(self._complete_result(job, result))
+                cancelled = False
+                while not completion.done():
+                    try:
+                        await asyncio.shield(completion)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                result = completion.result()
+                if cancelled:
+                    raise asyncio.CancelledError
             job.result = result
         except asyncio.CancelledError:
             terminal_state = "cancelled"

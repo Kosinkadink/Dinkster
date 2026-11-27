@@ -1,6 +1,6 @@
 import os
 
-from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Node, NodeSchema, Output, TypeExpr
 
 
 class Plain(Node):
@@ -8,10 +8,9 @@ class Plain(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="multipart-model.plain",
-            inputs=(),
-            outputs=(
-                OutputSpec("value", TypeExpr.concrete("INT")),
-                OutputSpec("pid", TypeExpr.concrete("INT")),
+            body=(
+                Output("value", TypeExpr.concrete("INT")),
+                Output("pid", TypeExpr.concrete("INT")),
             ),
         )
 

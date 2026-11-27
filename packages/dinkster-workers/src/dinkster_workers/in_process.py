@@ -64,17 +64,11 @@ from dinkster_protocol.result_algebra import (
 )
 from dinkster_schema import (
     AbsentOutput,
-    DynamicComboSpec,
-    DynamicEntry,
-    DynamicSlotSpec,
     Expansion,
     ExpansionOutput,
-    InputFamilySpec,
     Node,
     NodeSchema,
-    OutputInterface,
     Reporter,
-    SlotValue,
     TypeSolveError,
     bind_type_variables,
     combo_choices_json_bytes,
@@ -88,7 +82,11 @@ from dinkster_schema import (
     use_capture_budget,
     use_reporter,
 )
+from dinkster_schema.body import all_rows
+from dinkster_schema.flatten import described_ids, flatten_body
 from dinkster_schema.media import media_diagnostics
+from dinkster_schema.model import Output
+from dinkster_schema.nest import OutputShapeError, flatten_outputs, nest_inputs
 from dinkster_schema.reporting import (
     capture_image_documents,
     capture_preview_artifacts,
@@ -130,34 +128,6 @@ async def _run_sync(call: Callable[..., object], /, *args: object, **kwargs: obj
             task.exception()
         raise asyncio.CancelledError
     return task.result()
-
-
-def _is_combo_choice(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> bool:
-    """Whether a materialized choice path names a declared DynamicCombo.
-
-    Family member suffixes occupy one path segment but are document state,
-    not schema entries, so recurse past that wildcard segment. All option and
-    slot branches are searched because this is classification only; the
-    effective schema already records which branch is active.
-    """
-    if not parts:
-        return False
-    for entry in entries:
-        if entry.id != parts[0]:
-            continue
-        rest = parts[1:]
-        if isinstance(entry, DynamicComboSpec):
-            if not rest:
-                return True
-            return any(_is_combo_choice(option.inputs, rest) for option in entry.options)
-        if isinstance(entry, InputFamilySpec):
-            return len(rest) >= 2 and _is_combo_choice(entry.template, rest[1:])
-        if isinstance(entry, DynamicSlotSpec) and rest:
-            if _is_combo_choice(entry.inputs, rest):
-                return True
-            return any(_is_combo_choice(variant.inputs, rest) for variant in entry.variants or ())
-        return False
-    return False
 
 
 class InputCoercionError(Exception):
@@ -602,9 +572,7 @@ class InProcessWorker:
         # by the invocation, never the base schema (hazard H10).
         schema = invocation.effective_schema
 
-        skew = self._check_output_provenance(base_schema, invocation)
-        if skew is None:
-            skew = self._check_input_provenance(base_schema, invocation)
+        skew = self._check_body_provenance(base_schema, invocation)
         if skew is not None:
             return InvocationResult(
                 error=NodeError(
@@ -869,115 +837,100 @@ class InProcessWorker:
 
         return reporter, close
 
-    def _check_input_provenance(
-        self, base_schema: NodeSchema, invocation: Invocation
-    ) -> str | None:
+    def _check_body_provenance(self, base_schema: NodeSchema, invocation: Invocation) -> str | None:
+        """Flatten the body again from the run's recorded members and choices.
+
+        The worker knows neither link state nor the values of unrequested
+        inputs, so count and leader formulas are not worked out here; only the
+        descriptions of described rows are read, because they decide rows."""
         supplied = dict.fromkeys((*invocation.inputs, *invocation.connected_undemanded_inputs))
-        # Lazy demand changes availability order, not authored family order.
+        # Lazy demand changes the order inputs arrive in, not the run's member order.
         stored: dict[str, object] = {
             spec.id: None for spec in invocation.effective_schema.inputs if spec.id in supplied
         }
         stored.update((name, None) for name in supplied if name not in stored)
-        source_ids = {
-            family.count.input for family in base_schema.output_families if family.count is not None
-        }
-        if base_schema.output_descriptors is not None:
-            source_ids.add(base_schema.output_descriptors.input)
-        expressions = [
-            output.type for output in (*base_schema.outputs, *base_schema.output_families)
-        ]
-        while expressions:
-            expression = expressions.pop()
-            if (
-                expression.kind == "tuple_element"
-                and isinstance(expression.index, str)
-                and expression.index in invocation.inputs
-            ):
-                source_ids.add(expression.index)
-            if expression.element is not None:
-                expressions.append(expression.element)
-            expressions.extend(expression.elements)
+        # A tuple selector's stored index decides its output's type.
+        selectors: set[str] = set()
+        types = [row.type for row in all_rows(base_schema.body) if isinstance(row, Output)]
+        while types:
+            expr = types.pop()
+            if expr.kind == "tuple_element" and isinstance(expr.index, str):
+                selectors.add(expr.index)
+            if expr.element is not None:
+                types.append(expr.element)
+            types.extend(expr.elements)
         try:
-            for input_id in source_ids:
+            for input_id in described_ids(base_schema.body, invocation.inputs) | (
+                selectors & set(invocation.inputs)
+            ):
                 stored[input_id] = invocation.inputs[input_id].resolve()
             expected = elaborate(
                 base_schema,
                 stored,
                 dict(invocation.output_members),
                 dict(invocation.effective_schema.slot_choices),
-            )
-            # Host-derived menus and display metadata are not input authority.
-            matches = schema_signature(expected) == schema_signature(
-                replace(expected, inputs=invocation.effective_schema.inputs)
+                formulas=False,
             )
         except (KeyError, ValueError, UnresolvablePayload) as error:
             return f"schema skew: invalid authored inputs: {error}"
-        if not matches:
+        actual = invocation.effective_schema
+        # Host-derived menus and display metadata are not input authority.
+        if schema_signature(expected) != schema_signature(replace(expected, inputs=actual.inputs)):
             return "schema skew: input interface differs from worker projection"
+        if expected.outputs != actual.outputs:
+            return "schema skew: output interface differs from worker projection"
         admitted = {spec.id for spec in expected.inputs}
-        if any(
-            name not in admitted
-            for name in (*invocation.inputs, *invocation.connected_undemanded_inputs)
-        ):
+        if any(name not in admitted for name in supplied):
             return "schema skew: supplied input is absent from the effective interface"
         return None
 
-    def _check_output_provenance(
-        self, base_schema: NodeSchema, invocation: Invocation
-    ) -> str | None:
-        """Guard against engine/worker schema skew: the invocation's family
-        provenance, flattened, must produce exactly the dynamic outputs of the
-        effective schema (effective outputs minus this worker's static base
-        outputs). Membership is never re-derived by parsing output ids."""
-        if base_schema.output_descriptors is not None:
-            source_ids = {base_schema.output_descriptors.input}
-            source_ids.update(
-                family.count.input
-                for family in base_schema.output_families
-                if family.count is not None
-            )
-            stored: dict[str, object] = {
-                input_id: None
-                for input_id in (*invocation.inputs, *invocation.connected_undemanded_inputs)
-            }
-            try:
-                for input_id in source_ids:
-                    stored[input_id] = invocation.inputs[input_id].resolve()
-                expected = elaborate(
-                    base_schema,
-                    stored,
-                    dict(invocation.output_members),
-                    dict(invocation.effective_schema.slot_choices),
-                )
-            except (KeyError, ValueError, UnresolvablePayload) as error:
-                return f"schema skew: invalid stored output descriptors: {error}"
-            if expected.outputs != invocation.effective_schema.outputs:
-                return "schema skew: output descriptor interface differs from worker projection"
-            return None
-        provenance_families = {fid for fid, _ in invocation.output_members}
-        declared_families = {fam.id for fam in base_schema.output_families}
-        if provenance_families != declared_families:
-            return (
-                "schema skew: invocation output families "
-                f"{sorted(provenance_families)} != worker's declared "
-                f"{sorted(declared_families)}"
-            )
-        flattened: set[str] = set()
-        for fid, suffixes in invocation.output_members:
-            fam = base_schema.output_family(fid)
-            assert fam is not None  # checked above
-            flattened.update(fam.member_id(s) for s in suffixes)
-        static_ids = {out.id for out in base_schema.outputs}
-        effective_dynamic = {
-            out.id for out in invocation.effective_schema.outputs if out.id not in static_ids
-        }
-        if flattened != effective_dynamic:
-            return (
-                "schema skew: flattened output members "
-                f"{sorted(flattened)} != effective dynamic outputs "
-                f"{sorted(effective_dynamic)}"
-            )
-        return None
+    def _build_body_kwargs(
+        self,
+        base_schema: NodeSchema,
+        invocation: Invocation,
+        unwrap: Callable[[str, Value], object],
+        wants: Callable[[str], bool],
+    ) -> dict[str, object]:
+        """The body's tree of values: groups as members in the run's order,
+        a choice as its key and the chosen option's rows, a described row as
+        a mapping from entry id to value."""
+        effective = invocation.effective_schema
+        values: dict[str, object] = {}
+        for input_id, value in invocation.inputs.items():
+            if wants(input_id.split(".", 1)[0]):
+                values[input_id] = unwrap(input_id, value)
+        for input_id in invocation.connected_undemanded_inputs:
+            spec = effective.input(input_id)
+            values[input_id] = (None,) if spec is not None and spec.type.kind == "list" else None
+        stored: dict[str, object] = {spec.id: None for spec in effective.inputs}
+        for input_id in described_ids(base_schema.body, invocation.inputs):
+            stored[input_id] = invocation.inputs[input_id].resolve()
+        flat = flatten_body(
+            base_schema.body,
+            stored,
+            dict(invocation.output_members),
+            dict(effective.slot_choices),
+            formulas=False,
+        )
+        kwargs = nest_inputs(
+            base_schema.body,
+            values,
+            dict(flat.members),
+            dict(effective.slot_choices),
+            {output.id for output in flat.outputs},
+        )
+        if base_schema.additional_inputs is not None or not base_schema.body:
+            # Inputs the body never declared arrive by their stored ids.
+            declared = {spec.id for spec in flat.inputs}
+            kwargs.update((name, value) for name, value in values.items() if name not in declared)
+        kwargs = {name: value for name, value in kwargs.items() if wants(name)}
+        if base_schema.execution_context:
+            if invocation.run_control is None:
+                raise InputCoercionError("node requires a live run execution context")
+            kwargs["execution_context"] = invocation.run_control
+        if base_schema.input_values:
+            kwargs["input_values"] = MappingProxyType(dict(invocation.inputs))
+        return kwargs
 
     def _unwrap(
         self,
@@ -987,7 +940,10 @@ class InProcessWorker:
         diagnostics: list[dict[str, object]] | None = None,
         media_inputs: dict[str, Value] | None = None,
     ) -> object:
-        obj = self._unwrap_value(invocation, input_id, value)
+        try:
+            obj = self._unwrap_value(invocation, input_id, value)
+        except UnresolvablePayload as exc:
+            raise InputCoercionError(f"input '{input_id}': {exc}") from exc
         spec = invocation.effective_schema.input(input_id)
         if spec is None or is_absent(value):
             return obj
@@ -1080,19 +1036,8 @@ class InProcessWorker:
         media_inputs: dict[str, Value] | None = None,
         decoded_inputs: frozenset[str] | None = None,
     ) -> dict[str, object]:
-        """Plain values for execute(), boundary-obliviously (hazard H9).
-
-        Static inputs arrive as ordinary kwargs. Input-family members are
-        grouped into one mapping per family, keyed by member suffix in
-        effective-interface (document) order - a node with family "operands"
-        receives ``operands={"x": ..., "y": ...}``. A dynamic slot arrives as
-        one SlotValue kwarg under the slot id: the connected value, the
-        active variant key (explicit dispatch), and the variant's dependents
-        under their LOCAL names; an optional slot with no stored choice is
-        simply not passed (declare a default). Nodes with output families
-        additionally receive the reserved ``output_spec`` parameter: an
-        OutputInterface built from the invocation's canonical provenance.
-        """
+        """Plain values for execute(), boundary-obliviously (hazard H9): the
+        body's tree of values, as ``_build_body_kwargs`` builds it."""
 
         def unwrap(input_id: str, value: Value) -> object:
             return self._unwrap(invocation, input_id, value, diagnostics, media_inputs)
@@ -1100,97 +1045,7 @@ class InProcessWorker:
         def wants(name: str) -> bool:
             return decoded_inputs is None or name in decoded_inputs
 
-        kwargs: dict[str, object] = {
-            fam.id: {} for fam in base_schema.input_families if wants(fam.id)
-        }
-        slot_choice = dict(invocation.effective_schema.slot_choices)
-        for choice_id, choice in slot_choice.items():
-            if wants(choice_id) and _is_combo_choice(
-                (*base_schema.input_families, *base_schema.combos, *base_schema.slots),
-                choice_id.split("."),
-            ):
-                # DynamicCombo choices are document state, not ordinary
-                # inputs. Compat wrappers need the active key under its
-                # materialized construct path to rebuild ComfyUI's nested
-                # submission dictionary. Top-level variant slots keep the
-                # established SlotValue calling convention below.
-                kwargs[choice_id] = choice
-        slot_socket: dict[str, object] = {}
-        slot_options: dict[str, dict[str, object]] = {
-            slot.id: {} for slot in base_schema.slots if slot.id in slot_choice and wants(slot.id)
-        }
-        for input_id, value in invocation.inputs.items():
-            owner = base_schema.slot_of_input(input_id)
-            if owner is not None:
-                slot, local = owner
-                if not wants(input_id if slot.variants is None else slot.id):
-                    continue
-                if slot.variants is None:
-                    kwargs[input_id] = unwrap(input_id, value)
-                    continue
-                assert slot.id in slot_options, (
-                    f"slot input {input_id!r} without a slot choice on the "
-                    "effective schema (engine/worker skew)"
-                )
-                if local is None:
-                    slot_socket[slot.id] = unwrap(input_id, value)
-                else:
-                    slot_options[slot.id][local] = unwrap(input_id, value)
-                continue
-            fam = base_schema.family_of_input(input_id)
-            if not wants(input_id if fam is None else fam.id):
-                continue
-            if fam is None:
-                kwargs[input_id] = unwrap(input_id, value)
-            else:
-                suffix = fam.member_suffix(input_id)
-                assert suffix is not None
-                members = kwargs[fam.id]
-                assert isinstance(members, dict)
-                members[suffix] = unwrap(input_id, value)
-        for slot_id, options in slot_options.items():
-            kwargs[slot_id] = SlotValue(
-                variant=slot_choice[slot_id],
-                value=slot_socket.get(slot_id),
-                options=options,
-            )
-        for input_id in invocation.connected_undemanded_inputs:
-            spec = invocation.effective_schema.input(input_id)
-            marker = (None,) if spec is not None and spec.type.kind == "list" else None
-            family = base_schema.family_of_input(input_id)
-            if not wants(input_id if family is None else family.id):
-                continue
-            if family is None:
-                kwargs[input_id] = marker
-            else:
-                suffix = family.member_suffix(input_id)
-                assert suffix is not None
-                members = kwargs[family.id]
-                assert isinstance(members, dict)
-                members[suffix] = marker
-        for family in base_schema.input_families:
-            if family.id not in kwargs:
-                continue
-            members = kwargs[family.id]
-            assert isinstance(members, dict)
-            ordered_members: dict[str, object] = {}
-            for spec in invocation.effective_schema.inputs:
-                suffix = family.member_suffix(spec.id)
-                if suffix is not None and suffix in members:
-                    ordered_members[suffix] = members[suffix]
-            kwargs[family.id] = ordered_members
-        if base_schema.output_families or base_schema.output_descriptors is not None:
-            kwargs["output_spec"] = OutputInterface(
-                members=invocation.output_members,
-                outputs=invocation.effective_schema.outputs,
-            )
-        if base_schema.execution_context:
-            if invocation.run_control is None:
-                raise InputCoercionError("node requires a live run execution context")
-            kwargs["execution_context"] = invocation.run_control
-        if base_schema.input_values:
-            kwargs["input_values"] = MappingProxyType(dict(invocation.inputs))
-        return kwargs
+        return self._build_body_kwargs(base_schema, invocation, unwrap, wants)
 
     def _wrap_outputs(
         self,
@@ -1249,26 +1104,16 @@ class InProcessWorker:
                 f"execute() must return a mapping keyed by output id, got {type(raw).__name__}"
             )
 
-        # Flatten family-grouped returns ({family_id: {suffix: value}}) into
-        # member output ids, then validate exactly against the elaborated
-        # schema - a wrong member set fails here, not downstream.
+        # Flatten the returned tree into output ids, then validate exactly
+        # against the elaborated schema - a wrong member set fails here, not
+        # downstream. Node returns are runtime data, checked at this boundary.
         base_schema = self._schemas[invocation.node_type]
-        flat: dict[str, object] = {}
-        # Node returns are runtime data: keys/values are whatever the node
-        # author produced, validated here at the contract boundary.
-        for key, value in cast("Mapping[object, object]", raw).items():
-            fam = base_schema.output_family(str(key))
-            if fam is not None:
-                if not isinstance(value, Mapping):
-                    return contract_error(
-                        f"output family '{key}' must be a mapping of member "
-                        f"suffix -> value, got {type(value).__name__}"
-                    )
-                for suffix, member_value in cast("Mapping[object, object]", value).items():
-                    flat[fam.member_id(str(suffix))] = member_value
-            else:
-                flat[str(key)] = value
-        raw = flat
+        if base_schema.body:
+            try:
+                raw = flatten_outputs(base_schema.body, cast("Mapping[str, object]", raw))
+            except OutputShapeError as error:
+                return contract_error(str(error))
+        raw = {str(key): value for key, value in cast("Mapping[object, object]", raw).items()}
 
         declared = {out.id for out in schema.outputs}
         returned = set(raw.keys())

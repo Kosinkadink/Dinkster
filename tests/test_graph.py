@@ -1,4 +1,7 @@
+import json
 from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
 import pytest
 from dinkster_graph import (
@@ -19,16 +22,17 @@ from dinkster_graph import (
 from dinkster_graph.residency import ResidentRoute, ResidentTopology
 from dinkster_schema import (
     ComboWidget,
+    Group,
+    Input,
     InputFamilyMapping,
-    InputFamilySpec,
-    InputSpec,
+    InputFamilyMember,
     MappingSource,
+    Named,
     Node,
     NodeSchema,
-    OutputCountSpec,
+    Numbered,
+    Output,
     OutputFamilyMapping,
-    OutputFamilySpec,
-    OutputSpec,
     ReplacementCase,
     ReplacementLink,
     ReplacementNode,
@@ -36,13 +40,14 @@ from dinkster_schema import (
     ReplacementRule,
     TypeExpr,
     build_schemas,
+    schema_from_wire,
 )
 from scaffold_nodes import SCAFFOLD_NODES
 
 SCHEMAS = build_schemas(SCAFFOLD_NODES)
 SCHEMAS["test.list_input"] = NodeSchema(
     node_type="test.list_input",
-    inputs=(InputSpec("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
+    body=(Input("list", TypeExpr.list_of(TypeExpr.variable("T"))),),
 )
 
 
@@ -50,9 +55,7 @@ SCHEMAS["test.list_input"] = NodeSchema(
 def test_resident_chain_requires_one_common_process(shared: bool) -> None:
     model = TypeExpr.concrete("custom.RESIDENT")
     schemas = {
-        name: NodeSchema(
-            name, inputs=(InputSpec("value", model),), outputs=(OutputSpec("out", model),)
-        )
+        name: NodeSchema(name, body=(Input("value", model), Output("out", model)))
         for name in ("source", "middle", "sink")
     }
     topology = ResidentTopology(
@@ -86,8 +89,8 @@ def test_resident_routes_follow_default_provider_and_worker_placement(
 ) -> None:
     model = TypeExpr.concrete("custom.RESIDENT")
     schemas = {
-        "source": NodeSchema("source", outputs=(OutputSpec("out", model),)),
-        "sink": NodeSchema("sink", inputs=(InputSpec("value", model),)),
+        "source": NodeSchema("source", body=(Output("out", model),)),
+        "sink": NodeSchema("sink", body=(Input("value", model),)),
     }
     topology = ResidentTopology(
         frozenset({"custom.RESIDENT"}),
@@ -122,8 +125,7 @@ def test_retired_node_refuses_to_silently_drop_live_connections(lost: str) -> No
     schemas = {
         "current": NodeSchema(
             "current",
-            inputs=(InputSpec("value", integer, default=99),),
-            outputs=(OutputSpec("value", integer),),
+            body=(Input("value", integer, default=99), Output("value", integer)),
             replacements=(
                 ReplacementRule(
                     "retired", (ReplacementCase.build("current", outputs={"value": "result"}),)
@@ -143,38 +145,6 @@ def test_retired_node_refuses_to_silently_drop_live_connections(lost: str) -> No
     with pytest.raises(ValueError, match="connection"):
         migrate_node_replacements(original, schemas)
     assert original == Graph(nodes)
-
-
-def test_replacement_materializes_count_outputs_for_primary_and_helper() -> None:
-    integer = TypeExpr.concrete("INT")
-    schemas = {
-        "current": NodeSchema(
-            "current",
-            inputs=(InputSpec("count", integer, default=2),),
-            output_families=(OutputFamilySpec("results", integer, count=OutputCountSpec("count")),),
-            replacements=(
-                ReplacementRule(
-                    "retired",
-                    (
-                        ReplacementCase.build(
-                            "current", nodes={"helper": ReplacementNode("helper")}
-                        ),
-                    ),
-                ),
-            ),
-        ),
-        "helper": NodeSchema(
-            "helper",
-            inputs=(InputSpec("count", integer, default=1),),
-            output_families=(OutputFamilySpec("extra", integer, count=OutputCountSpec("count")),),
-        ),
-    }
-    migrated = migrate_node_replacements(Graph({"old": GraphNode("retired")}), schemas)
-    for node_id, expected in (("old", {"results": ("0", "1")}), ("old:helper", {"extra": ("0",)})):
-        node = migrated.nodes[node_id]
-        assert isinstance(node, GraphNode)
-        assert node.output_members == expected
-    assert migrate_node_replacements(graph_from_wire(graph_to_wire(migrated)), schemas) == migrated
 
 
 def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connections() -> None:
@@ -201,12 +171,15 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
     schemas = {
         "current": NodeSchema(
             "current",
-            inputs=(InputSpec("kind", string), InputSpec("payload", string)),
-            input_families=(InputFamilySpec("kinds", (InputSpec("value", string),)),),
+            body=(
+                Input("kind", string),
+                Input("payload", string),
+                Group("kinds", value=Input("value", string), keys=Named(("a", "z"))),
+            ),
             replacements=(ReplacementRule("retired", (case, ReplacementCase.build("wrong"))),),
         ),
         "wrong": NodeSchema("wrong"),
-        "source": NodeSchema("source", outputs=(OutputSpec("value", string),)),
+        "source": NodeSchema("source", body=(Output("value", string),)),
     }
     graph = Graph(
         {
@@ -230,6 +203,147 @@ def test_replacement_guards_and_values_read_stored_slot_choices_alongside_connec
     assert list(node.inputs) == ["kind", "payload", "kinds.z", "kinds.a"]
 
 
+@pytest.mark.parametrize(("stored", "pick"), [(True, "b2"), (False, "b1")])
+def test_a_rule_naming_a_foreign_nodes_inputs_renames_them_and_moves_its_stored_value(
+    stored: bool, pick: str
+) -> None:
+    from dinkster_schema import ReplacementMigration
+    from dinkster_schema.replace import rule_from_wire, rule_to_wire
+
+    integer = TypeExpr.concrete("INT")
+    branches = {
+        "branch": InputFamilyMapping.from_members(
+            InputFamilyMember.build("b1", inputs={"value": MappingSource.copy("on_false")}),
+            InputFamilyMember.build("b2", inputs={"value": MappingSource.copy("on_true")}),
+        )
+    }
+    rule = ReplacementRule(
+        "ForeignSwitch",
+        tuple(
+            ReplacementCase.build(
+                "test.switch",
+                when=when,
+                inputs={"pick": source},
+                input_families=branches,
+                outputs={"result": "output"},
+            )
+            for when, source in (
+                (ReplacementPredicate.input_connected("switch"), MappingSource.link("switch")),
+                (ReplacementPredicate.value_equals("switch", True), MappingSource.constant("b2")),
+                (None, MappingSource.constant("b1")),
+            )
+        ),
+        migration=ReplacementMigration(("switch", "on_false", "on_true")),
+    )
+    assert rule_from_wire(json.loads(json.dumps(rule_to_wire(rule)))) == rule
+    schemas = {
+        "test.switch": NodeSchema(
+            "test.switch",
+            body=(
+                Input("pick", TypeExpr.union("BOOLEAN", "STRING"), required=False),
+                Group(
+                    "branch",
+                    value=Input("value", integer, required=False),
+                    keys=Named(("b1", "b2")),
+                    grows="button",
+                ),
+                Output("result", integer),
+            ),
+            replacements=(rule,),
+        ),
+        "source": NodeSchema("source", body=(Output("value", integer),)),
+        "sink": NodeSchema("sink", body=(Input("value", integer),)),
+    }
+    graph = Graph(
+        {
+            "a": GraphNode("source"),
+            "b": GraphNode("source"),
+            "old": GraphNode(
+                "ForeignSwitch",
+                {"switch": stored, "on_false": Link("a", "value"), "on_true": Link("b", "value")},
+            ),
+            "use": GraphNode("sink", {"value": Link("old", "output")}),
+        }
+    )
+    migrated = migrate_node_replacements(graph, schemas)
+    node = migrated.nodes["old"]
+    assert isinstance(node, GraphNode) and node.node_type == "test.switch"
+    # A plain pick on a union input carries its type; a button group keeps its members.
+    assert node.inputs == {
+        "pick": TypedLiteral("STRING", pick),
+        "branch.b1": Link("a", "value"),
+        "branch.b2": Link("b", "value"),
+    }
+    assert node.output_members == {"branch": ("b1", "b2")}
+    assert migrated.nodes["use"].inputs["value"] == Link("old", "result")
+    assert [d.code for d in validate(migrated, schemas, ["use"]) if d.severity == "error"] == []
+
+
+def test_a_copied_counted_output_group_keeps_each_wire_on_its_member_or_reports_it() -> None:
+    from dinkster_schema import Count, Formula, validate_replacement_references
+
+    integer = TypeExpr.concrete("INT")
+
+    def counted(group_id: str, count: str, start: int = 0) -> Group:
+        return Group(
+            group_id,
+            value=Output("v", integer),
+            keys=Numbered("", start=start),
+            grows=Count(Formula(count)),
+            max_members=8,
+        )
+
+    old = NodeSchema("old.node", body=(Input("n", integer, default=1), counted("results", "n")))
+    consumer = NodeSchema("use.node", body=(Input("x", integer), Output("y", integer)))
+
+    def target(count: MappingSource, start: int = 0) -> NodeSchema:
+        case = ReplacementCase.build(
+            "new.node",
+            inputs={"count": count},
+            output_families={"values": OutputFamilyMapping.copy("results")},
+        )
+        return NodeSchema(
+            "new.node",
+            body=(Input("count", integer, default=1), counted("values", "count", start)),
+            replacements=(ReplacementRule("old.node", (case,)),),
+        )
+
+    # Three members, not the default one; the consumer reads the third.
+    graph = Graph(
+        {
+            "old": GraphNode("old.node", {"n": 3}, output_members={"results": ("0", "1", "2")}),
+            "use": GraphNode("use.node", {"x": Link("old", "results.2")}),
+        }
+    )
+
+    def opened(new: NodeSchema) -> list[tuple[str, str | None]]:
+        schemas = {"new.node": new, "use.node": consumer}
+        migrated = migrate_node_replacements(graph, schemas)
+        assert migrated.nodes["use"].inputs["x"] == Link("old", "values.2")
+        return [
+            (d.code, d.node_id)
+            for d in validate(migrated, schemas, ["use"])
+            if d.severity == "error"
+        ]
+
+    same = target(MappingSource.copy("n"))
+    assert validate_replacement_references({"old.node": old, "new.node": same}) == ()
+    assert opened(same) == []
+    # Fewer members than the wires need: the wire stays and the node it feeds reports it.
+    fewer = target(MappingSource.constant(2))
+    assert validate_replacement_references({"old.node": old, "new.node": fewer}) == ()
+    assert opened(fewer) == [("dangling-output", "use")]
+    # Another naming would move the wire to another member: refused when the pack loads.
+    shifted = target(MappingSource.copy("n"), start=1)
+    problems = validate_replacement_references({"old.node": old, "new.node": shifted})
+    assert len(problems) == 1
+    assert problems[0].message.endswith(
+        "output group 'values' of new.node names its members differently from output group "
+        "'results' of old.node, so a copied wire would reach another member; give the two "
+        "groups the same naming"
+    )
+
+
 def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reopen() -> None:
     integer = TypeExpr.concrete("INT")
     case = ReplacementCase.build(
@@ -251,15 +365,14 @@ def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reo
     schemas = {
         "current": NodeSchema(
             "current",
-            outputs=(),
-            input_families=(InputFamilySpec("items", integer, member_prefix="n"),),
-            output_families=(OutputFamilySpec("results", integer),),
+            body=(
+                Group("items", value=Input("item", integer), keys=Numbered("n", start=0)),
+                Group("results", value=Output("result", integer), keys=Numbered("", start=0)),
+            ),
             replacements=(ReplacementRule("retired", (case, ReplacementCase.build("wrong"))),),
         ),
         "wrong": NodeSchema("wrong"),
-        "relay": NodeSchema(
-            "relay", inputs=(InputSpec("input", integer),), outputs=(OutputSpec("value", integer),)
-        ),
+        "relay": NodeSchema("relay", body=(Input("input", integer), Output("value", integer))),
     }
     body = Graph(
         {
@@ -299,6 +412,36 @@ def test_retired_family_node_keeps_order_links_helpers_and_region_exports_on_reo
     )
 
 
+SPREAD_GOLDEN = json.loads(
+    (Path(__file__).parent / "fixtures" / "replace_spread_v1.json").read_text(encoding="utf-8")
+)
+
+
+@pytest.mark.parametrize("case", SPREAD_GOLDEN["cases"], ids=lambda case: case["name"])
+def test_a_spread_turns_one_stored_list_into_group_members_in_order(
+    case: dict[str, Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    schemas = {wire["nodeType"]: schema_from_wire(wire) for wire in SPREAD_GOLDEN["schemas"]}
+    graph = Graph({"old": GraphNode(case["type"], dict(case["values"]))})
+    expect = case["expect"]
+    if "error" in expect:
+        with pytest.raises(ValueError) as raised:
+            migrate_node_replacements(graph, schemas)
+        assert expect["error"]["message"] in str(raised.value)
+        return
+    with caplog.at_level("WARNING", logger="dinkster_graph.migrate"):
+        node = migrate_node_replacements(graph, schemas).nodes["old"]
+    assert isinstance(node, GraphNode) and node.node_type == expect["type"]
+    (family,) = expect["members"]
+    in_group = {key: value for key, value in node.inputs.items() if key.startswith(family + ".")}
+    assert in_group == expect["values"]
+    members = list(dict.fromkeys(key.split(".")[1] for key in in_group))
+    assert members == expect["members"][family]
+    assert [record.getMessage() for record in caplog.records] == [
+        warning["message"] for warning in expect["warnings"]
+    ]
+
+
 STRING = TypeExpr.concrete("STRING")
 COMBO = TypeExpr.concrete("COMBO")
 
@@ -306,7 +449,7 @@ COMBO = TypeExpr.concrete("COMBO")
 class _StringSource(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(node_type="test.string_source", outputs=(OutputSpec("value", STRING),))
+        return NodeSchema(node_type="test.string_source", body=(Output("value", STRING),))
 
     @classmethod
     def execute(cls) -> Mapping[str, object]:
@@ -318,8 +461,10 @@ class _ComboRelayA(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_a",
-            inputs=(InputSpec("value", COMBO, widget=ComboWidget(options=("a", "b"))),),
-            outputs=(OutputSpec("value", COMBO),),
+            body=(
+                Input("value", COMBO, widget=ComboWidget(options=("a", "b"))),
+                Output("value", COMBO),
+            ),
         )
 
     @classmethod
@@ -332,8 +477,10 @@ class _ComboRelayB(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_b",
-            inputs=(InputSpec("value", COMBO, widget=ComboWidget(options=("x", "y"))),),
-            outputs=(OutputSpec("value", COMBO),),
+            body=(
+                Input("value", COMBO, widget=ComboWidget(options=("x", "y"))),
+                Output("value", COMBO),
+            ),
         )
 
     @classmethod
@@ -344,7 +491,7 @@ class _ComboRelayB(Node):
 class _StringSink(Node):
     @classmethod
     def define_schema(cls) -> NodeSchema:
-        return NodeSchema(node_type="test.string_sink", inputs=(InputSpec("value", STRING),))
+        return NodeSchema(node_type="test.string_sink", body=(Input("value", STRING),))
 
 
 class _AcceptsComboOrString(Node):
@@ -352,7 +499,7 @@ class _AcceptsComboOrString(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_union",
-            inputs=(InputSpec("value", TypeExpr.union("COMBO", "STRING")),),
+            body=(Input("value", TypeExpr.union("COMBO", "STRING")),),
         )
 
 
@@ -361,7 +508,7 @@ class _AcceptsAnything(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.combo_wildcard",
-            inputs=(InputSpec("value", TypeExpr.wildcard()),),
+            body=(Input("value", TypeExpr.wildcard()),),
         )
 
 
@@ -455,7 +602,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.string_list_source",
-                outputs=(OutputSpec("values", TypeExpr.list_of(STRING)),),
+                body=(Output("values", TypeExpr.list_of(STRING)),),
             )
 
     class ComboListSink(Node):
@@ -463,7 +610,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_list_sink",
-                inputs=(InputSpec("values", TypeExpr.list_of(COMBO)),),
+                body=(Input("values", TypeExpr.list_of(COMBO)),),
             )
 
     class ComboListSource(Node):
@@ -471,7 +618,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_list_source",
-                outputs=(OutputSpec("values", TypeExpr.list_of(COMBO)),),
+                body=(Output("values", TypeExpr.list_of(COMBO)),),
             )
 
     class StringListSink(Node):
@@ -479,7 +626,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.string_list_sink",
-                inputs=(InputSpec("values", TypeExpr.list_of(STRING)),),
+                body=(Input("values", TypeExpr.list_of(STRING)),),
             )
 
     class ComboScalarSink(Node):
@@ -487,7 +634,7 @@ def test_combo_boundary_is_hard_both_directions_and_inside_lists() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.combo_scalar_sink",
-                inputs=(InputSpec("value", COMBO),),
+                body=(Input("value", COMBO),),
             )
 
     list_schemas = build_schemas(
@@ -553,7 +700,7 @@ def test_primitive_literal_payload_matches_declared_type(
     type_id: str, value: object, valid: bool, stamped: bool
 ) -> None:
     schema = NodeSchema(
-        node_type="test.literal", inputs=(InputSpec("value", TypeExpr.concrete(type_id)),)
+        node_type="test.literal", body=(Input("value", TypeExpr.concrete(type_id)),)
     )
     graph = Graph(
         nodes={
@@ -574,7 +721,7 @@ def test_primitive_literal_payload_matches_declared_type(
 def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
     schema = NodeSchema(
         node_type="test.literal",
-        inputs=(InputSpec("value", TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("INT")))),),
+        body=(Input("value", TypeExpr.list_of(TypeExpr.list_of(TypeExpr.concrete("INT")))),),
     )
     for value in ([[2, True]], TypedLiteral("list<list<INT>>", [[2, True]])):
         graph = Graph(nodes={"n": GraphNode("test.literal", {"value": value})})
@@ -586,9 +733,7 @@ def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
             ["n"],
         )
     )
-    scalar = NodeSchema(
-        node_type="test.scalar", inputs=(InputSpec("value", TypeExpr.concrete("FLOAT")),)
-    )
+    scalar = NodeSchema(node_type="test.scalar", body=(Input("value", TypeExpr.concrete("FLOAT")),))
     assert has_errors(
         validate(
             Graph(
@@ -610,15 +755,16 @@ def test_nested_list_and_stamp_cannot_hide_invalid_primitive_literal() -> None:
         (TypedLiteral("list<INT>", 7), "literal-shape"),
     ),
 )
+@pytest.mark.parametrize("in_body", (False, True))
 def test_authored_inputs_use_ordinary_typed_literal_admission(
-    extra: object, expected_code: str | None
+    extra: object, expected_code: str | None, in_body: bool
 ) -> None:
+    declared = (Input("choice", STRING),)
+    wildcard = TypeExpr.wildcard()
     schemas = {
-        "test.authored": NodeSchema(
-            node_type="test.authored",
-            inputs=(InputSpec("choice", STRING),),
-            additional_inputs=TypeExpr.wildcard(),
-        )
+        "test.authored": NodeSchema("test.authored", body=declared, additional_inputs=wildcard)
+        if in_body
+        else NodeSchema("test.authored", body=(*declared,), additional_inputs=wildcard)
     }
     graph = Graph(
         nodes={
@@ -708,11 +854,13 @@ def test_loop_boundary_diagnostics_are_structural(nodes, targets, expected, insi
     schemas = {
         kind: NodeSchema(
             kind,
-            inputs=tuple(
-                InputSpec(name, TypeExpr.wildcard(), required=False)
-                for name in ("x", "y", "accumulate")
+            body=(
+                *tuple(
+                    Input(name, TypeExpr.wildcard(), required=False)
+                    for name in ("x", "y", "accumulate")
+                ),
+                Output("value", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
         )
         for kind in ("dinkster.utilities.start_loop", "dinkster.utilities.end_loop", "relay")
     }

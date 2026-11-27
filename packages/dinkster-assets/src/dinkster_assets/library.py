@@ -18,6 +18,7 @@ import importlib
 import json
 import mimetypes
 import os
+import stat
 import threading
 import time
 from collections.abc import Callable, Generator, Iterable, Mapping
@@ -233,6 +234,88 @@ class LocalAssetLibrary:
         snapshot must point its IndexedAssetResolver at."""
         return self._index_path
 
+    def folder_size(self, *, deadline: float) -> int | None:
+        """Observe logical file bytes without reading contents. Run off-loop.
+
+        Hidden/ignored files, partial downloads, the index and child symlinks
+        are excluded. Each regular pathname counts once, including hardlinks.
+        A failed or budget-limited traversal never reports a partial total.
+        """
+        try:
+            root = self._root.resolve(strict=True)
+            original = root.stat()
+            visited = 0
+            descriptor_reads = os.scandir in os.supports_fd and os.open in os.supports_dir_fd
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+
+            def read(directory: Path, descriptor: int | None) -> int | None:
+                nonlocal visited
+                if (
+                    time.monotonic() >= deadline
+                    or len(directory.relative_to(root).parts) >= 64
+                    or directory.resolve(strict=True) != directory
+                ):
+                    return None
+                before = directory.stat(follow_symlinks=False)
+                if not stat.S_ISDIR(before.st_mode) or (
+                    descriptor is not None and not os.path.samestat(before, os.fstat(descriptor))
+                ):
+                    return None
+                total = 0
+                with os.scandir(descriptor if descriptor is not None else directory) as entries:
+                    for entry in entries:
+                        visited += 1
+                        if visited > 100_000 or time.monotonic() >= deadline:
+                            return None
+                        member = directory / entry.name
+                        relative = member.relative_to(root).as_posix()
+                        if (
+                            entry.name.startswith(".")
+                            or self._ignore.matches(relative, entry.name)
+                            or member.suffix.lower() in PARTIAL_DOWNLOAD_EXTENSIONS
+                            or member == self._index_path
+                        ):
+                            continue
+                        metadata = entry.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(metadata.st_mode) or getattr(
+                            metadata, "st_file_attributes", 0
+                        ) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0):
+                            continue
+                        if stat.S_ISDIR(metadata.st_mode):
+                            child = (
+                                os.open(entry.name, flags, dir_fd=descriptor)
+                                if descriptor is not None
+                                else None
+                            )
+                            try:
+                                size = read(member, child)
+                            finally:
+                                if child is not None:
+                                    os.close(child)
+                            if size is None:
+                                return None
+                            total += size
+                        elif stat.S_ISREG(metadata.st_mode):
+                            total += metadata.st_size
+                if directory.resolve(strict=True) != directory or not os.path.samestat(
+                    before, directory.stat(follow_symlinks=False)
+                ):
+                    return None
+                return total
+
+            descriptor = os.open(root, flags) if descriptor_reads else None
+            try:
+                total = read(root, descriptor)
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+            current = self._root.stat()
+            if (current.st_dev, current.st_ino) != (original.st_dev, original.st_ino):
+                return None
+            return total
+        except (OSError, RuntimeError):
+            return None
+
     def refresh_index(self) -> int:
         """Load a helper-published catalog without scanning or hashing files."""
         index = {
@@ -268,6 +351,7 @@ class LocalAssetLibrary:
                         digest=digest,
                         size=metadata.st_size,
                         media_type=_guess_media_type(path),
+                        modified_at=metadata.st_mtime,
                     )
                 )
                 paths.setdefault(digest, path)
@@ -298,7 +382,11 @@ class LocalAssetLibrary:
         # Just-written files carry known digests in the writes sidecar;
         # absorbing them here means a scan right after a save costs a
         # stat, not a rehash.
-        index.update(load_write_records(self._root))
+        index.update(
+            (relative, row)
+            for relative, row in load_write_records(self._root).items()
+            if not self._ignore.matches(relative, Path(relative).name)
+        )
         candidates: list[tuple[Path, str, os.stat_result]] = []
         for path in sorted(self._root.rglob("*")):
             if not path.is_file() or path.name.startswith("."):
@@ -398,6 +486,7 @@ class LocalAssetLibrary:
                     digest=digest,
                     size=stat.st_size,
                     media_type=_guess_media_type(path),
+                    modified_at=stat.st_mtime,
                 )
             )
             fresh_paths_by_digest.setdefault(digest, path)
@@ -429,7 +518,7 @@ class LocalAssetLibrary:
                     },
                     index.get(relative),
                 )
-            self._publish_entry(path, relative, stat.st_size, digest, record)
+            self._publish_entry(path, relative, stat.st_size, digest, record, stat.st_mtime)
             files_done += 1
             bytes_done += stat.st_size
             report()
@@ -445,6 +534,7 @@ class LocalAssetLibrary:
         size: int,
         digest: str,
         record: AssetVerificationRecord | None,
+        modified_at: float,
     ) -> None:
         with self._lock:
             self._catalog.add(
@@ -453,6 +543,7 @@ class LocalAssetLibrary:
                     digest=digest,
                     size=size,
                     media_type=_guess_media_type(path),
+                    modified_at=modified_at,
                 )
             )
             self._paths_by_digest.setdefault(digest, path)
@@ -528,7 +619,7 @@ class LocalAssetLibrary:
                 with self._lock:
                     self._current_index = index
             with self._lock:
-                self._publish_entry(path, relative, stat.st_size, digest, record)
+                self._publish_entry(path, relative, stat.st_size, digest, record, stat.st_mtime)
                 self._paths_by_digest[digest] = path
                 self._resolutions_by_digest[digest] = AssetResolution(path, record)
                 entry = self._catalog.get(f"{self._namespace}/{relative}")
@@ -603,6 +694,8 @@ class LocalAssetLibrary:
         """Publish valid writer-sidecar rows into the live catalog."""
         for relative, row in load_write_records(self._root).items():
             path = self._root / relative
+            if self._ignore.matches(relative, path.name):
+                continue
             try:
                 stat = path.stat()
             except OSError:
@@ -618,7 +711,7 @@ class LocalAssetLibrary:
             record = AssetVerificationRecord.from_json(digest, row.get("verification"))
             if record is not None and not record.matches(path):
                 continue
-            self._publish_entry(path, relative, size, digest, record)
+            self._publish_entry(path, relative, size, digest, record, stat.st_mtime)
 
     def entries(self) -> tuple[AssetEntry, ...]:
         self.refresh_writes()
@@ -676,7 +769,11 @@ class LocalAssetLibrary:
             return {}
         if not isinstance(loaded, dict):
             return {}
-        return {str(key): val for key, val in cast("dict[object, object]", loaded).items()}
+        return {
+            str(key): val
+            for key, val in cast("dict[object, object]", loaded).items()
+            if not self._ignore.matches(str(key), Path(str(key)).name)
+        }
 
     def _save_index(
         self, index: dict[str, dict[str, object]], *, only_if_missing: bool = False
@@ -764,6 +861,7 @@ class IndexedAssetResolver:
                         digest=digest,
                         size=size,
                         media_type=_guess_media_type(Path(str(relative))),
+                        modified_at=mtime / 1_000_000_000,
                     )
 
     def ref(self, relative: str) -> AssetRef:

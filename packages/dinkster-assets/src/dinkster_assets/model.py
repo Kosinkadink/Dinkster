@@ -76,37 +76,49 @@ def model_visibility_ids(path: Path, digest: str = "") -> tuple[str, ...]:
     return (require_digest(digest), local) if digest else (local,)
 
 
-def model_is_hidden(path: Path | None = None, digest: str = "") -> bool:
+def hidden_model_identities(path: Path | None = None, digest: str = "") -> tuple[str, ...]:
     context = current_asset_folders()
     if context is None or not context.hidden_models:
-        return False
+        return ()
     if digest in context.hidden_models:
-        return True
+        return (digest,)
     if path is None:
-        return False
+        return ()
     try:
-        return bool(set(context.hidden_models).intersection(model_visibility_ids(path, digest)))
+        return tuple(
+            identity
+            for identity in model_visibility_ids(path, digest)
+            if identity in context.hidden_models
+        )
     except (OSError, RuntimeError):
-        return False
+        return ()
 
 
-def model_ref_is_hidden(ref: AssetRef | LocalAssetRef) -> bool:
+def model_is_hidden(path: Path | None = None, digest: str = "") -> bool:
+    return bool(hidden_model_identities(path, digest))
+
+
+def hidden_model_ref_identities(ref: AssetRef | LocalAssetRef) -> tuple[str, ...]:
     context = current_asset_folders()
     if context is None or not context.hidden_models:
-        return False
+        return ()
     if isinstance(ref, AssetRef):
-        if model_is_hidden(digest=ref.digest):
-            return True
+        if identities := hidden_model_identities(digest=ref.digest):
+            return identities
         if not ref.virtual_path:
-            return False
+            return ()
         with use_asset_folders(replace(context, hidden_models=())):
             if ref.virtual_path and isinstance(ref.resolver, AssetLocationResolver):
                 path = ref.resolver.resolve_location(ref.virtual_path, ref.digest)
             else:
                 path = ref.resolver.resolve(ref.digest) if ref.resolver is not None else None
-        return model_is_hidden(path, ref.digest)
+        return hidden_model_identities(path, ref.digest)
     location = ref.resolver.resolve_local(ref.binding) if ref.resolver is not None else None
-    return location is not None and model_is_hidden(location[0])
+    return hidden_model_identities(location[0]) if location is not None else ()
+
+
+def model_ref_is_hidden(ref: AssetRef | LocalAssetRef) -> bool:
+    return bool(hidden_model_ref_identities(ref))
 
 
 @runtime_checkable

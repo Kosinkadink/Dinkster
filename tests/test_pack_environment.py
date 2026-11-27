@@ -1483,7 +1483,7 @@ def test_public_inference_admission_records_members_and_node_refusals(tmp_path: 
             + ("[pack.sandbox]\nwritable-mounts=true\n" if name == "writable" else "")
         )
         (root / f"{module}.py").write_text(
-            f'''from dinkster_schema import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr
+            f'''from dinkster_schema import Node, NodeSchema, Input, Output, TypeExpr
 
 def register_types(registry):
     from dinkster_values import register_resident_type
@@ -1493,9 +1493,9 @@ class Touch(Node):
     @classmethod
     def define_schema(cls):
         return NodeSchema(node_type="{module}.touch",
-            inputs=(InputSpec("state", TypeExpr.list_of(TypeExpr.concrete("owner.STATE")),
-                              lazy={name == "plain"}),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),))
+            body=(Input("state", TypeExpr.list_of(TypeExpr.concrete("owner.STATE")),
+                              lazy={name == "plain"}),
+            Output("value", TypeExpr.concrete("INT")),))
     @classmethod
     def execute(cls, state):
         return cls.outputs(value=state[0]["weight"] * 3)
@@ -1503,8 +1503,8 @@ class Touch(Node):
 class Plain(Node):
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type="{module}.plain", inputs=(),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),))
+        return NodeSchema(node_type="{module}.plain",
+            body=(Output("value", TypeExpr.concrete("INT")),))
     @classmethod
     def execute(cls):
         return cls.outputs(value=17)
@@ -1676,7 +1676,7 @@ def test_generation_admits_multipart_pack_atomically_and_runs_selected_parts(
         root.mkdir()
         (root / f"{name}_nodes.py").write_text(
             """import os
-from dinkster_schema import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr
+from dinkster_schema import Node, NodeSchema, Input, Output, TypeExpr
 from dinkster_values import register_resident_type
 STATE = TypeExpr.concrete("owner.STATE")
 INT = TypeExpr.concrete("INT")
@@ -1684,8 +1684,8 @@ def register_types(registry): register_resident_type(registry, "owner.STATE")
 class Source(Node):
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type="owner.source", outputs=(
-            OutputSpec("state", STATE), OutputSpec("pid", INT)))
+        return NodeSchema(node_type="owner.source", body=(
+            Output("state", STATE), Output("pid", INT)))
     @classmethod
     def execute(cls): return cls.outputs(state={"weight": 7}, pid=os.getpid())
 class Touch(Node):
@@ -1693,9 +1693,9 @@ class Touch(Node):
     node_type = "helper.touch"
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type=cls.node_type, inputs=(
-            InputSpec("state", STATE), InputSpec("plain", INT)), outputs=(
-            OutputSpec("value", INT), OutputSpec("pid", INT)))
+        return NodeSchema(node_type=cls.node_type, body=(
+            Input("state", STATE), Input("plain", INT),
+            Output("value", INT), Output("pid", INT)))
     @classmethod
     def execute(cls, state, plain):
         return cls.outputs(value=state["weight"] * cls.factor + plain, pid=os.getpid())
@@ -1705,8 +1705,8 @@ class Patch(Touch):
 class Plain(Node):
     @classmethod
     def define_schema(cls):
-        return NodeSchema(node_type="helper.plain", outputs=(
-            OutputSpec("value", INT), OutputSpec("pid", INT)))
+        return NodeSchema(node_type="helper.plain", body=(
+            Output("value", INT), Output("pid", INT)))
     @classmethod
     def execute(cls): return cls.outputs(value=11, pid=os.getpid())
 SOURCE = (Source,)

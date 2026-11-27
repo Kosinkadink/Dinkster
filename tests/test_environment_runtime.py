@@ -14,6 +14,7 @@ import venv
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 from urllib.request import Request, urlopen
 
 import pytest
@@ -908,6 +909,7 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                             "media/audio": 1024**3,
                             "media/video": 1024**3,
                             "media/model3d": 1024**3,
+                            "data/latent": 1024**3,
                         }
                     for streamed in (False, True):
                         for size in (63, 64, 65):
@@ -1006,6 +1008,59 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                 assert "stop all environment engines" in refused_scratch.stdout
             stop_engine(tmp_path, "main")
         if https:
+            disabled = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "dinkster_supervisor.environment",
+                    "--root",
+                    str(tmp_path),
+                    "uploads",
+                    "--off",
+                    "--yes",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            assert disabled.returncode == 0, disabled.stdout + disabled.stderr
+            saved = json.loads((tmp_path / "environment.json").read_text())
+            assert saved["noUploadSizeLimit"] is True
+            assert saved["uploadLimits"] == {"generic": 64, "media/image": image_limit}
+            start_engine(tmp_path, 1, "main", port)
+
+            async def probe_upload_policy(*, unlimited: bool) -> None:
+                context = ssl.create_default_context(cafile=str(certificate))
+                async with aiohttp.ClientSession(trust_env=False) as client:
+                    url = f"https://127.0.0.1:{port}"
+                    options = {"ssl": context, "server_hostname": "localhost"}
+                    async with client.get(url + "/api/nodes", **options) as response:
+                        assert response.status == 200
+                        limits = (await response.json())["dinkster"]["uploadLimits"]
+                        assert (limits is None) is unlimited
+                        if not unlimited:
+                            assert limits["generic"] == 16 * 1024**2
+                    async with client.get(url + "/api/assets/upload-limits", **options) as response:
+                        assert response.status == 200
+                        assert await response.json() == limits
+                    body = b"z" * 65
+                    async with client.post(url + "/api/assets", data=body, **options) as response:
+                        assert response.status in (200, 201)
+                    async with client.get(
+                        url + "/api/assets/" + digest_bytes(body), **options
+                    ) as response:
+                        assert await response.read() == body
+
+            asyncio.run(probe_upload_policy(unlimited=True))
+            stop_engine(tmp_path, "main")
+            project = tmp_path / "environment.json"
+            unconfigured = json.loads(project.read_text())
+            del unconfigured["uploadLimits"]
+            del unconfigured["noUploadSizeLimit"]
+            project.write_text(json.dumps(unconfigured))
+            start_engine(tmp_path, 1, "main", port)
+            asyncio.run(probe_upload_policy(unlimited=False))
+            stop_engine(tmp_path, "main")
             reset = subprocess.run(
                 [
                     sys.executable,
@@ -1070,12 +1125,12 @@ def test_managed_pack_selection_preserves_software_and_restores_ordinary_launch(
                 if index == 63
                 else ""
             )
-            + "from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr\n"
+            + "from dinkster_schema import Node, NodeSchema, Output, TypeExpr\n"
             "class Probe(Node):\n"
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             f"        return NodeSchema(node_type='shutdown{index}.probe', "
-            "outputs=(OutputSpec('value', TypeExpr.concrete('INT')),))\n"
+            "body=(Output('value', TypeExpr.concrete('INT')),))\n"
             "    @classmethod\n"
             "    def execute(cls):\n"
             f"        return cls.outputs(value={index})\n"
@@ -1329,6 +1384,7 @@ def test_pack_selection_refuses_invalid_settings_without_saving(
     [
         ({}, ["--generic", "0"]),
         ({}, ["--image", "-1"]),
+        ({}, ["--off", "--generic", "64"]),
         ([], []),
         ({"generic": True}, []),
         ({"media/image": "64"}, []),
@@ -2394,6 +2450,89 @@ def test_generations_keep_assignments_but_take_turns_on_the_library(tmp_path: Pa
             stop_engine(tmp_path, "main", generation=2)
     finally:
         stop_engine(tmp_path, "main", generation=1)
+
+
+def test_status_reader_does_not_abort_supervisor_state_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.environment_process import process_state
+
+    lifecycle = tmp_path / "lifecycle"
+    prepare_process(lifecycle, "concurrent-status")
+    opened, release = Event(), Event()
+    original_open = Path.open
+
+    def open_reader(path: Path, *args, **kwargs):
+        handle = original_open(path, *args, **kwargs)
+        if path == lifecycle / "state.json":
+            read = handle.read
+
+            def paused_read(*args, **kwargs):
+                opened.set()
+                if not release.wait(10):
+                    raise TimeoutError("status reader was not released")
+                return read(*args, **kwargs)
+
+            handle.read = paused_read
+        return handle
+
+    monkeypatch.setattr(Path, "open", open_reader)
+    command = [
+        sys.executable,
+        "-c",
+        """
+import sys
+from pathlib import Path
+from filelock import FileLock
+from dinkster_supervisor.environment_process import (
+    complete_process, process_lifetime, process_state,
+)
+
+# A lock-attempt barrier releases the real reader without a timing assumption.
+# Unfixed Windows reaches the final barrier instead, after the real replace fails.
+acquire = FileLock._acquire
+notified = False
+def attempt(self):
+    global notified
+    acquire(self)
+    if not notified:
+        notified = True
+        print('reader-can-close', flush=True)
+FileLock._acquire = attempt
+root = Path(sys.argv[1])
+try:
+    with process_lifetime(root, 'concurrent-status') as admitted:
+        assert admitted
+        assert process_state(root, 'concurrent-status') == 'running'
+        complete_process(root, 'concurrent-status', descendants=True)
+    assert process_state(root, 'concurrent-status') == 'stopped'
+finally:
+    print('finished', flush=True)
+""",
+        str(lifecycle),
+    ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reader = pool.submit(process_state, lifecycle, "concurrent-status")
+        try:
+            assert opened.wait(10), "status reader did not open the state file"
+            with subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            ) as child:
+                try:
+                    assert child.stdout is not None
+                    pool.submit(child.stdout.readline).result(timeout=10)
+                    release.set()
+                    stdout, stderr = child.communicate(timeout=10)
+                    assert child.returncode == 0, stdout + stderr
+                finally:
+                    release.set()
+                    if child.poll() is None:
+                        child.kill()
+                        child.wait(timeout=10)
+            assert reader.result(timeout=10) == "pending"
+        finally:
+            release.set()
+    assert process_state(lifecycle, "concurrent-status") == "stopped"
 
 
 def test_cancelled_delayed_supervisor_cannot_spawn_its_engine(tmp_path: Path) -> None:

@@ -67,7 +67,6 @@ from .latent_format import (
     LATENT_MEDIA_TYPE,
     LATENT_SCHEMA_KEY,
     LATENT_SUFFIX,
-    MAX_LATENT_DATA_BYTES,
     MAX_LATENT_HEADER_BYTES,
     MAX_LATENT_SCHEMA_BYTES,
     MAX_LATENT_STREAMS,
@@ -151,7 +150,13 @@ from .resolver_subscription import (
     ResolverSubscriptionStore,
     ResolverSuggestion,
 )
-from .save_target import SAVE_TARGET_TYPE, SaveTarget, register_save_target_type
+from .save_target import (
+    MOUNT_TYPE,
+    SAVE_TARGET_TYPE,
+    SaveTarget,
+    register_mount_type,
+    register_save_target_type,
+)
 from .selections import asset_selection_names, asset_selection_options, resolve_asset_selection
 from .transport import (
     DEFAULT_TRANSFER_STALL_TIMEOUT,
@@ -200,7 +205,6 @@ __all__ = [
     "LATENT_SUFFIX",
     "LatentAssetDescriptor",
     "LatentTensorDescriptor",
-    "MAX_LATENT_DATA_BYTES",
     "MAX_LATENT_HEADER_BYTES",
     "MAX_LATENT_SCHEMA_BYTES",
     "MAX_LATENT_STREAMS",
@@ -208,6 +212,7 @@ __all__ = [
     "MAX_TRANSPORT_CANDIDATES",
     "MOUNT_MODES",
     "MOUNT_NAMESPACE",
+    "MOUNT_TYPE",
     "PUBLIC_ACQUISITION_RECEIPT_VERSION",
     "RESOLVER_FETCH_TIMEOUT",
     "RESOLVER_INDEX_MAX_BYTES",
@@ -327,6 +332,7 @@ __all__ = [
     "rank_transport_candidates",
     "register_asset_type",
     "register_load3d_type",
+    "register_mount_type",
     "register_save_target_type",
     "register_audio_value_type",
     "bind_audio_value",

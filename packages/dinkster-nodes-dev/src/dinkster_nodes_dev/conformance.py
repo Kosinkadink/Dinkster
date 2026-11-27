@@ -16,10 +16,10 @@ from dinkster_api.v1 import (
     CORE_BOOLEAN,
     CORE_INT,
     AbsentOutput,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     report_preview,
     report_progress,
@@ -37,8 +37,7 @@ class ConformanceSource(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.source",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT),),
+            body=(Input("value", INT), Output("value", INT)),
         )
 
     @classmethod
@@ -53,8 +52,7 @@ class ConformanceSplit(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.split",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("left", INT), OutputSpec("right", INT)),
+            body=(Input("value", INT), Output("left", INT), Output("right", INT)),
         )
 
     @classmethod
@@ -67,8 +65,7 @@ class ConformanceAdd(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.add",
-            inputs=(InputSpec("value", INT), InputSpec("amount", INT, default=1)),
-            outputs=(OutputSpec("value", INT),),
+            body=(Input("value", INT), Input("amount", INT, default=1), Output("value", INT)),
         )
 
     @classmethod
@@ -81,8 +78,7 @@ class ConformanceEffect(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.effect",
-            inputs=(InputSpec("value", INT),),
-            outputs=(OutputSpec("value", INT),),
+            body=(Input("value", INT), Output("value", INT)),
             idempotent=False,
         )
 
@@ -96,8 +92,7 @@ class ConformanceMaybe(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.maybe",
-            inputs=(InputSpec("present", BOOLEAN),),
-            outputs=(OutputSpec("value", INT, optional=True),),
+            body=(Input("present", BOOLEAN), Output("value", INT, optional=True)),
         )
 
     @classmethod
@@ -110,11 +105,7 @@ class ConformanceOmit(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.omit",
-            inputs=(
-                InputSpec("base", INT),
-                InputSpec("optional", INT, required=False),
-            ),
-            outputs=(OutputSpec("value", INT),),
+            body=(Input("base", INT), Input("optional", INT, required=False), Output("value", INT)),
         )
 
     @classmethod
@@ -127,8 +118,7 @@ class ConformanceFailAbsent(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.fail-absent",
-            inputs=(InputSpec("value", INT, on_absent="fail"),),
-            outputs=(OutputSpec("value", INT),),
+            body=(Input("value", INT, on_absent="fail"), Output("value", INT)),
         )
 
     @classmethod
@@ -143,10 +133,10 @@ class ConformancePreview(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.preview",
-            inputs=(InputSpec("seed", INT),),
-            outputs=(
-                OutputSpec("image", IMAGE, preview=True),
-                OutputSpec("fallback", INT, preview=True),
+            body=(
+                Input("seed", INT),
+                Output("image", IMAGE, preview=True),
+                Output("fallback", INT, preview=True),
             ),
             emits_previews=True,
         )
@@ -166,7 +156,7 @@ class ConformanceFailure(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.failure",
-            outputs=(OutputSpec("value", INT),),
+            body=(Output("value", INT),),
         )
 
     @classmethod
@@ -179,7 +169,7 @@ class ConformanceCancellable(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="dev.conformance.cancellable",
-            outputs=(OutputSpec("value", INT),),
+            body=(Output("value", INT),),
             occupies=("conformance-resource",),
         )
 

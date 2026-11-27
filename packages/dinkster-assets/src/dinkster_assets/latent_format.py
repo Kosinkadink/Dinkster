@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import BinaryIO, Literal, cast
 
-from dinkster_values import GIBIBYTE, MEBIBYTE
+from dinkster_values import MEBIBYTE
 
 from .identity import AssetError, require_digest
 
@@ -20,7 +20,6 @@ LATENT_ASSET_KIND = "data/latent"
 LATENT_SCHEMA_KEY = "dinkster_latent_schema"
 MAX_LATENT_HEADER_BYTES = 4 * MEBIBYTE
 MAX_LATENT_SCHEMA_BYTES = 64 * 1024
-MAX_LATENT_DATA_BYTES = GIBIBYTE
 MAX_LATENT_STREAMS = 64
 MAX_VAE_HINT_BYTES = 8 * 1024
 _MAX_JSON_DEPTH = 1000
@@ -167,8 +166,8 @@ def parse_latent_asset(source: BinaryIO) -> LatentAssetDescriptor:
         elements = 1
         for dim in shape_ints:
             elements *= dim
-            if elements > MAX_LATENT_DATA_BYTES:
-                raise AssetError(f"tensor {name!r} shape is too large")
+            if elements > file_bytes:
+                raise AssetError(f"tensor {name!r} shape exceeds the file")
         expected = elements * _DTYPE_BYTES[cast(str, dtype)]
         if start < 0 or end < start or end - start != expected:
             raise AssetError(f"tensor {name!r} extent does not match shape")
@@ -181,7 +180,7 @@ def parse_latent_asset(source: BinaryIO) -> LatentAssetDescriptor:
         if start != cursor:
             raise AssetError(f"tensor {name!r} offsets are not exactly contiguous")
         cursor = end
-    if cursor > MAX_LATENT_DATA_BYTES or data_start + cursor != file_bytes:
+    if data_start + cursor != file_bytes:
         raise AssetError("tensor data extent does not exactly match the file")
 
     schema_raw = metadata.get(LATENT_SCHEMA_KEY)

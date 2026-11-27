@@ -19,10 +19,10 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import PressureSignal
 from dinkster_memory.resident import ResidentPool
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -78,8 +78,7 @@ class PinLoad(Node):
             node_type="pins.load",
             display_name="Load",
             category="test",
-            inputs=(InputSpec("name", STRING, default="m"),),
-            outputs=(OutputSpec("model", MODEL),),
+            body=(Input("name", STRING, default="m"), Output("model", MODEL)),
         )
 
     @classmethod
@@ -94,8 +93,7 @@ class PinUse(Node):
             node_type="pins.use",
             display_name="Use",
             category="test",
-            inputs=(InputSpec("model", MODEL),),
-            outputs=(OutputSpec("name", STRING),),
+            body=(Input("model", MODEL), Output("name", STRING)),
         )
 
     @classmethod
@@ -110,8 +108,7 @@ class PinView(Node):
             node_type="pins.view",
             display_name="View",
             category="test",
-            inputs=(InputSpec("primary", MODEL), InputSpec("additional", MODEL)),
-            outputs=(OutputSpec("model", MODEL),),
+            body=(Input("primary", MODEL), Input("additional", MODEL), Output("model", MODEL)),
         )
 
     @classmethod

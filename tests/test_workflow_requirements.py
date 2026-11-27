@@ -31,13 +31,16 @@ from dinkster_assets import (
 )
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
+from dinkster_nodes_dev import PACK_NODES
 from dinkster_registry.artifact import build_artifact
 from dinkster_registry.install import LockedPack, Lockfile
+from dinkster_schema import schema_signature
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import TypeRegistry
 from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
 
 from dinkster.mounts_api import MountService, add_mount_routes
+from dinkster.packs import template_assets
 from dinkster.project_requirements import load_project_requirements, plan_project_requirements
 from dinkster.workflow_requirements import (
     PackRequirement,
@@ -50,6 +53,7 @@ from dinkster.workflow_requirements import (
 from dinkster.workflow_requirements_api import add_workflow_requirement_routes
 from tests.async_scenarios import run_scenario
 from tests.platform_support import symlink_or_skip
+from tests.test_settings import settings
 
 
 def workflow() -> dict[str, object]:
@@ -112,6 +116,75 @@ def test_unstamped_workflow_does_not_guess_pack_namespace_or_versions() -> None:
     requirements = derive_workflow_requirements(document)
     assert requirements.packs == (PackRequirement("not-the-namespace", None, ("a.load",)),)
     assert requirements.unattributed_nodes == ("b.save",)
+
+
+@pytest.mark.parametrize("template_id", ["dev-gallery", "node-features"])
+def test_shipped_template_public_bytes_identify_requirements(
+    tmp_path: Path, template_id: str
+) -> None:
+    manifest = load_manifest(
+        Path(__file__).parents[1] / "packages/dinkster-nodes-dev/dinkster-pack.toml"
+    )
+    assert manifest.compatibility is not None
+    version = manifest.compatibility.version
+    store = LibraryStore(tmp_path / "library.sqlite")
+    library = ServerLibrary(AssetVault(tmp_path / "vault"), store)
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        app = create_app(
+            lambda listener: Engine(
+                schemas={},
+                registry=registry,
+                worker=InProcessWorker({}, registry),
+                cache=MemoryLRUCache(),
+                on_event=listener,
+            ),
+            {},
+            library=library,
+            settings=settings(features={"templates": {"enabled": True}}),
+            packs={
+                manifest.name: PackInfo(
+                    manifest.name,
+                    version=version,
+                    templates=template_assets(manifest.templates),
+                )
+            },
+        )
+        add_workflow_requirement_routes(
+            app, manifests=lambda: {manifest.name: manifest}, engine_variant="linux-cpu"
+        )
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get(f"/api/packs/{manifest.name}/templates/{template_id}")
+            assert response.status == 200
+            data = await response.read()
+            template = next(item for item in manifest.templates if item.id == template_id)
+            assert data == template.path.read_bytes()
+            assert template.digest == f"sha256:{hashlib.sha256(data).hexdigest()}"
+            assert response.headers["ETag"] == f'"{template.digest}"'
+            document = json.loads(data)
+            requirements = derive_workflow_requirements(document)
+            assert requirements.unattributed_nodes == ()
+            assert requirements.to_wire() == {
+                "packs": [{"pack": "dinkster-nodes-dev", "version": version}],
+                "assets": [],
+                "unattributedNodes": [],
+            }
+            schemas = {
+                schema.node_type: schema for schema in (node.define_schema() for node in PACK_NODES)
+            }
+            for node_type in requirements.packs[0].node_types:
+                assert document["environment"]["nodes"][node_type]["signature"] == schema_signature(
+                    schemas[node_type]
+                )
+            response = await client.post("/api/workflows/plan", json={"workflows": [document]})
+            assert response.status == 200
+            assert await response.json() == {"packs": [], "assets": [], "errors": []}
+
+    try:
+        run_scenario(scenario())
+    finally:
+        store.close()
 
 
 def test_project_union_preserves_workflows_and_explicit_additions() -> None:

@@ -9,7 +9,7 @@
 - Native `ImageCompare` previews each nonempty image batch independently without
   adding graph outputs. The existing two-output image comparison remains available.
 - Native `GLSLShader` renders four ordered image outputs with bounded image and
-  scalar/curve input families, source-order uniform assignment and custom sizing.
+  scalar/curve input groups, source-order uniform assignment and custom sizing.
   The existing prefixed shader remains available with its original member names.
 - Native `Painter` composites a granted uploaded RGBA image over the first base
   frame or a solid background, resizes paint with LANCZOS and returns the painted

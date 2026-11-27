@@ -23,6 +23,7 @@ import base64
 import pickle
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import Any, cast
 
 from dinkster_assets import AssetError
@@ -51,9 +52,11 @@ ENTRY_WIRE_VERSION = 3
 v1 (scalar) and v2 (recursive lists) remain readable as direct results.
 Older readers reject v3 rather than returning an incomplete expansion.
 Entries with saved-file associations use v4 so older readers miss instead
-of silently losing the association. Entries without artifacts remain v3."""
+of silently losing the association. Entries without artifacts remain v3.
+Entries that keep the warnings their node gave use v5, which also carries
+the artifacts list, so older readers miss instead of dropping them."""
 
-_ACCEPTED_VERSIONS = (1, 2, 3, 4)
+_ACCEPTED_VERSIONS = (1, 2, 3, 4, 5)
 
 BlobFetch = Callable[[str, int], Awaitable[bytes | None]]
 """Fetch verified blob bytes by (digest, expected size); None on miss."""
@@ -73,6 +76,7 @@ class EncodedValue:
     value: Value
     data: bytes | None
     children: tuple[EncodedValue, ...] = ()
+    storing: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,7 @@ class EncodedEntry:
     outputs: Mapping[str, EncodedValue]
     expansion: dict[str, object] | None
     artifacts: tuple[SavedArtifact, ...] = ()
+    warnings: tuple[Mapping[str, object], ...] = ()
 
 
 def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
@@ -95,14 +100,17 @@ def _encode_value(value: Value, registry: TypeRegistry) -> EncodedValue | None:
     payload = value.payload
     if isinstance(payload, EncodedPayload) and payload.type_id == value.type_id:
         data = payload.data
+        storing = payload.storing
     elif value.type_id in registry:
         try:
             data = registry.spec(value.type_id).encode(payload.load())
         except Exception:
             return None
+        storing = registry.storing_pack(value.type_id)
+        storing = None if storing == "core" else storing
     else:
         return None
-    return EncodedValue(value, data)
+    return EncodedValue(value, data, storing=storing)
 
 
 def encode_entry(outputs: Mapping[str, Value], registry: TypeRegistry) -> EncodedEntry | None:
@@ -141,9 +149,9 @@ def encode_entry(outputs: Mapping[str, Value], registry: TypeRegistry) -> Encode
             return result
 
         document = return_unit_to_document(expansion, encode_present)
-    return EncodedEntry(
-        encoded, document, outputs.artifacts if isinstance(outputs, CachedResult) else ()
-    )
+    if not isinstance(outputs, CachedResult):
+        return EncodedEntry(encoded, document)
+    return EncodedEntry(encoded, document, outputs.artifacts, outputs.warnings)
 
 
 def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, Any]:
@@ -159,6 +167,8 @@ def _value_to_wire(encoded: EncodedValue, store_blob: BlobStore) -> dict[str, An
     else:
         wire["digest"] = store_blob(encoded.data)
         wire["size"] = len(encoded.data)
+        if encoded.storing is not None:
+            wire["storing"] = encoded.storing
     return wire
 
 
@@ -175,9 +185,11 @@ def entry_to_wire(key: str, encoded: EncodedEntry, store_blob: BlobStore) -> dic
         "outputs": outputs,
         "expansion": encoded.expansion,
     }
-    if encoded.artifacts:
-        wire["version"] = 4
+    if encoded.artifacts or encoded.warnings:
+        wire["version"] = 5 if encoded.warnings else 4
         wire["artifacts"] = [asdict(item) for item in encoded.artifacts]
+    if encoded.warnings:
+        wire["warnings"] = [dict(item) for item in encoded.warnings]
     return wire
 
 
@@ -261,6 +273,10 @@ def manifest_asset_references(
     return frozenset(references)
 
 
+def _refuse_stored_value(message: str, _data: bytes) -> object:
+    raise ValueError(message)
+
+
 async def _value_from_wire(
     out_map: Mapping[str, Any], fetch_blob: BlobFetch, registry: TypeRegistry
 ) -> Value | None:
@@ -323,13 +339,19 @@ async def _value_from_wire(
     ):
         try:
             if spec.validate_encoded_buffer is not None:
-                spec.validate_encoded_buffer(memoryview(data), meta.entries)
+                spec.validate_encoded_buffer(memoryview(data), meta.codec_entries)
             else:
                 assert spec.validate_encoded is not None
-                spec.validate_encoded(data, meta.entries)
+                spec.validate_encoded(data, meta.codec_entries)
         except Exception:
             return None
+    raw_storing = out_map.get("storing")
+    storing = raw_storing if isinstance(raw_storing, str) else None
     decoder = spec.decode if spec is not None else None
+    if (mismatch := registry.storing_mismatch(type_id, storing)) is not None:
+        # The reader here decodes with another pack's codec: fail before the
+        # reading node runs instead of decoding foreign bytes.
+        decoder = partial(_refuse_stored_value, f"type {type_id!r}: {mismatch}")
     return Value(
         type_id=type_id,
         fingerprint=fingerprint,
@@ -339,12 +361,32 @@ async def _value_from_wire(
             data,
             decoder,
             transport="cas",
+            storing=storing,
         ),
     )
 
 
+def _warnings_from_wire(wire: Mapping[str, Any]) -> tuple[Mapping[str, object], ...]:
+    if wire.get("version") != 5:
+        return ()
+    raw = wire["warnings"]
+    if type(raw) is not list or not raw:
+        raise ValueError("cache warnings must be a non-empty list")
+    warnings: list[Mapping[str, object]] = []
+    for item in cast("list[object]", raw):
+        if not isinstance(item, dict):
+            raise ValueError("cache warning is malformed")
+        warning = cast("dict[str, object]", item)
+        if warning.get("level") != "warning" or not isinstance(warning.get("message"), str):
+            raise ValueError("cache warning is malformed")
+        warnings.append(warning)
+    return tuple(warnings)
+
+
 def _artifacts_from_wire(wire: Mapping[str, Any]) -> tuple[SavedArtifact, ...]:
-    raw_artifacts = wire["artifacts"] if wire.get("version") == 4 else wire.get("artifacts", [])
+    raw_artifacts = (
+        wire["artifacts"] if wire.get("version") in (4, 5) else wire.get("artifacts", [])
+    )
     if type(raw_artifacts) is not list:
         raise ValueError("cache artifacts must be a list")
     rows = cast("list[Any]", raw_artifacts)
@@ -368,10 +410,12 @@ async def entry_from_wire(
     as encoded envelopes that relay but do not load (hazard H2)."""
     if wire.get("version") not in _ACCEPTED_VERSIONS:
         return None
-    if wire.get("version") in (3, 4):
+    if wire.get("version") in (3, 4, 5):
         fields = {"version", "key", "outputs", "expansion"}
-        if wire.get("version") == 4:
+        if wire.get("version") in (4, 5):
             fields.add("artifacts")
+        if wire.get("version") == 5:
+            fields.add("warnings")
         if set(wire) != fields:
             return None
     elif "expansion" in wire:
@@ -389,11 +433,12 @@ async def entry_from_wire(
         entry[str(output_id)] = value
     try:
         artifacts = _artifacts_from_wire(wire)
+        warnings = _warnings_from_wire(wire)
     except (TypeError, ValueError, KeyError):
         return None
     document = wire.get("expansion")
     if document is None:
-        return CachedResult(entry, artifacts=artifacts)
+        return CachedResult(entry, artifacts=artifacts, warnings=warnings)
     used: set[str] = set()
 
     def decode_present(index: object, output_id: str) -> Value:
@@ -406,6 +451,6 @@ async def entry_from_wire(
         expansion = return_unit_from_document(document, decode_present)
         if not isinstance(expansion, ExpandedReturn) or used != set(entry):
             return None
-        return CachedResult(entry, expansion, artifacts)
+        return CachedResult(entry, expansion, artifacts, warnings)
     except (KeyError, TypeError, ValueError, RecursionError, OverflowError):
         return None

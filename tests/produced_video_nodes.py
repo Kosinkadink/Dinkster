@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import av
 import numpy as np
-from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import AUDIO_TYPE, VIDEO_TYPE, Node, NodeSchema, Output, TypeExpr
 from dinkster_assets import register_video_value_type, resolver_from_env
 from dinkster_values import TypeRegistry, video_from_source
 
@@ -24,8 +24,7 @@ class ProduceVideo(Node):
             node_type="vproducer.make",
             display_name="Produce Video",
             category="test",
-            inputs=(),
-            outputs=(OutputSpec("video", TypeExpr.concrete(VIDEO_TYPE)),),
+            body=(Output("video", TypeExpr.concrete(VIDEO_TYPE)),),
         )
 
     @classmethod
@@ -57,8 +56,7 @@ class ProduceAudio(Node):
             node_type="aproducer.make",
             display_name="Produce Audio",
             category="test",
-            inputs=(),
-            outputs=(OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE)),),
+            body=(Output("audio", TypeExpr.concrete(AUDIO_TYPE)),),
         )
 
     @classmethod

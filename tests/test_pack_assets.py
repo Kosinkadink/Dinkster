@@ -38,10 +38,10 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, TypedLiteral, graph_to_wire
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -332,8 +332,7 @@ class Lineart(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.lineart",
-            inputs=(InputSpec("x", INT),),
-            outputs=(OutputSpec("y", INT),),
+            body=(Input("x", INT), Output("y", INT)),
         )
 
     @classmethod
@@ -346,8 +345,7 @@ class Plain(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.plain",
-            inputs=(InputSpec("x", INT),),
-            outputs=(OutputSpec("y", INT),),
+            body=(Input("x", INT), Output("y", INT)),
         )
 
     @classmethod
@@ -360,11 +358,7 @@ class ProviderVision(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.provider_vision",
-            inputs=(
-                InputSpec("x", INT),
-                InputSpec("provider", TypeExpr.concrete("COMBO")),
-            ),
-            outputs=(OutputSpec("y", INT),),
+            body=(Input("x", INT), Input("provider", TypeExpr.concrete("COMBO")), Output("y", INT)),
         )
 
     @classmethod

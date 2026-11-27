@@ -278,6 +278,8 @@ def _history(source: sqlite3.Connection, target: sqlite3.Connection, engine: str
         }
         if "thumbnail" in row.keys() and row["thumbnail"] is not None:
             document["thumbnail"] = json.loads(row["thumbnail"])
+        if "workflow_name" in row.keys() and row["workflow_name"]:
+            document["workflowName"] = row["workflow_name"]
         for column, field in (
             ("started", "startedAt"),
             ("source_document", "sourceDocument"),

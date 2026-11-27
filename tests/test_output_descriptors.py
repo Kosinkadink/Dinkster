@@ -2,27 +2,27 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
 
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
-from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
+from dinkster_graph import Graph, GraphNode, Link, validate
 from dinkster_schema import (
-    InputFamilySpec,
-    InputSpec,
+    Described,
+    Group,
+    Input,
+    Item,
+    Members,
     Node,
     NodeSchema,
-    OutputDescriptorsSpec,
-    OutputInterface,
-    OutputSpec,
+    Numbered,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
-    output_descriptor_entries,
 )
 from dinkster_server import create_app
 from dinkster_values import TypeRegistry, register_core_types
@@ -42,48 +42,19 @@ class DeclaredValues(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "test.declared_values",
-            inputs=(InputSpec("entries", STRING),),
-            output_descriptors=OutputDescriptorsSpec(
-                "entries",
-                (OutputSpec("int", INT), OutputSpec("boolean", TypeExpr.concrete("BOOLEAN"))),
-                32,
+            body=(
+                Input("base", INT, default=5),
+                Described(
+                    "entries",
+                    (Output("int", INT), Output("boolean", TypeExpr.concrete("BOOLEAN"))),
+                    32,
+                ),
             ),
         )
 
     @classmethod
-    def execute(cls, *, entries: str, output_spec: OutputInterface) -> Mapping[str, object]:
-        return {
-            output.id: entry["value"]
-            for output, entry in zip(
-                output_spec.outputs, output_descriptor_entries(entries), strict=True
-            )
-        }
-
-
-class EntryFanOut(Node):
-    @classmethod
-    def define_schema(cls) -> NodeSchema:
-        return NodeSchema(
-            "test.entry_fan_out",
-            inputs=(
-                InputSpec("entries", STRING),
-                InputSpec("items", TypeExpr.list_of(TypeExpr.variable("T")), required=False),
-            ),
-            output_descriptors=OutputDescriptorsSpec(
-                "entries", (OutputSpec("int", INT), OutputSpec("string", STRING)), 512
-            ),
-        )
-
-    @classmethod
-    def execute(
-        cls, *, entries: str, output_spec: OutputInterface, items: Sequence[object] = ()
-    ) -> Mapping[str, object]:
-        return {
-            output.id: items[cast(int, entry["index"])] if "index" in entry else entry["value"]
-            for output, entry in zip(
-                output_spec.outputs, output_descriptor_entries(entries), strict=True
-            )
-        }
+    def execute(cls, *, base: int, entries: Mapping[str, object]) -> Mapping[str, object]:
+        return {"entries": dict.fromkeys(entries, base)}
 
 
 class AddInts(Node):
@@ -91,8 +62,7 @@ class AddInts(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "test.add_ints",
-            inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-            outputs=(OutputSpec("sum", INT),),
+            body=(Input("a", INT), Input("b", INT), Output("sum", INT)),
         )
 
     @classmethod
@@ -108,7 +78,7 @@ def document(*entries: Mapping[str, object]) -> str:
 def runtime() -> tuple[Engine, InProcessWorker, TypeRegistry]:
     registry = TypeRegistry()
     register_core_types(registry)
-    nodes = [DeclaredValues, EntryFanOut, AddInts]
+    nodes = [DeclaredValues, AddInts]
     worker = InProcessWorker(build_node_types(nodes), registry)
     engine = Engine(
         schemas=build_schemas(nodes), registry=registry, worker=worker, cache=MemoryLRUCache()
@@ -122,13 +92,15 @@ def test_declared_values_execute_links_and_cache_identity(
     engine, _, _ = runtime
 
     async def scenario() -> None:
-        entry = {"id": "stable", "name": "Answer", "type": "int", "value": 5}
+        entry = {"id": "stable", "label": "Answer", "kind": "int"}
 
         def graph() -> Graph:
             return Graph(
                 nodes={
                     "expression": GraphNode("test.declared_values", {"entries": document(entry)}),
-                    "sum": GraphNode("test.add_ints", {"a": Link("expression", "stable"), "b": 7}),
+                    "sum": GraphNode(
+                        "test.add_ints", {"a": Link("expression", "entries.stable"), "b": 7}
+                    ),
                 }
             )
 
@@ -136,65 +108,12 @@ def test_declared_values_execute_links_and_cache_identity(
         assert first.outputs["sum"]["sum"].resolve() == 12
         second = await engine.run(graph(), ["sum"])
         assert "expression" in second.cached
-        entry["name"] = "Renamed"
+        entry["label"] = "Renamed"
         renamed = await engine.run(graph(), ["sum"])
         assert "expression" in renamed.executed
         assert renamed.outputs["sum"]["sum"].resolve() == 12
         entry["id"] = "new_identity"
         diagnostics = validate(graph(), build_schemas([DeclaredValues, AddInts]), ["sum"])
-        assert any(item.severity == "error" for item in diagnostics)
-
-    run_scenario(scenario())
-
-
-def test_entry_list_fan_out_interface_depends_only_on_stored_descriptors(
-    runtime: tuple[Engine, InProcessWorker, TypeRegistry],
-) -> None:
-    engine, _, _ = runtime
-    selected = {"id": "selected", "name": "Selected", "type": "int", "index": 1}
-
-    def graph(entries: str, items: list[int]) -> Graph:
-        return Graph(
-            nodes={
-                "fan": GraphNode(
-                    "test.entry_fan_out",
-                    {"entries": entries, "items": TypedLiteral("list<INT>", items)},
-                ),
-                "sum": GraphNode(
-                    "test.add_ints",
-                    {"a": Link("fan", "selected"), "b": 7},
-                ),
-            }
-        )
-
-    async def scenario() -> None:
-        one_output = document(selected)
-        short = await engine.run(graph(one_output, [10, 20]), ["fan", "sum"])
-        long = await engine.run(graph(one_output, [0, 20, 30, 40]), ["fan", "sum"])
-        assert {key: value.resolve() for key, value in short.outputs["fan"].items()} == {
-            "selected": 20
-        }
-        assert {key: value.resolve() for key, value in long.outputs["fan"].items()} == {
-            "selected": 20
-        }
-        assert short.outputs["sum"]["sum"].resolve() == 27
-        assert long.outputs["sum"]["sum"].resolve() == 27
-
-        two_outputs = document(
-            selected,
-            {"id": "first", "name": "First", "type": "int", "index": 0},
-        )
-        expanded = await engine.run(graph(two_outputs, [5, 20, 30]), ["fan", "sum"])
-        assert {key: value.resolve() for key, value in expanded.outputs["fan"].items()} == {
-            "selected": 20,
-            "first": 5,
-        }
-
-        removed = graph(
-            document({"id": "first", "name": "First", "type": "int", "index": 0}),
-            [5, 20, 30],
-        )
-        diagnostics = validate(removed, build_schemas([EntryFanOut, AddInts]), ["sum"])
         assert "dangling-output" in {item.code for item in diagnostics}
 
     run_scenario(scenario())
@@ -209,19 +128,16 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
     )
     (tmp_path / "catalogdescriptors").mkdir()
     (tmp_path / "catalogdescriptors/__init__.py").write_text(
-        "from dinkster_api.v1 import (Node, NodeSchema, InputSpec, OutputSpec, "
-        "OutputDescriptorsSpec, TypeExpr, output_descriptor_entries)\n"
+        "from dinkster_api.v1 import Described, Node, NodeSchema, Output, TypeExpr\n"
         "class Expressions(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema('catalogdescriptors.math',\n"
-        "            inputs=(InputSpec('entries', TypeExpr.concrete('STRING')),),\n"
-        "            output_descriptors=OutputDescriptorsSpec('entries',\n"
-        "                (OutputSpec('int', TypeExpr.concrete('INT')),), 32))\n"
+        "            body=(Described('entries',\n"
+        "                (Output('int', TypeExpr.concrete('INT')),), 32),))\n"
         "    @classmethod\n"
-        "    def execute(cls, *, entries, output_spec):\n"
-        "        return {entry['id']: entry['value'] "
-        "for entry in output_descriptor_entries(entries)}\n"
+        "    def execute(cls, *, entries):\n"
+        "        return {'entries': dict.fromkeys(entries, 42)}\n"
         "NODES = [Expressions]\n"
     )
     report = diagnose(manifest)
@@ -246,7 +162,7 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
             async with TestClient(TestServer(app)) as client:
                 response = await client.get("/api/nodes")
                 assert response.status == 200
-                assert '"outputDescriptors"' in await response.text()
+                assert '"described"' in await response.text()
                 assert worker.cold and not worker.alive
             engine = composition.make_engine(lambda event: None)
             result = await engine.run(
@@ -258,9 +174,8 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
                                 "entries": document(
                                     {
                                         "id": "answer",
-                                        "name": "Answer",
-                                        "type": "int",
-                                        "value": 42,
+                                        "label": "Answer",
+                                        "kind": "int",
                                     }
                                 )
                             },
@@ -269,7 +184,7 @@ def test_persisted_descriptors_start_only_on_execution(tmp_path: Path, in_proces
                 ),
                 ["math"],
             )
-            assert result.outputs["math"]["answer"].resolve() == 42
+            assert result.outputs["math"]["entries.answer"].resolve() == 42
             assert worker.alive
         finally:
             await composer.close()
@@ -284,11 +199,15 @@ def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "test.lazy_descriptors",
-                inputs=(InputSpec("entries", STRING),),
-                input_families=(
-                    InputFamilySpec("values", (InputSpec("value", INT, lazy=True),), min_members=1),
+                body=(
+                    Group(
+                        "values",
+                        value=Input("value", INT, lazy=True),
+                        keys=Numbered(""),
+                        min_members=1,
+                    ),
+                    Described("entries", (Output("int", INT),), 1),
                 ),
-                output_descriptors=OutputDescriptorsSpec("entries", (OutputSpec("int", INT),), 1),
             )
 
         @classmethod
@@ -297,9 +216,9 @@ def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
 
         @classmethod
         def execute(
-            cls, *, entries: str, values: Mapping[str, object], output_spec: OutputInterface
+            cls, *, entries: Mapping[str, object], values: Members[Item]
         ) -> Mapping[str, object]:
-            return {output_spec.outputs[0].id: 42}
+            return {"entries": {"answer": 42}}
 
     registry = TypeRegistry()
     register_core_types(registry)
@@ -314,12 +233,37 @@ def test_descriptor_projection_retains_undemanded_lazy_family_members() -> None:
             "lazy": GraphNode(
                 "test.lazy_descriptors",
                 {
-                    "entries": document({"id": "answer", "name": "Answer", "type": "int"}),
-                    "values.a": Link("producer", "sum"),
+                    "entries": document({"id": "answer", "label": "Answer", "kind": "int"}),
+                    "values.1": Link("producer", "sum"),
                 },
             ),
         }
     )
     result = run_scenario(engine.run(graph, ["lazy"]))
-    assert result.outputs["lazy"]["answer"].resolve() == 42
+    assert result.outputs["lazy"]["entries.answer"].resolve() == 42
     assert "producer" not in result.executed
+
+
+def test_described_entries_reach_execute_in_the_description_order() -> None:
+    from dinkster_schema.nest import nest_inputs
+
+    description = json.dumps(
+        {
+            "entries": [
+                {"id": "zeta", "label": "Zeta", "kind": "number"},
+                {"id": "alpha", "label": "Alpha", "kind": "result"},
+                {"id": "mid", "label": "Mid", "kind": "number"},
+            ]
+        }
+    )
+    body = (Described("entries", (Input("number", INT), Output("result", INT)), 4),)
+    nested = nest_inputs(
+        body,
+        {"entries": description, "entries.zeta": 1, "entries.mid": 2},
+        {},
+        {},
+        {"entries.alpha"},
+    )
+    entries = nested["entries"]
+    assert isinstance(entries, dict)
+    assert list(entries.items()) == [("zeta", 1), ("alpha", None), ("mid", 2)]

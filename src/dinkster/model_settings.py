@@ -5,12 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
+import sys
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import cast
 
 from dinkster_assets import AssetError, MountDef, MountsError
+from dinkster_assets.kind import is_asset_kind
 from dinkster_assets.mounts import ModelFileSelection
 from dinkster_library import LibraryClient, LibraryError
 
@@ -27,9 +30,85 @@ MODEL_FOLDERS = {
     "model/upscaler": "upscale_models",
     "model/embedding": "embeddings",
     "model/clip-vision": "clip_vision",
+    "model/audio-encoder": "audio_encoders",
+    "model/background-removal": "background_removal",
+    "model/config": "configs",
+    "model/detection": "detection",
+    "model/diffusers": "diffusers",
+    "model/frame-interpolation": "frame_interpolation",
+    "model/geometry-estimation": "geometry_estimation",
+    "model/gligen": "gligen",
+    "model/latent-upscaler": "latent_upscale_models",
+    "model/optical-flow": "optical_flow",
+    "model/patch": "model_patches",
+    "model/style": "style_models",
+    "model/hypernetwork": "hypernetworks",
+    "model/photomaker": "photomaker",
+}
+
+MODEL_FOLDER_ALIASES = {
+    "clip": "model/text-encoder",
+    "unet": "model/diffusion",
 }
 
 FOLDER_MODES = frozenset({"always-on", "default-on", "opt-in"})
+
+
+def filesystem_space(path: Path) -> dict[str, object]:
+    """Observe a configured destination's filesystem, without creating missing folders."""
+    try:
+        resolved = path.resolve()
+        for candidate in (resolved, *resolved.parents):
+            try:
+                device = candidate.stat().st_dev
+                identity = f"device:{device}"
+                if sys.platform == "win32":
+                    import ctypes
+                    from ctypes import wintypes
+
+                    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                    kernel.GetDiskFreeSpaceExW.argtypes = (
+                        wintypes.LPCWSTR,
+                        ctypes.POINTER(ctypes.c_ulonglong),
+                        ctypes.c_void_p,
+                        ctypes.c_void_p,
+                    )
+                    kernel.GetDiskFreeSpaceExW.restype = wintypes.BOOL
+                    available = ctypes.c_ulonglong()
+                    if not kernel.GetDiskFreeSpaceExW(
+                        str(candidate), ctypes.byref(available), None, None
+                    ):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    free = available.value
+                else:
+                    if sys.platform == "linux":
+                        import errno
+                        import fcntl
+
+                        descriptor = os.open(candidate, os.O_RDONLY | os.O_DIRECTORY)
+                        try:
+                            info = bytearray(1024)
+                            try:
+                                # BTRFS_IOC_FS_INFO identifies the pool, unlike subvolume st_dev.
+                                fcntl.ioctl(descriptor, 0x8400941F, info, True)
+                            except OSError as error:
+                                if error.errno != errno.ENOTTY:
+                                    raise
+                            else:
+                                identity = f"btrfs:{info[16:32].hex()}"
+                        finally:
+                            os.close(descriptor)
+                    free = shutil.disk_usage(candidate).free
+            except FileNotFoundError:
+                continue
+            return {
+                "status": "available",
+                "filesystem": hashlib.sha256(identity.encode("ascii")).hexdigest(),
+                "freeBytes": free,
+            }
+    except (OSError, RuntimeError):
+        pass
+    return {"status": "unavailable"}
 
 
 class ModelSettingsConflict(MountsError):
@@ -55,6 +134,17 @@ class ModelLocation:
                     kind=self.kind,
                 ),
             )
+        folders = dict(MODEL_FOLDERS)
+        # Unrecognized folders use the open kind vocabulary: custom_model -> model/custom-model.
+        try:
+            children = sorted(self.path.iterdir())
+        except OSError:
+            children = []
+        known = {*folders.values(), *MODEL_FOLDER_ALIASES}
+        for child in children:
+            kind = f"model/{child.name.replace('_', '-')}"
+            if child.is_dir() and child.name not in known and is_asset_kind(kind):
+                folders.setdefault(kind, child.name)
         return (
             *(
                 MountDef(
@@ -64,14 +154,17 @@ class ModelLocation:
                     priority=priority,
                     kind=kind,
                 )
-                for kind, folder in MODEL_FOLDERS.items()
+                for kind, folder in folders.items()
             ),
-            MountDef(
-                f"{self.id}-clip",
-                self.path / "clip",
-                self.mode,
-                priority=priority + 1,
-                kind="model/text-encoder",
+            *(
+                MountDef(
+                    f"{self.id}-{folder}",
+                    self.path / folder,
+                    self.mode,
+                    priority=priority + 1,
+                    kind=kind,
+                )
+                for folder, kind in MODEL_FOLDER_ALIASES.items()
             ),
         )
 
@@ -236,8 +329,9 @@ class ModelSettings:
                     raise ValueError(
                         "model folder visibility must be always-on, default-on or opt-in"
                     )
-                if kind and kind not in MODEL_FOLDERS:
-                    raise ValueError("model location kind must be a supported model kind")
+                kind = cast("str", kind)
+                if kind and (not kind.startswith("model/") or not is_asset_kind(kind)):
+                    raise ValueError("model location kind must be a valid model kind")
                 locations.append(
                     ModelLocation(
                         cast("str", location),

@@ -13,28 +13,28 @@ from typing import Any, cast
 
 import pytest
 from dinkster_schema import (
-    DynamicComboOption,
-    DynamicComboSpec,
-    DynamicSlotSpec,
+    Choice,
+    Group,
+    Input,
     InputFamilyMapping,
     InputFamilyMember,
-    InputFamilySpec,
-    InputSpec,
     MappingSource,
+    Named,
     NodeSchema,
-    OutputCountSpec,
+    Numbered,
+    Option,
+    Output,
     OutputFamilyMapping,
     OutputFamilyMember,
-    OutputFamilySpec,
-    OutputSpec,
     ReplacementCase,
     ReplacementLink,
     ReplacementNode,
     ReplacementPredicate,
     ReplacementRule,
-    SlotVariant,
+    TypeChoice,
     TypeExpr,
     ValueTransform,
+    Variant,
     schema_from_wire,
     schema_signature,
     schema_to_wire,
@@ -64,15 +64,19 @@ def test_input_family_source_template_checks_an_available_predecessor() -> None:
     )
     target = NodeSchema(
         node_type="new.node",
-        input_families=(InputFamilySpec("values", (InputSpec("value", INT),)),),
+        body=(Group("values", member=(Input("value", INT),), keys=Numbered("")),),
         replacements=(
             _rule(ReplacementCase.build("new.node", input_families={"values": mapping})),
         ),
     )
     predecessor = NodeSchema(
         node_type="old.node",
-        input_families=(
-            InputFamilySpec("operands", (InputSpec("weight", INT), InputSpec("item", INT))),
+        body=(
+            Group(
+                "operands",
+                member=(Input("weight", INT), Input("item", INT)),
+                keys=Numbered(""),
+            ),
         ),
     )
     problems = validate_replacement_references(
@@ -130,8 +134,7 @@ def test_rule_wire_roundtrip_full() -> None:
 
 SUCCESSOR = NodeSchema(
     node_type="new.node",
-    inputs=(InputSpec("image", INT), InputSpec("mode", INT, required=False)),
-    outputs=(OutputSpec("out", INT),),
+    body=(Input("image", INT), Input("mode", INT, required=False), Output("out", INT)),
     replacements=(
         ReplacementRule(
             from_type="old.node",
@@ -155,9 +158,12 @@ def test_replacements_never_join_the_signature() -> None:
 
 PREDECESSOR = NodeSchema(
     node_type="old.node",
-    inputs=(InputSpec("picture", INT), InputSpec("mode", INT, required=False)),
-    outputs=(OutputSpec("result", INT),),
-    input_families=(InputFamilySpec("operands", INT),),
+    body=(
+        Input("picture", INT),
+        Input("mode", INT, required=False),
+        Output("result", INT),
+        Group("operands", value=Input("operand", INT), keys=Numbered("")),
+    ),
 )
 
 
@@ -185,47 +191,41 @@ def test_reference_check_clean() -> None:
     assert validate_replacement_references(schemas) == ()
 
 
-def _dynamic_target_schema() -> NodeSchema:
-    return NodeSchema(
-        node_type="new.dynamic",
-        inputs=(InputSpec("fixed", INT),),
-        outputs=(OutputSpec("out", INT),),
-        combos=(
-            DynamicComboSpec(
-                "policy",
-                options=(
-                    DynamicComboOption("channel", inputs=(InputSpec("channel", INT),)),
-                    DynamicComboOption(
-                        "tolerance_color",
-                        inputs=(
-                            DynamicComboSpec(
-                                "color_source",
-                                options=(
-                                    DynamicComboOption(
-                                        "integer", inputs=(InputSpec("color_value", INT),)
-                                    ),
-                                    DynamicComboOption(
-                                        "channels",
-                                        inputs=(
-                                            InputSpec("red", INT),
-                                            InputSpec("green", INT),
-                                            InputSpec("blue", INT),
-                                        ),
-                                    ),
-                                ),
+def _policy_choice(*extra: Option) -> Choice:
+    return Choice(
+        "policy",
+        options=(
+            Option("channel", rows=(Input("channel", INT),)),
+            Option(
+                "tolerance_color",
+                rows=(
+                    Choice(
+                        "color_source",
+                        options=(
+                            Option("integer", rows=(Input("color_value", INT),)),
+                            Option(
+                                "channels",
+                                rows=(Input("red", INT), Input("green", INT), Input("blue", INT)),
                             ),
-                            InputSpec("tolerance", INT),
-                            InputSpec("metric", INT),
                         ),
                     ),
+                    Input("tolerance", INT),
+                    Input("metric", INT),
                 ),
             ),
+            *extra,
         ),
-        slots=(
-            DynamicSlotSpec(
-                "source",
-                variants=(SlotVariant("number", INT, inputs=(InputSpec("scale", INT),)),),
-            ),
+    )
+
+
+def _dynamic_target_schema(*extra: Option) -> NodeSchema:
+    return NodeSchema(
+        node_type="new.dynamic",
+        body=(
+            Input("fixed", INT),
+            Output("out", INT),
+            _policy_choice(*extra),
+            TypeChoice("source", variants=(Variant("number", INT, rows=(Input("scale", INT),)),)),
         ),
     )
 
@@ -304,7 +304,7 @@ def test_reference_check_requires_dynamic_target_choices() -> None:
     }
     problems = validate_replacement_references(schemas)
     assert len(problems) == 1
-    assert "required dynamic construct 'policy' has no stored choice" in problems[0].message
+    assert "required choice 'policy' has no stored option" in problems[0].message
 
 
 @pytest.mark.parametrize(
@@ -321,18 +321,16 @@ def test_selected_slots_cannot_consume_one_source_connection_twice(
 ) -> None:
     source = NodeSchema(
         node_type="old.shared-slot",
-        inputs=(InputSpec("shared", INT),),
+        body=(Input("shared", INT),),
     )
     target = NodeSchema(
         node_type="new.shared-slot",
-        slots=(
-            DynamicSlotSpec(
-                "left",
-                variants=(SlotVariant("integer", INT, inputs=(InputSpec("left_only", INT),)),),
+        body=(
+            TypeChoice(
+                "left", variants=(Variant("integer", INT, rows=(Input("left_only", INT),)),)
             ),
-            DynamicSlotSpec(
-                "right",
-                variants=(SlotVariant("integer", INT, inputs=(InputSpec("right_only", INT),)),),
+            TypeChoice(
+                "right", variants=(Variant("integer", INT, rows=(Input("right_only", INT),)),)
             ),
         ),
     )
@@ -367,18 +365,15 @@ def test_selected_slots_cannot_consume_one_source_connection_twice(
 def test_connection_consumption_is_accounted_across_inputs_and_members() -> None:
     source = NodeSchema(
         node_type="old.shared-input",
-        inputs=(InputSpec("shared", INT),),
+        body=(Input("shared", INT),),
     )
     target = NodeSchema(
         node_type="new.shared-input",
-        inputs=(InputSpec("fixed", INT),),
-        slots=(
-            DynamicSlotSpec(
-                "choice",
-                variants=(SlotVariant("integer", INT),),
-            ),
+        body=(
+            Input("fixed", INT),
+            TypeChoice("choice", variants=(Variant("integer", INT),)),
+            Group("items", member=(Input("value", INT),), keys=Named(("first",))),
         ),
-        input_families=(InputFamilySpec("items", (InputSpec("value", INT),), min_members=0),),
     )
     cases = (
         ReplacementCase.build(
@@ -483,7 +478,7 @@ def test_reference_check_elaborates_dynamic_helper_paths() -> None:
     problems = validate_replacement_references(schemas)
     assert len(problems) == 1
     assert problems[0].target == primary.node_type
-    assert "required dynamic construct 'policy' has no stored choice" in problems[0].message
+    assert "required choice 'policy' has no stored option" in problems[0].message
 
 
 def test_reference_check_flags_unknown_static_ids() -> None:
@@ -555,7 +550,10 @@ def test_reference_check_accepts_declared_dynamic_source_paths(ref, mapping_kind
     )
     target = dataclasses.replace(
         SUCCESSOR,
-        input_families=(InputFamilySpec("values", (InputSpec("value", INT),)),),
+        body=(
+            *SUCCESSOR.body,
+            Group("values", member=(Input("value", INT),), keys=Named(("first",))),
+        ),
         replacements=(ReplacementRule(from_type=source.node_type, cases=(case, FALLBACK)),),
     )
     before = schema_to_wire(source)
@@ -582,21 +580,11 @@ def test_reference_check_accepts_declared_dynamic_source_paths(ref, mapping_kind
     ],
 )
 def test_reference_check_rejects_undeclared_dynamic_source_paths(ref) -> None:
-    source = _dynamic_target_schema()
-    combo = source.combos[0]
-    source = dataclasses.replace(
-        source,
-        combos=(
-            dataclasses.replace(
-                combo,
-                options=(
-                    *combo.options,
-                    DynamicComboOption(
-                        "many", inputs=(InputFamilySpec("items", (InputSpec("value", INT),)),)
-                    ),
-                ),
-            ),
-        ),
+    source = _dynamic_target_schema(
+        Option(
+            "many",
+            rows=(Group("items", member=(Input("value", INT),), keys=Named(("first",))),),
+        )
     )
     target = _successor_with(
         ReplacementRule(
@@ -613,23 +601,17 @@ def test_reference_check_rejects_undeclared_dynamic_source_paths(ref) -> None:
 def test_reference_check_validates_dynamic_family_mappings() -> None:
     source = dataclasses.replace(
         PREDECESSOR,
-        inputs=(InputSpec("a", INT), InputSpec("b", INT)),
-        input_families=(
-            InputFamilySpec(
-                "operands",
-                (InputSpec("item", INT),),
-                member_names=("a", "b", "c"),
-            ),
+        body=(
+            Input("a", INT),
+            Input("b", INT),
+            Group("operands", member=(Input("item", INT),), keys=Named(("a", "b", "c"))),
         ),
     )
     target = dataclasses.replace(
         SUCCESSOR,
-        input_families=(
-            InputFamilySpec(
-                "values",
-                (InputSpec("value", INT),),
-                member_names=("a", "b", "c"),
-            ),
+        body=(
+            *SUCCESSOR.body,
+            Group("values", value=Input("value", INT), keys=Named(("a", "b", "c"))),
         ),
     )
     copy_rule = _rule(
@@ -685,7 +667,7 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
     )
     schemas["producer.node"] = NodeSchema(
         node_type="producer.node",
-        outputs=(OutputSpec("out", INT),),
+        body=(Output("out", INT),),
     )
     schemas["new.node"] = dataclasses.replace(target, replacements=(helper_rule,))
     assert validate_replacement_references(schemas) == ()
@@ -718,12 +700,14 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
 
     constrained_target = dataclasses.replace(
         target,
-        input_families=(
-            InputFamilySpec(
+        body=(
+            *SUCCESSOR.body,
+            Group(
                 "values",
-                (InputSpec("value", INT),),
+                value=Input("value", INT),
+                keys=Named(("a", "b")),
                 min_members=1,
-                member_names=("a", "b"),
+                max_members=2,
             ),
         ),
         replacements=(copy_rule,),
@@ -735,15 +719,88 @@ def test_reference_check_validates_dynamic_family_mappings() -> None:
     assert "cannot admit every copied source-family suffix" in joined
 
 
+def test_spread_mapping_round_trips_and_names_a_member_input_only_for_records() -> None:
+    rule = _rule(
+        ReplacementCase.build(
+            "new.node",
+            input_families={
+                "values": InputFamilyMapping.spread("picture"),
+                "records": InputFamilyMapping.spread("picture", member_input="item"),
+            },
+        )
+    )
+    wire = cast("Any", rule_to_wire(rule))
+    assert wire["cases"][0]["inputFamilies"] == {
+        "values": {"kind": "spread", "input": "picture"},
+        "records": {"kind": "spread", "input": "picture", "member": "item"},
+    }
+    assert rule_from_wire(wire) == rule
+    for invalid in (
+        {"kind": "spread"},
+        {"kind": "spread", "input": "picture", "member": ""},
+        {"kind": "spread", "input": "picture", "sourceFamily": "operands"},
+    ):
+        with pytest.raises(ValueError, match="spread"):
+            rule_from_wire(
+                {**wire, "cases": [{"to": "new.node", "inputFamilies": {"values": invalid}}]}
+            )
+
+    target = dataclasses.replace(
+        SUCCESSOR,
+        body=(
+            *SUCCESSOR.body,
+            Group("values", value=Input("value", INT), keys=Numbered("v", start=0)),
+            Group(
+                "records",
+                member=(Input("item", INT), Input("label", INT)),
+                keys=Numbered("r"),
+            ),
+        ),
+    )
+    schemas = {
+        "old.node": PREDECESSOR,
+        "new.node": dataclasses.replace(target, replacements=(rule,)),
+    }
+    assert validate_replacement_references(schemas) == ()
+
+    wrong = _rule(
+        ReplacementCase.build(
+            "new.node",
+            input_families={
+                "values": InputFamilyMapping.spread("missing", member_input="value"),
+                "records": InputFamilyMapping.spread("picture"),
+            },
+        )
+    )
+    schemas["new.node"] = dataclasses.replace(target, replacements=(wrong,))
+    messages = [problem.message for problem in validate_replacement_references(schemas)]
+    assert len(messages) == 3
+    joined = "\n".join(messages)
+    assert "'missing'" in joined
+    assert "is a group of values; a spread into it names no member input" in joined
+    assert "names no template input of its members to take each item" in joined
+
+
 def test_reference_check_validates_output_family_mappings() -> None:
     source = dataclasses.replace(
         PREDECESSOR,
-        outputs=(OutputSpec("left", INT), OutputSpec("right", INT)),
-        output_families=(OutputFamilySpec("results", INT, max_members=3),),
+        body=(
+            Output("left", INT),
+            Output("right", INT),
+            Group(
+                "results",
+                value=Output("result", INT),
+                keys=Numbered("", start=0),
+                max_members=3,
+            ),
+        ),
     )
     target = dataclasses.replace(
         SUCCESSOR,
-        output_families=(OutputFamilySpec("values", INT, max_members=3),),
+        body=(
+            *SUCCESSOR.body,
+            Group("values", value=Output("value", INT), keys=Numbered("", start=0), max_members=3),
+        ),
     )
     copy_rule = _rule(
         ReplacementCase.build(
@@ -771,75 +828,6 @@ def test_reference_check_validates_output_family_mappings() -> None:
     schemas["new.node"] = dataclasses.replace(target, replacements=(members_rule,))
     assert validate_replacement_references(schemas) == ()
 
-    counted_source = dataclasses.replace(
-        source,
-        inputs=(*source.inputs, InputSpec("source_count", INT)),
-        output_families=(
-            OutputFamilySpec("results", INT, max_members=3, count=OutputCountSpec("source_count")),
-        ),
-    )
-    counted_target = dataclasses.replace(
-        target,
-        inputs=(*target.inputs, InputSpec("target_count", INT)),
-        output_families=(
-            OutputFamilySpec("values", INT, max_members=3, count=OutputCountSpec("target_count")),
-        ),
-    )
-    counted_copy_rule = _rule(
-        ReplacementCase.build(
-            "new.node",
-            inputs={"target_count": MappingSource.copy("source_count")},
-            output_families={"values": OutputFamilyMapping.copy("results")},
-        )
-    )
-    schemas = {
-        "old.node": counted_source,
-        "new.node": dataclasses.replace(counted_target, replacements=(counted_copy_rule,)),
-    }
-    assert validate_replacement_references(schemas) == ()
-
-    counted_members_rule = _rule(
-        ReplacementCase.build(
-            "new.node",
-            inputs={"target_count": MappingSource.constant(2)},
-            output_families={
-                "values": OutputFamilyMapping.from_members(
-                    OutputFamilyMember("0", "left"),
-                    OutputFamilyMember("1", "right"),
-                )
-            },
-        )
-    )
-    schemas["new.node"] = dataclasses.replace(counted_target, replacements=(counted_members_rule,))
-    assert validate_replacement_references(schemas) == ()
-
-    bad_count_rule = _rule(
-        ReplacementCase.build(
-            "new.node",
-            inputs={"target_count": MappingSource.constant(3)},
-            output_families={
-                "values": OutputFamilyMapping.from_members(
-                    OutputFamilyMember("0", "left"),
-                    OutputFamilyMember("1", "right"),
-                )
-            },
-        )
-    )
-    schemas["new.node"] = dataclasses.replace(counted_target, replacements=(bad_count_rule,))
-    joined = "\n".join(problem.message for problem in validate_replacement_references(schemas))
-    assert "must be the constant member count 2" in joined
-
-    bad_copy_count_rule = _rule(
-        ReplacementCase.build(
-            "new.node",
-            inputs={"target_count": MappingSource.copy("left")},
-            output_families={"values": OutputFamilyMapping.copy("results")},
-        )
-    )
-    schemas["new.node"] = dataclasses.replace(counted_target, replacements=(bad_copy_count_rule,))
-    joined = "\n".join(problem.message for problem in validate_replacement_references(schemas))
-    assert "must preserve source count input 'source_count'" in joined
-
     bad_rule = _rule(
         ReplacementCase.build(
             "new.node",
@@ -859,14 +847,14 @@ def test_reference_check_validates_output_family_mappings() -> None:
 
     constrained_target = dataclasses.replace(
         target,
-        inputs=(*target.inputs, InputSpec("count", INT)),
-        output_families=(
-            OutputFamilySpec(
+        body=(
+            *SUCCESSOR.body,
+            Group(
                 "values",
-                INT,
+                value=Output("value", INT),
+                keys=Numbered("", start=0),
                 min_members=1,
                 max_members=2,
-                count=OutputCountSpec("count"),
             ),
         ),
         replacements=(copy_rule,),
@@ -875,19 +863,6 @@ def test_reference_check_validates_output_family_mappings() -> None:
     joined = "\n".join(problem.message for problem in validate_replacement_references(schemas))
     assert "requires more members" in joined
     assert "cannot admit every copied source-family member count" in joined
-    assert "cannot copy an unbound source family" in joined
-
-    noncanonical = _rule(
-        ReplacementCase.build(
-            "new.node",
-            output_families={
-                "values": OutputFamilyMapping.from_members(OutputFamilyMember("1", "left"))
-            },
-        )
-    )
-    schemas["new.node"] = dataclasses.replace(constrained_target, replacements=(noncanonical,))
-    joined = "\n".join(problem.message for problem in validate_replacement_references(schemas))
-    assert "requires canonical zero-based explicit member suffixes" in joined
 
 
 def test_reference_check_skips_absent_schemas() -> None:
@@ -909,9 +884,12 @@ def test_reference_check_skips_absent_schemas() -> None:
 def test_validate_replacement_references_resolves_helper_addresses() -> None:
     helper = NodeSchema(
         node_type="helper.node",
-        inputs=(InputSpec("item", INT), InputSpec("count", INT)),
-        outputs=(OutputSpec("items", INT),),
-        input_families=(InputFamilySpec("dynamic", INT),),
+        body=(
+            Input("item", INT),
+            Input("count", INT),
+            Output("items", INT),
+            Group("dynamic", value=Input("value", INT), keys=Numbered("")),
+        ),
     )
     case = ReplacementCase.build(
         "new.node",
@@ -929,7 +907,8 @@ def test_validate_replacement_references_resolves_helper_addresses() -> None:
     )
     rule = _rule(case)
     predecessor = dataclasses.replace(
-        PREDECESSOR, outputs=(OutputSpec("result", INT), OutputSpec("other", INT))
+        PREDECESSOR,
+        body=(*PREDECESSOR.body, Output("other", INT)),
     )
     schemas = {
         "old.node": predecessor,

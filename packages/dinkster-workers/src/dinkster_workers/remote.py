@@ -61,8 +61,10 @@ from dinkster_protocol import (
     ReplicaId,
     WorkGroupDefinition,
 )
+from dinkster_protocol.pack_functions import PackFunctionAnswer, PackFunctionRequest
 from dinkster_protocol.pack_surfaces import PackRoute
 from dinkster_schema import NodeSchema
+from dinkster_schema.body import LookupMark
 from dinkster_values import (
     ASSET_BASE_TYPE,
     Rendition,
@@ -240,6 +242,18 @@ class RemoteWorker:
         self, route: PackRoute, data: Mapping[str, object]
     ) -> dict[str, object]:
         return await self._session.call_pack_route(route, data)
+
+    async def call_pack_function(
+        self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
+    ) -> PackFunctionAnswer:
+        return await self._session.call_pack_function(request, on_progress)
+
+    async def call_lookup(self, function: str, args: Sequence[object]) -> object:
+        return await self._session.call_lookup(function, args)
+
+    @property
+    def lookup_marks(self) -> Mapping[str, LookupMark]:
+        return self._session.lookup_marks
 
     @property
     def compat_skips(self) -> Mapping[str, CompatGateDiagnostic]:

@@ -18,9 +18,9 @@ Ordinary mappings reference schema interface ids, including paths materialized
 by literal target ``slotVariants`` selections. The additive ``inputFamilies`` and
 ``outputFamilies`` vocabularies map top-level families without spelling member
 paths; input families may address helpers, and the planner preserves source
-suffixes and authored order. A same-type ``migration`` rule declares source input
-or dynamic-choice paths retired from the current schema so stored nodes can
-migrate once into a new shape. Cross-schema reference
+suffixes and authored order. A rule's ``migration`` names its historical
+inputs: source inputs that no installed schema declares, such as paths a node
+type retired or the inputs of a foreign node it replaces. Cross-schema reference
 checks belong to tooling that can see both schemas (``dinkster doctor``); this
 module enforces the closed vocabulary itself.
 
@@ -34,8 +34,8 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ PredicateKind = Literal[
 ]
 TransformKind = Literal["enumRename", "scale"]
 MappingSourceKind = Literal["copy", "value", "link", "constant"]
-InputFamilyMappingKind = Literal["copy", "members"]
+InputFamilyMappingKind = Literal["copy", "members", "spread"]
 OutputFamilyMappingKind = Literal["copy", "members"]
 
 _INPUT_PREDICATES = frozenset({"inputConnected", "valuePresent", "valueEquals"})
@@ -246,6 +246,11 @@ class InputFamilyMapping:
     ``copy`` preserves source-family suffixes by default. ``targetPositions``
     maps authored order to target naming positions. ``members`` creates an
     explicit ordered target member list from ordinary static source inputs.
+    ``spread`` makes one member per item of the list stored in
+    ``source_input``, in list order; ``member_input`` names the template input
+    that takes the item in a group of records and is empty in a group of
+    values. Items are stored as given; only the target group's member limit
+    drops any.
     """
 
     kind: InputFamilyMappingKind
@@ -253,13 +258,29 @@ class InputFamilyMapping:
     inputs: tuple[tuple[str, MappingSource], ...] = ()
     members: tuple[InputFamilyMember, ...] = ()
     source_template: tuple[str, ...] = ()
-    source_member_port: str = ""
     member_ids: Literal["targetPositions"] | None = None
+    source_input: str = ""
+    member_input: str = ""
 
     def __post_init__(self) -> None:
         if self.member_ids is not None and self.member_ids != "targetPositions":
             raise ValueError("input family member ids must be targetPositions or omitted")
-        if self.kind == "copy":
+        if self.kind != "spread" and (self.source_input or self.member_input):
+            raise ValueError(f"{self.kind} input family mapping carries no spread input")
+        if self.kind == "spread":
+            if (
+                self.source_family
+                or self.inputs
+                or self.members
+                or self.source_template
+                or self.member_ids is not None
+            ):
+                raise ValueError("spread input family mapping carries only its inputs")
+            if _STRUCTURAL_ID.fullmatch(self.source_input) is None:
+                raise ValueError("spread input family mapping requires a source input id")
+            if self.member_input and _STRUCTURAL_ID.fullmatch(self.member_input) is None:
+                raise ValueError(f"invalid spread member input id: {self.member_input!r}")
+        elif self.kind == "copy":
             if _STRUCTURAL_ID.fullmatch(self.source_family) is None:
                 raise ValueError("copy input family mapping requires a source family id")
             if not self.inputs:
@@ -271,7 +292,6 @@ class InputFamilyMapping:
                 self.source_family
                 or self.inputs
                 or self.source_template
-                or self.source_member_port
                 or self.member_ids is not None
             ):
                 raise ValueError("members input family mapping carries only explicit members")
@@ -295,20 +315,10 @@ class InputFamilyMapping:
                 raise ValueError("source template requires structural input ids")
         if len(set(self.source_template)) != len(self.source_template):
             raise ValueError("source template has duplicate input ids")
-        if not isinstance(self.source_member_port, str):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise ValueError("source member port must be a path string")
         if self.source_template:
             for _, mapping in self.inputs:
                 if mapping.kind != "constant" and mapping.input not in self.source_template:
                     raise ValueError("mapping input is not declared in source template")
-        if self.source_member_port:
-            if len(self.source_template) != 1 or any(
-                _STRUCTURAL_ID.fullmatch(part) is None
-                for part in self.source_member_port.split(".")
-            ):
-                raise ValueError(
-                    "source member port requires a single-input source template and path"
-                )
 
     @classmethod
     def copy(
@@ -317,7 +327,6 @@ class InputFamilyMapping:
         *,
         inputs: Mapping[str, MappingSource],
         source_template: Sequence[str] = (),
-        source_member_port: str = "",
         member_ids: Literal["targetPositions"] | None = None,
     ) -> InputFamilyMapping:
         if isinstance(source_template, str):
@@ -327,13 +336,16 @@ class InputFamilyMapping:
             source_family=source_family,
             inputs=tuple(inputs.items()),
             source_template=tuple(source_template),
-            source_member_port=source_member_port,
             member_ids=member_ids,
         )
 
     @classmethod
     def from_members(cls, *members: InputFamilyMember) -> InputFamilyMapping:
         return cls(kind="members", members=members)
+
+    @classmethod
+    def spread(cls, source_input: str, *, member_input: str = "") -> InputFamilyMapping:
+        return cls(kind="spread", source_input=source_input, member_input=member_input)
 
 
 @dataclass(frozen=True)
@@ -619,7 +631,7 @@ class ReplacementCase:
 
 @dataclass(frozen=True)
 class ReplacementMigration:
-    """Source input or dynamic-choice paths from a retired node shape."""
+    """Historical inputs: source inputs that no installed schema declares."""
 
     historical_inputs: tuple[str, ...]
 
@@ -672,10 +684,6 @@ class ReplacementRule:
             raise ValueError(
                 f"rule for {self.from_type}: the last case must be unconditional "
                 "(the required fallback)"
-            )
-        if self.migration is not None and any(case.to != self.from_type for case in self.cases):
-            raise ValueError(
-                f"migration rule for {self.from_type}: every case must preserve the node type"
             )
 
 
@@ -730,13 +738,15 @@ def input_family_mapping_to_wire(mapping: InputFamilyMapping) -> dict[str, objec
             "inputs": {target: mapping_source_to_wire(source) for target, source in mapping.inputs},
         }
         if mapping.source_template:
-            template: dict[str, object] = {"inputs": list(mapping.source_template)}
-            if mapping.source_member_port:
-                template["memberPort"] = mapping.source_member_port
-            wire["sourceTemplate"] = template
+            wire["sourceTemplate"] = {"inputs": list(mapping.source_template)}
         if mapping.member_ids is not None:
             wire["memberIds"] = mapping.member_ids
         return wire
+    if mapping.kind == "spread":
+        spread: dict[str, object] = {"kind": "spread", "input": mapping.source_input}
+        if mapping.member_input:
+            spread["member"] = mapping.member_input
+        return spread
     return {
         "kind": "members",
         "members": [input_family_member_to_wire(member) for member in mapping.members],
@@ -868,8 +878,16 @@ def input_family_member_from_wire(wire: Any) -> InputFamilyMember:
 
 def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
     kind = str(wire["kind"])
+    if kind == "spread":
+        if not set(wire) <= {"kind", "input", "member"} or "input" not in wire:
+            raise ValueError("spread input family mapping carries kind, input and member only")
+        source_input, member_input = wire["input"], wire.get("member", "")
+        if not isinstance(source_input, str) or not isinstance(member_input, str):
+            raise ValueError("spread input family mapping ids must be strings")
+        if "member" in wire and not member_input:
+            raise ValueError("spread member must name a template input")
+        return InputFamilyMapping.spread(source_input, member_input=member_input)
     source_template: tuple[str, ...] = ()
-    source_member_port = ""
     member_ids: Literal["targetPositions"] | None = None
     if "memberIds" in wire:
         if kind != "copy" or wire["memberIds"] != "targetPositions":
@@ -880,8 +898,8 @@ def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
         if kind != "copy" or not isinstance(template, Mapping):
             raise ValueError("sourceTemplate requires a copy mapping and an object")
         template = cast("Mapping[str, Any]", template)
-        if set(template) - {"inputs", "memberPort"} or "inputs" not in template:
-            raise ValueError("sourceTemplate requires inputs and optional memberPort")
+        if set(template) != {"inputs"}:
+            raise ValueError("sourceTemplate carries exactly inputs")
         raw_inputs = template["inputs"]
         if (
             not isinstance(raw_inputs, list)
@@ -890,10 +908,6 @@ def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
         ):
             raise ValueError("sourceTemplate inputs must be a nonempty string array")
         source_template = tuple(cast("list[str]", raw_inputs))
-        if "memberPort" in template:
-            source_member_port = template["memberPort"]
-            if not isinstance(source_member_port, str) or not source_member_port:
-                raise ValueError("sourceTemplate memberPort must be a nonempty path")
     if kind == "copy":
         return InputFamilyMapping(
             kind="copy",
@@ -903,7 +917,6 @@ def input_family_mapping_from_wire(wire: Any) -> InputFamilyMapping:
                 for target, source in wire["inputs"].items()
             ),
             source_template=source_template,
-            source_member_port=source_member_port,
             member_ids=member_ids,
         )
     if kind == "members":
@@ -1111,92 +1124,176 @@ def _check_static_id(
     return f"'{ref}' is not a static {role} id of {schema_type}"
 
 
-def _static_family_template_ids(family: object) -> frozenset[str] | None:
-    from .model import InputFamilySpec, InputSpec
+@dataclass(frozen=True)
+class _Family:
+    """A group of a body's own scope, as the rule checks read it."""
 
-    assert isinstance(family, InputFamilySpec)
-    if not all(isinstance(entry, InputSpec) for entry in family.template):
-        return None
-    return frozenset(entry.id for entry in family.template)
+    id: str
+    template_ids: frozenset[str] | None
+    """The member's input ids, or ``None`` when a member holds nested entries."""
+    records: bool
+    """Whether a member's input id is part of its flattened id."""
+    min_members: int
+    max_members: int | None
+    member_names: tuple[str, ...] | None
+    position: Callable[[int], str]
+    keys: object
+    """The group's naming rule, ``Numbered`` or ``Named``."""
+    counted: bool
+    """Whether a count formula decides the members, so a key is a position."""
+
+
+def _input_families(schema: NodeSchema) -> dict[str, _Family]:
+    from .body import Count, Group, Named, scope_rows
+    from .model import Input, Output
+
+    found: dict[str, _Family] = {}
+    for row in scope_rows(schema.body):
+        if not isinstance(row, Group) or isinstance(row.value, Output):
+            continue
+        member = (row.value,) if row.value is not None else tuple(row.member or ())
+        flat = list(scope_rows(member))
+        keys = row.keys
+        assert keys is not None
+        found[row.id] = _Family(
+            row.id,
+            frozenset(item.id for item in flat if isinstance(item, Input))
+            if all(isinstance(item, (Input, Output)) for item in flat)
+            else None,
+            row.value is None,
+            row.min_members,
+            row.max_members,
+            keys.names if isinstance(keys, Named) else None,
+            keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
+            keys,
+            isinstance(row.grows, Count),
+        )
+    return found
+
+
+def _output_families(schema: NodeSchema) -> dict[str, _Family]:
+    from .body import Count, Group, Named, scope_rows
+    from .model import Output
+
+    found: dict[str, _Family] = {}
+    for row in scope_rows(schema.body):
+        if isinstance(row, Group) and isinstance(row.value, Output):
+            keys = row.keys
+            assert keys is not None
+            found[row.id] = _Family(
+                row.id,
+                None,
+                False,
+                row.min_members,
+                row.max_members,
+                keys.names if isinstance(keys, Named) else None,
+                keys.key if not isinstance(keys, Named) else keys.names.__getitem__,
+                keys,
+                isinstance(row.grows, Count),
+            )
+    return found
+
+
+def _naming_differs(
+    kind: str, target: _Family, target_type: str, source: _Family, source_type: str
+) -> str:
+    moved = "value would land on" if kind == "input" else "wire would reach"
+    fix = "give the two groups the same naming"
+    if kind == "input":
+        fix += ', or copy by position with member_ids="targetPositions"'
+    return (
+        f"{kind} group '{target.id}' of {target_type} names its members differently from "
+        f"{kind} group '{source.id}' of {source_type}, so a copied {moved} another member; "
+        f"{fix}"
+    )
+
+
+def _body_scope(rows: Sequence[object]) -> list[object]:
+    from .body import scope_rows
+
+    return list(scope_rows(cast("Any", tuple(rows))))
+
+
+def _body_inner(row: object) -> list[tuple[str, list[object]]]:
+    """The scopes below a choice or a type choice: (option or variant key, rows)."""
+    from .body import Choice, TypeChoice, choice_scope_rows
+
+    if isinstance(row, Choice):
+        rows = _body_scope(choice_scope_rows(row))
+        return [(option.key, rows) for option in row.options]
+    if isinstance(row, TypeChoice):
+        own = _body_scope(row.rows)
+        if row.variants is None:
+            return [("", own)]
+        return [(variant.key, [*own, *_body_scope(variant.rows)]) for variant in row.variants]
+    return []
+
+
+def _body_has_choice(rows: Sequence[object]) -> bool:
+    from .body import Choice, Group, TypeChoice
+
+    for row in _body_scope(rows):
+        if isinstance(row, (Choice, TypeChoice)):
+            return True
+        if isinstance(row, Group):
+            member = (row.value,) if row.value is not None else tuple(row.member or ())
+            if _body_has_choice(member):
+                return True
+    return False
 
 
 def _has_dynamic_constructs(schema: NodeSchema) -> bool:
-    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec, InputFamilySpec
-
-    def contains(entries: Sequence[DynamicEntry]) -> bool:
-        return any(
-            isinstance(entry, (DynamicComboSpec, DynamicSlotSpec))
-            or (isinstance(entry, InputFamilySpec) and contains(entry.template))
-            for entry in entries
-        )
-
-    return contains((*schema.input_families, *schema.combos, *schema.slots))
+    return _body_has_choice(schema.body)
 
 
 def _dynamic_construct_info(schema: NodeSchema, path: str) -> tuple[frozenset[str], frozenset[str]]:
-    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec
-
     kinds: set[str] = set()
     choices: set[str] = set()
 
-    def walk(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> None:
-        if not parts:
-            return
-        for entry in entries:
-            if entry.id != parts[0]:
-                continue
-            if isinstance(entry, DynamicComboSpec):
-                if len(parts) == 1:
-                    kinds.add("combo")
-                    choices.update(option.key for option in entry.options)
-                else:
-                    for option in entry.options:
-                        walk(option.inputs, parts[1:])
-            elif isinstance(entry, DynamicSlotSpec):
-                if len(parts) == 1:
-                    if entry.variants is not None:
-                        kinds.add("slot")
-                        for variant in entry.variants:
-                            choices.add(variant.key)
-                else:
-                    walk(entry.inputs, parts[1:])
-                    for variant in entry.variants or ():
-                        walk(variant.inputs, parts[1:])
+    def walk_body(rows: Sequence[object], parts: Sequence[str]) -> None:
+        from .body import Choice, TypeChoice
 
-    walk((*schema.input_families, *schema.combos, *schema.slots), path.split("."))
+        for row in _body_scope(rows):
+            if getattr(row, "id", None) != parts[0]:
+                continue
+            if len(parts) == 1:
+                if isinstance(row, Choice):
+                    kinds.add("combo")
+                    choices.update(option.key for option in row.options)
+                elif isinstance(row, TypeChoice) and row.variants is not None:
+                    kinds.add("slot")
+                    choices.update(variant.key for variant in row.variants)
+            else:
+                for _, inner in _body_inner(row):
+                    walk_body(inner, parts[1:])
+
+    walk_body(schema.body, path.split("."))
     return frozenset(kinds), frozenset(choices)
 
 
 def _is_materializable_input_path(schema: NodeSchema, path: str) -> bool:
-    from .model import DynamicComboSpec, DynamicEntry, DynamicSlotSpec, InputSpec
+    from .model import Input
 
     if any(spec.id == path for spec in schema.inputs):
         return True
 
-    def matches(entries: Sequence[DynamicEntry], parts: Sequence[str]) -> bool:
-        if not parts:
-            return False
-        for entry in entries:
-            if entry.id != parts[0]:
+    def matches_body(rows: Sequence[object], parts: Sequence[str]) -> bool:
+        from .body import State, TypeChoice
+
+        for row in _body_scope(rows):
+            if getattr(row, "id", None) != parts[0]:
                 continue
-            if isinstance(entry, InputSpec):
+            if isinstance(row, (Input, State)):
                 return len(parts) == 1
-            if isinstance(entry, DynamicComboSpec):
-                if any(matches(option.inputs, parts[1:]) for option in entry.options):
-                    return True
-            elif isinstance(entry, DynamicSlotSpec):
-                if len(parts) == 1:
-                    return True
-                if matches(entry.inputs, parts[1:]) or any(
-                    matches(variant.inputs, parts[1:]) for variant in entry.variants or ()
-                ):
-                    return True
+            if isinstance(row, TypeChoice) and len(parts) == 1:
+                return True
+            if len(parts) > 1 and any(
+                matches_body(inner, parts[1:]) for _, inner in _body_inner(row)
+            ):
+                return True
         return False
 
-    return matches(
-        (*schema.input_families, *schema.combos, *schema.slots),
-        path.split("."),
-    )
+    return matches_body(schema.body, path.split("."))
 
 
 def validate_replacement_references(
@@ -1207,7 +1304,7 @@ def validate_replacement_references(
     that is not in the mapping is simply unchecked (rules legitimately
     migrate nodes from never-installed packs). Source input references name
     static ids, materializable paths or combo selectors declared in any branch,
-    plus a same-type migration's declared historical inputs. Active source
+    plus the rule's declared historical inputs. Active source
     branches and values are the importer's responsibility. Source output
     references name static ids.
     ``inputFamilies`` additionally checks top-level family ids and static
@@ -1217,7 +1314,8 @@ def validate_replacement_references(
     problems (``problem_to_wire`` gives the /api/diagnostics shape); empty
     means clean. Doctor surfaces these as errors (code
     ``schema.replacement-invalid``)."""
-    from .elaborate import MAX_FAMILY_MEMBERS, ElaborationError, elaborate
+    from .body import MAX_MEMBERS
+    from .elaborate import ElaborationError, elaborate
 
     problems: list[ReplacementProblem] = []
     for carrier_type, carrier in schemas.items():
@@ -1293,8 +1391,8 @@ def validate_replacement_references(
                     if rule.migration is not None:
                         src_inputs = src_inputs.union(rule.migration.historical_inputs)
                     src_outputs = frozenset(spec.id for spec in source.outputs)
-                    src_in_fams = frozenset(f.id for f in source.input_families)
-                    src_out_fams = frozenset(f.id for f in source.output_families)
+                    src_in_fams = frozenset(_input_families(source))
+                    src_out_fams = frozenset(_output_families(source))
                     refs: list[str] = []
                     if case.when is not None:
                         refs.extend(_predicate_input_refs(case.when))
@@ -1302,6 +1400,8 @@ def validate_replacement_references(
                         if mapping.kind != "constant":
                             refs.append(mapping.input)
                     for _, family_mapping in case.input_families:
+                        if family_mapping.kind == "spread":
+                            refs.append(family_mapping.source_input)
                         if family_mapping.kind != "members":
                             continue
                         for member in family_mapping.members:
@@ -1318,11 +1418,11 @@ def validate_replacement_references(
                         )
                         if detail is not None:
                             add(ref, "input", rule.from_type, detail)
-                    source_families = {family.id: family for family in source.input_families}
+                    source_families = _input_families(source)
                     for _, family_mapping in case.input_families:
                         if family_mapping.kind != "copy":
                             continue
-                        # A same-type rule describes a retired shape, not the current schema.
+                        # A historical template describes a retired shape, not the current schema.
                         if rule.migration is not None and family_mapping.source_template:
                             continue
                         family = source_families.get(family_mapping.source_family)
@@ -1335,7 +1435,7 @@ def validate_replacement_references(
                                 f"of {rule.from_type}",
                             )
                             continue
-                        template_ids = _static_family_template_ids(family)
+                        template_ids = family.template_ids
                         if template_ids is None:
                             add(
                                 family_mapping.source_family,
@@ -1376,9 +1476,7 @@ def validate_replacement_references(
                         )
                         if detail is not None:
                             add(source_output, "output", rule.from_type, detail)
-                    source_output_families = {
-                        family.id: family for family in source.output_families
-                    }
+                    source_output_families = _output_families(source)
                     for _, family_mapping in case.output_families:
                         if family_mapping.kind == "copy":
                             if family_mapping.source_family not in source_output_families:
@@ -1464,25 +1562,14 @@ def validate_replacement_references(
                         evidence_by_local.setdefault(local_id, []).extend(
                             ref for ref, _value in node.values
                         )
-                    source_families = (
-                        {}
-                        if source is None
-                        else {family.id: family for family in source.input_families}
-                    )
+                    source_families = {} if source is None else _input_families(source)
                     for target_family_address, family_mapping in case.input_families:
                         local_id, target_family = split_target_address(target_family_address)
                         target_schema = schemas.get(schema_types_by_local[local_id])
                         family = (
                             None
                             if target_schema is None
-                            else next(
-                                (
-                                    candidate
-                                    for candidate in target_schema.input_families
-                                    if candidate.id == target_family
-                                ),
-                                None,
-                            )
+                            else _input_families(target_schema).get(target_family)
                         )
                         if family is None:
                             continue
@@ -1500,8 +1587,7 @@ def validate_replacement_references(
                                     family.member_names[:member_count]
                                     if family.member_names is not None
                                     else tuple(
-                                        f"{family.member_prefix}{index}"
-                                        for index in range(member_count)
+                                        family.position(index) for index in range(member_count)
                                     )
                                 )
                             else:
@@ -1515,17 +1601,17 @@ def validate_replacement_references(
                                     family.member_names[:member_count]
                                     if family.member_names is not None
                                     else tuple(
-                                        f"{family.member_prefix or ''}{member_index}"
+                                        family.position(member_index)
                                         for member_index in range(member_count)
                                     )
                                 )
                         evidence_by_local.setdefault(local_id, []).extend(
                             f"{target_family}.{suffix}" for suffix in suffixes
                         )
-                        template_ids = _static_family_template_ids(family)
+                        template_ids = family.template_ids
                         if template_ids is not None:
                             owned = family_owned_inputs.setdefault(local_id, set())
-                            if len(template_ids) == 1:
+                            if not family.records:
                                 owned.update(f"{target_family}.{suffix}" for suffix in suffixes)
                             else:
                                 owned.update(
@@ -1547,7 +1633,7 @@ def validate_replacement_references(
                         evidence = list(evidence_by_local.get(local_id, ()))
                         try:
                             effective = elaborate(
-                                replace(schema, output_families=()),
+                                schema,
                                 evidence,
                                 slot_variants=choices,
                             )
@@ -1619,11 +1705,11 @@ def validate_replacement_references(
                                 )
                             return
                         static_ids = frozenset(spec.id for spec in schema.inputs)
-                        family_ids = frozenset(f.id for f in schema.input_families)
+                        family_ids = frozenset(_input_families(schema))
                         role = "input"
                     else:
                         static_ids = frozenset(spec.id for spec in schema.outputs)
-                        family_ids = frozenset(f.id for f in schema.output_families)
+                        family_ids = frozenset(_output_families(schema))
                         role = "output"
                     detail = _check_static_id(ref, static_ids, family_ids, schema_type, role)
                     if detail is not None:
@@ -1639,9 +1725,7 @@ def validate_replacement_references(
                         family_schema = schemas.get(family_schema_type)
                         if family_schema is None:
                             continue
-                        target_families = {
-                            family.id: family for family in family_schema.input_families
-                        }
+                        target_families = _input_families(family_schema)
                         family = target_families.get(target_family)
                         if family is None:
                             add(
@@ -1652,7 +1736,7 @@ def validate_replacement_references(
                                 f"{family_schema_type}",
                             )
                             continue
-                        template_ids = _static_family_template_ids(family)
+                        template_ids = family.template_ids
                         if template_ids is None:
                             add(
                                 target_family_address,
@@ -1678,16 +1762,48 @@ def validate_replacement_references(
                                         f"'{target_input}' is not a template input id of "
                                         f"family '{target_family}' in {family_schema_type}",
                                     )
+                        if family_mapping.kind == "spread":
+                            member_input = family_mapping.member_input
+                            if family.records and member_input not in template_ids:
+                                add(
+                                    member_input or target_family_address,
+                                    "input",
+                                    family_schema_type,
+                                    f"a spread into family '{target_family}' in "
+                                    f"{family_schema_type} names no template input of its "
+                                    "members to take each item",
+                                )
+                            elif not family.records and member_input:
+                                add(
+                                    member_input,
+                                    "input",
+                                    family_schema_type,
+                                    f"family '{target_family}' in {family_schema_type} is a "
+                                    "group of values; a spread into it names no member input",
+                                )
                         if family_mapping.kind == "copy" and source is not None:
-                            source_family = next(
-                                (
-                                    candidate
-                                    for candidate in source.input_families
-                                    if candidate.id == family_mapping.source_family
-                                ),
-                                None,
+                            source_family = _input_families(source).get(
+                                family_mapping.source_family
                             )
                             if source_family is not None:
+                                # Kept keys are positions in a counted group.
+                                if (
+                                    family.counted
+                                    and family_mapping.member_ids is None
+                                    and family.keys != source_family.keys
+                                ):
+                                    add(
+                                        target_family_address,
+                                        "input",
+                                        family_schema_type,
+                                        _naming_differs(
+                                            "input",
+                                            family,
+                                            family_schema_type,
+                                            source_family,
+                                            rule.from_type,
+                                        ),
+                                    )
                                 if family.min_members > source_family.min_members:
                                     add(
                                         target_family_address,
@@ -1746,10 +1862,7 @@ def validate_replacement_references(
                                     f"{family_schema_type} does not admit "
                                     f"{member_count} explicit members",
                                 )
-                    target_output_families = {
-                        family.id: family for family in target_schema.output_families
-                    }
-                    mapped_target_inputs = dict(case.inputs)
+                    target_output_families = _output_families(target_schema)
                     for target_family, family_mapping in case.output_families:
                         family = target_output_families.get(target_family)
                         if family is None:
@@ -1761,15 +1874,19 @@ def validate_replacement_references(
                             )
                             continue
                         if family_mapping.kind == "copy" and source is not None:
-                            source_family = next(
-                                (
-                                    candidate
-                                    for candidate in source.output_families
-                                    if candidate.id == family_mapping.source_family
-                                ),
-                                None,
+                            source_family = _output_families(source).get(
+                                family_mapping.source_family
                             )
                             if source_family is not None:
+                                if family.keys != source_family.keys:
+                                    add(
+                                        target_family,
+                                        "output",
+                                        case.to,
+                                        _naming_differs(
+                                            "output", family, case.to, source_family, rule.from_type
+                                        ),
+                                    )
                                 if family.min_members > source_family.min_members:
                                     add(
                                         target_family,
@@ -1789,56 +1906,16 @@ def validate_replacement_references(
                                         f"family '{target_family}' in {case.to} cannot admit "
                                         "every copied source-family member count",
                                     )
-                                if family.count is not None and source_family.count is None:
-                                    add(
-                                        target_family,
-                                        "output",
-                                        case.to,
-                                        f"count-bound family '{target_family}' in {case.to} "
-                                        "cannot copy an unbound source family",
-                                    )
-                                if family.count is not None and source_family.count is not None:
-                                    count_mapping = mapped_target_inputs.get(family.count.input)
-                                    if not (
-                                        count_mapping is not None
-                                        and count_mapping.kind in ("copy", "value")
-                                        and count_mapping.input == source_family.count.input
-                                        and count_mapping.transform is None
-                                    ):
-                                        add(
-                                            family.count.input,
-                                            "input",
-                                            case.to,
-                                            f"count input '{family.count.input}' for output family "
-                                            f"'{target_family}' in {case.to} must preserve source "
-                                            f"count input '{source_family.count.input}'",
-                                        )
                         if family_mapping.kind == "members":
                             member_count = len(family_mapping.members)
-                            if member_count > MAX_FAMILY_MEMBERS:
+                            if member_count > MAX_MEMBERS:
                                 add(
                                     target_family,
                                     "output",
                                     case.to,
                                     f"family '{target_family}' in {case.to} exceeds the "
-                                    f"{MAX_FAMILY_MEMBERS} member budget",
+                                    f"{MAX_MEMBERS} member budget",
                                 )
-                            if family.count is not None:
-                                count_mapping = mapped_target_inputs.get(family.count.input)
-                                if not (
-                                    count_mapping is not None
-                                    and count_mapping.kind == "constant"
-                                    and type(count_mapping.value) is int
-                                    and count_mapping.value == member_count
-                                ):
-                                    add(
-                                        family.count.input,
-                                        "input",
-                                        case.to,
-                                        f"count input '{family.count.input}' for output family "
-                                        f"'{target_family}' in {case.to} must be the constant "
-                                        f"member count {member_count}",
-                                    )
                             if member_count < family.min_members or (
                                 family.max_members is not None and member_count > family.max_members
                             ):
@@ -1848,17 +1925,6 @@ def validate_replacement_references(
                                     case.to,
                                     f"family '{target_family}' in {case.to} does not admit "
                                     f"{member_count} explicit members",
-                                )
-                            suffixes = tuple(member.suffix for member in family_mapping.members)
-                            if family.count is not None and suffixes != tuple(
-                                str(member_index) for member_index in range(member_count)
-                            ):
-                                add(
-                                    target_family,
-                                    "output",
-                                    case.to,
-                                    f"count-bound family '{target_family}' in {case.to} requires "
-                                    "canonical zero-based explicit member suffixes",
                                 )
                 for target_output, _ in case.outputs:
                     check_target_ref(target_output, "output")

@@ -119,34 +119,23 @@ def _atoms_of(expr: Any) -> set[str]:
 
 
 def _schema_atoms(schema: Any) -> set[str]:
-    from dinkster_schema import DynamicComboSpec, InputFamilySpec, InputSpec
+    from dinkster_schema import Input, Output
+    from dinkster_schema.body import Described, State, TypeChoice, all_rows
 
     atoms: set[str] = set()
-
-    def visit(entries: Any) -> None:
-        nonlocal atoms
-        for entry in entries:
-            if isinstance(entry, InputSpec):
-                atoms |= _atoms_of(entry.type)
-            elif isinstance(entry, InputFamilySpec):
-                visit(entry.template)
-            elif isinstance(entry, DynamicComboSpec):
-                for option in entry.options:
-                    visit(option.inputs)
-            else:
-                if entry.slot_type is not None:
-                    atoms |= _atoms_of(entry.slot_type)
-                visit(entry.inputs)
-                for variant in entry.variants or ():
-                    atoms |= _atoms_of(variant.type)
-                    visit(variant.inputs)
-
-    visit((*schema.inputs, *schema.input_families, *schema.combos, *schema.slots))
-    for spec in (*schema.outputs, *schema.output_families):
+    for spec in (*schema.inputs, *schema.outputs):
         atoms |= _atoms_of(spec.type)
-    if schema.output_descriptors is not None:
-        for choice in schema.output_descriptors.choices:
-            atoms |= _atoms_of(choice.type)
+    for row in all_rows(schema.body):
+        if isinstance(row, (Input, Output, State)):
+            atoms |= _atoms_of(row.type)
+        elif isinstance(row, TypeChoice):
+            if row.type is not None:
+                atoms |= _atoms_of(row.type)
+            for variant in row.variants or ():
+                atoms |= _atoms_of(variant.type)
+        elif isinstance(row, Described):
+            for kind in row.kinds:
+                atoms |= _atoms_of(kind.type)
     return atoms
 
 
@@ -284,23 +273,24 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     registry = TypeRegistry()
     register_core_types(registry)
     core_ids = set(registry.type_ids())
-    if types_fn is not None:
-        if not callable(types_fn):
-            report["types_error"] = (
-                f"entry.types must name a callable taking a TypeRegistry, "
-                f"got {type(types_fn).__name__}"
-            )
-        else:
-            try:
-                with registry.registering_pack(
-                    manifest.name,
-                    manifest.type_namespaces,
-                    allow_bare=manifest.publisher == "dinkster",
-                ):
+    if types_fn is not None and not callable(types_fn):
+        report["types_error"] = (
+            f"entry.types must name a callable taking a TypeRegistry, got {type(types_fn).__name__}"
+        )
+    else:
+        try:
+            with registry.registering_pack(
+                manifest.name,
+                manifest.type_namespaces,
+                allow_bare=manifest.publisher == "dinkster",
+                uses=manifest.uses_types,
+            ):
+                if types_fn is not None:
                     types_fn(registry)
-            except BaseException as exc:  # noqa: BLE001
-                report["types_error"] = _exception_detail(exc)
-    pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids]
+        except BaseException as exc:  # noqa: BLE001
+            report["types_error"] = _exception_detail(exc)
+    used = set(registry.used_type_ids(manifest.name))
+    pack_ids = [tid for tid in registry.type_ids() if tid not in core_ids | used]
     report["registered_type_ids"] = pack_ids
     report["fallback_codec_type_ids"] = [
         tid for tid in pack_ids if not registry.spec(tid).declared_codec
@@ -309,6 +299,8 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             from types import SimpleNamespace
+
+            from dinkster_protocol.lookups import lookup_functions, lookup_marks
 
             from .catalog import worker_declarations
             from .host import load_choices, load_extension_contributions, load_skips
@@ -322,6 +314,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
                     compat_skips=load_skips(manifest),
                     body_arms=dict(manifest.arms),
                     extension_contributions=load_extension_contributions(manifest),
+                    lookup_marks=lookup_marks(lookup_functions(pack_schemas)),
                     renditions=registry.registered_renditions(),
                     # Match worker ownership: dependency codecs are usable here
                     # but are not declarations owned by this pack.

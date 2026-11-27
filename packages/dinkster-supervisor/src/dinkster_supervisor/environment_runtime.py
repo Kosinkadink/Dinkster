@@ -29,7 +29,12 @@ from urllib.request import (
 )
 
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
-from .environment_process import cancel_pending_process, prepare_process, process_state
+from .environment_process import (
+    cancel_pending_process,
+    prepare_process,
+    process_document,
+    process_state,
+)
 from .environment_sandbox import (
     internet_addresses,
     read_sandbox_settings,
@@ -52,6 +57,7 @@ from .home_context import installation_context
 __all__ = [
     "engine_assignments",
     "engine_connection",
+    "engine_provenance",
     "engine_status",
     "generation_runtime_lock",
     "generation_runtime_reason",
@@ -377,10 +383,20 @@ def _start_engine(
     token = secrets.token_urlsafe(32)
     lifecycle = _process_directory(_runtime_path(root, name, generation), instance)
     url = listener.url(port)
+    library = library_root(root)
+    library_path = Path(library).resolve()
+    library_path.mkdir(parents=True, exist_ok=True)
+    library_stat = library_path.stat()
     record: dict[str, object] = {
         "publicListener": listener.document(),
         "responseCompression": compression,
         "runtimeOffline": runtime_offline,
+        "environmentId": identity,
+        "library": {
+            "path": str(library_path),
+            "device": library_stat.st_dev,
+            "inode": library_stat.st_ino,
+        },
         "name": name,
         "generation": generation,
         "port": port,
@@ -414,7 +430,6 @@ def _start_engine(
     bound_endpoint = isinstance(capabilities, list) and "bound-endpoint/1" in capabilities
     from dinkster_store import library_lock
 
-    library = library_root(root)
     command = [
         sys.executable,
         "-m",
@@ -667,6 +682,49 @@ def engine_status(root: Path) -> tuple[dict[str, object], ...]:
     return tuple(rows)
 
 
+def engine_provenance(root: Path, name: str) -> dict[str, object] | None:
+    """The ready local runtime's verified identity, never an HTTP claim alone."""
+    if _ENGINE_NAME.fullmatch(name) is None:
+        return None
+    generation = read_current(root)
+    if generation is None:
+        return None
+    record = _load_record(root, name, generation)
+    identity = read_environment_identity(root)
+    if record is None or identity is None or record.get("environmentId") != identity:
+        return None
+    inspected = _inspect(record)
+    library = Path(library_root(root))
+    if (
+        inspected["state"] != "ready"
+        or not _identity_matches(inspected)
+        or not isinstance(inspected["_engineInstance"], str)
+        or not inspected["_engineInstance"]
+        or not library.is_absolute()
+    ):
+        return None
+    library = library.resolve()
+    identity_stat = library.stat()
+    filesystem = {
+        "path": str(library),
+        "device": identity_stat.st_dev,
+        "inode": identity_stat.st_ino,
+    }
+    if record.get("library") != filesystem:
+        return None
+    return {
+        "installation": {"id": identity, "root": str(root.resolve())},
+        "engine": {
+            "name": name,
+            "generation": generation,
+            "instance": inspected["instance"],
+            "url": inspected["url"],
+        },
+        "library": filesystem,
+        "processInstance": inspected["_engineInstance"],
+    }
+
+
 def engine_connection(root: Path, name: str) -> dict[str, str]:
     """The verified supervisor endpoint and public instance identity, never its shutdown token."""
     _validate_name(name)
@@ -721,7 +779,7 @@ def generation_runtime_reason(
             state_path = lifecycle / "state.json"
             if state_path.is_symlink():
                 raise EnvironmentError("collection refuses linked lifecycle state")
-            instance = read_document(state_path).get("instance")
+            instance = process_document(lifecycle).get("instance")
             if (
                 not isinstance(instance, str)
                 or not instance
@@ -733,7 +791,7 @@ def generation_runtime_reason(
                 return "managed supervisor is live or its child cleanup is unproven"
             if (
                 state == "stopped"
-                and read_document(state_path).get("descendantsStopped") is not True
+                and process_document(lifecycle).get("descendantsStopped") is not True
             ):
                 if sys.platform == "darwin":
                     from .macos_process_family import RESTART_REQUIRED, supersede_stopped_receipt
@@ -1003,6 +1061,7 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
     inspected = dict(record)
     inspected["_verifiedIdentity"] = False
     inspected["_engineExitCode"] = None
+    inspected["_engineInstance"] = None
     lifecycle = cast("Path", record["_processState"])
     if lifecycle.is_dir():
         state = process_state(
@@ -1075,6 +1134,7 @@ def _inspect(record: dict[str, object]) -> dict[str, object]:
     engine = status_document.get("engine")
     if isinstance(engine, dict):
         inspected["_engineExitCode"] = cast("dict[str, object]", engine).get("exitCode")
+        inspected["_engineInstance"] = cast("dict[str, object]", engine).get("instance")
     return inspected
 
 

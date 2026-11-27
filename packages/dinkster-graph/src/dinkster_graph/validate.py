@@ -1,7 +1,8 @@
 """Structural validation and type diagnostics.
 
-Structural errors, primitive literal payload mismatches, and the scoped COMBO
-boundary reject a graph. Other link type mismatches are advisory warnings.
+Structural errors, primitive literal payload mismatches, the scoped COMBO
+boundary, and one node's type variable fed two different types reject a graph.
+Other link type mismatches are advisory warnings.
 """
 
 from __future__ import annotations
@@ -19,10 +20,12 @@ from dinkster_schema import (
     TypeEquivalenceProvider,
     TypeExpr,
     TypeSolveError,
+    TypeVariableConflict,
     WidgetRepresentations,
     bind_type_variables,
     combo_type_mismatch_is_error,
     elaborate,
+    failed_rules,
     plan_asset_coercion,
     plan_type_equivalence,
     resolved_type_expr,
@@ -42,11 +45,14 @@ from .model import (
     PORTS_NODE_ID,
     REGION_INDEX_PORT_ID,
     REGION_INDEX_PORT_TYPE,
+    AbsentInput,
     Graph,
     GraphNode,
     Link,
     RegionNode,
     TypedLiteral,
+    is_link,
+    literal_value,
 )
 from .plan import find_cycle, output_node_targets
 
@@ -226,6 +232,8 @@ def elaborate_graph(
                 node.inputs,
                 node.output_members,
                 node.slot_variants,
+                linked=is_link,
+                literal=literal_value,
             )
         except ElaborationError as exc:
             diags.append(Diagnostic("error", "elaboration-failed", str(exc), node_id))
@@ -338,9 +346,11 @@ def _resolve_linked_output_types(
     *,
     include_typed_literals: bool = False,
 ) -> dict[str, dict[str, TypeExpr]]:
-    """Resolve generic node outputs from linked concrete input declarations."""
+    """Resolve generic node outputs from linked concrete input declarations,
+    reporting nodes whose known input types bind one variable two ways."""
     resolved: dict[str, dict[str, TypeExpr]] = {}
     invalid_outputs: dict[str, Diagnostic] = {}
+    conflicts: dict[str, Diagnostic] = {}
 
     def contains_variable(expr: TypeExpr) -> bool:
         if expr.kind == "variable":
@@ -376,23 +386,36 @@ def _resolve_linked_output_types(
                 input_spec = schema.input(input_id)
                 if input_spec is None or not contains_variable(input_spec.type):
                     continue
-                if include_typed_literals and isinstance(value, TypedLiteral):
+                if isinstance(value, TypedLiteral):
                     input_types[input_id] = value.type_id
+                    all_generic_inputs_resolved &= include_typed_literals
                     continue
-                if not isinstance(value, Link):
-                    all_generic_inputs_resolved = False
-                    break
-                linked_type = source_type(value)
+                if isinstance(value, AbsentInput):
+                    continue
+                linked_type = source_type(value) if isinstance(value, Link) else None
                 runtime_type = None if linked_type is None else linked_type.runtime_type_id()
                 if runtime_type is None:
                     all_generic_inputs_resolved = False
-                    break
+                    continue
                 input_types[input_id] = runtime_type
-            if not all_generic_inputs_resolved:
-                continue
+            # The worker binds the same way and would fail this node only
+            # after everything upstream ran, so a conflict among the types
+            # already known rejects the graph.
+            conflicts.pop(node_id, None)
             try:
                 bindings = bind_type_variables(schema.inputs, input_types)
+            except TypeVariableConflict as exc:
+                conflicts[node_id] = Diagnostic(
+                    "error",
+                    "type-variable-conflict",
+                    _conflict_message(schema, input_types, exc.variable),
+                    node_id,
+                    exc.input_id,
+                )
+                continue
             except TypeSolveError:
+                continue
+            if not all_generic_inputs_resolved:
                 continue
             try:
                 outputs = {
@@ -412,8 +435,25 @@ def _resolve_linked_output_types(
         if not changed:
             break
     if diagnostics is not None:
+        diagnostics.extend(conflicts.values())
         diagnostics.extend(invalid_outputs.values())
     return resolved
+
+
+def _conflict_message(schema: NodeSchema, input_types: Mapping[str, str], variable: str) -> str:
+    """Each input that binds ``variable``, by its own label, with the type it brings."""
+    brought: list[str] = []
+    for spec in schema.inputs:
+        if spec.id not in input_types:
+            continue
+        try:
+            type_id = bind_type_variables((spec,), {spec.id: input_types[spec.id]}).get(variable)
+        except TypeSolveError:
+            continue
+        if type_id is not None:
+            label = spec.label if isinstance(spec.label, str) and spec.label else spec.id
+            brought.append(f"{label.rsplit('.', 1)[-1]} is {type_id}")
+    return "These inputs must be the same type: " + ", ".join(brought) + "."
 
 
 def graph_output_types(
@@ -482,6 +522,21 @@ def _check_input_value(
     producer resolution, maybe-absent, cardinality (authoritative), advisory
     type compatibility, and literal shape rules."""
     where = level.prefix + node_id
+    if isinstance(value, AbsentInput):
+        # The run applies the input's absent policy; only 'fail' is known
+        # to fail it already.
+        if absent_policy == "fail":
+            diags.append(
+                Diagnostic(
+                    "error",
+                    "absent-input",
+                    f"input '{input_id}' declares on_absent='fail' but its wire gives nothing"
+                    + (f" ({value.reason})" if value.reason else ""),
+                    where,
+                    input_id,
+                )
+            )
+        return
     if isinstance(value, Link):
         out_type: TypeExpr | None
         out_optional = False
@@ -537,27 +592,12 @@ def _check_input_value(
                     return  # producer unknown/failed; already reported there
                 out = producer_effective.output(value.output_id)
                 if out is None:
-                    base_producer = level.schemas[producer.node_type]
-                    owner = next(
-                        (
-                            fam
-                            for fam in base_producer.output_families
-                            if fam.member_suffix(value.output_id) is not None
-                        ),
-                        None,
-                    )
-                    hint = (
-                        f" (family '{owner.id}' currently has members "
-                        f"{list(producer.output_members.get(owner.id, ()))})"
-                        if owner is not None
-                        else ""
-                    )
                     diags.append(
                         Diagnostic(
                             "error",
                             "dangling-output",
                             f"input '{input_id}' links to missing output "
-                            f"'{value.output_id}' of {producer.node_type}{hint}",
+                            f"'{value.output_id}' of {producer.node_type}",
                             where,
                             input_id,
                         )
@@ -1326,63 +1366,9 @@ def _validate_graph_node(
     if base_schema is None:
         return  # elaborate_graph reported unknown-node-type
 
-    for fam in base_schema.input_families:
-        suffixes = {
-            suffix.split(".", 1)[0]
-            for key in node.inputs
-            if (suffix := fam.member_suffix(key)) is not None
-        }
-        suffixes.update(
-            suffix.split(".", 1)[0]
-            for key in node.slot_variants
-            if (suffix := fam.member_suffix(key)) is not None
-        )
-        count = len(suffixes)
-        if not fam.optional_after_minimum and count < fam.min_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-few",
-                    f"family '{fam.id}' has {count} members, needs >= {fam.min_members}",
-                    where,
-                )
-            )
-        if fam.max_members is not None and count > fam.max_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-many",
-                    f"family '{fam.id}' has {count} members, allows <= {fam.max_members}",
-                    where,
-                )
-            )
-
     schema = level.effective.get(node_id)
     if schema is None:
         return  # elaboration failed; elaborate_graph reported it
-
-    for out_fam in base_schema.output_families:
-        count = len(node.output_members.get(out_fam.id, ()))
-        if count < out_fam.min_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-few",
-                    f"output family '{out_fam.id}' has {count} members, "
-                    f"needs >= {out_fam.min_members}",
-                    where,
-                )
-            )
-        if out_fam.max_members is not None and count > out_fam.max_members:
-            diags.append(
-                Diagnostic(
-                    "error",
-                    "family-too-many",
-                    f"output family '{out_fam.id}' has {count} members, "
-                    f"allows <= {out_fam.max_members}",
-                    where,
-                )
-            )
 
     for input_id, value in node.inputs.items():
         spec = schema.input(input_id)
@@ -1437,6 +1423,24 @@ def _validate_graph_node(
                     spec.id,
                 )
             )
+
+    # A failed rule with a fix is the editor's to fix; the run goes on.
+    for rule in failed_rules(
+        base_schema,
+        node.inputs,
+        node.output_members,
+        node.slot_variants,
+        linked=is_link,
+        literal=literal_value,
+    ):
+        diags.append(
+            Diagnostic(
+                "warning" if rule.fix else "error",
+                "rule-failed",
+                f"{node.node_type}: {rule.message}",
+                where,
+            )
+        )
 
 
 def has_errors(diags: Sequence[Diagnostic]) -> bool:

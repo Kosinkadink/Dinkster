@@ -14,10 +14,10 @@ from dinkster_graph import Graph, GraphNode, Link
 from dinkster_memory import PressureSignal
 from dinkster_protocol import CachedResult
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -84,7 +84,7 @@ def test_budgeted_batch_workflow_matches_unbounded_output_and_peak_stays_bounded
     class Source(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
-            return NodeSchema(node_type="test.source", outputs=(OutputSpec("image", image_type),))
+            return NodeSchema(node_type="test.source", body=(Output("image", image_type),))
 
         @classmethod
         def execute(cls) -> Mapping[str, object]:
@@ -95,11 +95,11 @@ def test_budgeted_batch_workflow_matches_unbounded_output_and_peak_stays_bounded
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.xor",
-                inputs=(
-                    InputSpec("image", image_type, accepts_storage=True),
-                    InputSpec("mask", TypeExpr.concrete("INT")),
+                body=(
+                    Input("image", image_type, accepts_storage=True),
+                    Input("mask", TypeExpr.concrete("INT")),
+                    Output("image", image_type),
                 ),
-                outputs=(OutputSpec("image", image_type),),
             )
 
         @classmethod

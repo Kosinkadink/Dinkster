@@ -40,11 +40,11 @@ from dinkster_api.v1 import (
     AssetWidget,
     BooleanWidget,
     ComboWidget,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
     NumberWidget,
-    OutputSpec,
+    Output,
     SaveTargetWidget,
     StringWidget,
     TypeExpr,
@@ -136,39 +136,40 @@ class GalleryWidgets(Node):
                 "executes as an echo of its primitive inputs."
             ),
             search_terms=("gallery", "widget zoo", "kitchen sink"),
-            inputs=(
-                InputSpec(
+            body=(
+                Input(
                     "count",
                     INT,
                     default=50,
-                    display_name="Item Count",
+                    label="Item Count",
                     widget=NumberWidget(min=1, max=100, step=1),
-                    doc="bounded int + a per-input display name",
+                    tooltip="bounded int + a per-input display name",
                 ),
-                InputSpec(
+                Input(
                     "seed",
                     INT,
                     default=0,
-                    widget=NumberWidget(min=0, control_after_generate="randomize"),
-                    doc="seed-style int with a control-after-generate controller",
+                    widget=NumberWidget(min=0),
+                    after_run="randomize",
+                    tooltip="seed-style int with an after-run controller",
                 ),
-                InputSpec(
+                Input(
                     "strength",
                     FLOAT,
                     default=0.5,
                     widget=NumberWidget(min=0.0, max=1.0, step=0.05),
-                    doc="bounded float with a fractional step",
+                    tooltip="bounded float with a fractional step",
                 ),
-                InputSpec("bare_number", INT, default=7, doc="plain int, no widget: unbounded"),
-                InputSpec("line", STRING, default="a single-line string"),
-                InputSpec(
+                Input("bare_number", INT, default=7, tooltip="plain int, no widget: unbounded"),
+                Input("line", STRING, default="a single-line string"),
+                Input(
                     "prose",
                     STRING,
                     default="first line\nsecond line\nthird line",
                     widget=StringWidget(multiline=True),
-                    doc="multiline string editor",
+                    tooltip="multiline string editor",
                 ),
-                InputSpec(
+                Input(
                     "combo_static",
                     COMBO,
                     default="alpha",
@@ -181,7 +182,7 @@ class GalleryWidgets(Node):
                         )
                     ),
                 ),
-                InputSpec(
+                Input(
                     "combo_remote",
                     COMBO,
                     default=SAMPLERS[0],
@@ -190,9 +191,9 @@ class GalleryWidgets(Node):
                         remote_route=f"/api/choices/{SAMPLERS_CHOICE_ID}",
                         refresh_button=True,
                     ),
-                    doc="static snapshot + authoritative remote route",
+                    tooltip="static snapshot + authoritative remote route",
                 ),
-                InputSpec(
+                Input(
                     "combo_remote_empty",
                     COMBO,
                     default="",
@@ -200,20 +201,18 @@ class GalleryWidgets(Node):
                         remote_route=f"/api/choices/{EMPTY_CHOICE_ID}",
                         refresh_button=True,
                     ),
-                    doc="no static options; the route answers [] - legal transient",
+                    tooltip="no static options; the route answers [] - legal transient",
                 ),
-                InputSpec("flag", BOOLEAN, default=False, doc="bare toggle, no widget"),
-                InputSpec(
+                Input("flag", BOOLEAN, default=False, tooltip="bare toggle, no widget"),
+                Input(
                     "flag_labeled",
                     BOOLEAN,
                     default=True,
                     widget=BooleanWidget(label_on="enable", label_off="disable"),
                 ),
-            ),
-            outputs=(
-                OutputSpec("count", INT),
-                OutputSpec("text", STRING),
-                OutputSpec("flag", BOOLEAN),
+                Output("count", INT),
+                Output("text", STRING),
+                Output("flag", BOOLEAN),
             ),
         )
 
@@ -249,21 +248,21 @@ class GalleryAssets(Node):
             node_type="dev.gallery.assets",
             display_name="Gallery: Assets",
             category="dev/gallery",
-            inputs=(
-                InputSpec(
+            body=(
+                Input(
                     "picture",
                     ASSET,
                     required=False,
                     widget=AssetWidget(accept=("image/png", "image/jpeg"), kind="media/image"),
                 ),
-                InputSpec(
+                Input(
                     "destination",
                     SAVE_TARGET,
                     required=False,
                     widget=SaveTargetWidget(suffix=".png"),
                 ),
+                Output("summary", STRING),
             ),
-            outputs=(OutputSpec("summary", STRING),),
         )
 
     @classmethod
@@ -282,17 +281,17 @@ class GallerySource(Node):
             node_type="dev.gallery.source",
             display_name="Gallery: Source",
             category="dev/gallery",
-            inputs=(InputSpec("size", INT, default=4),),
-            outputs=(
-                OutputSpec("image", IMAGE),
-                OutputSpec("mask", MASK),
-                OutputSpec("maybe_image", IMAGE, optional=True, doc="always ABSENT here"),
-                OutputSpec("image_list", TypeExpr.list_of(IMAGE)),
-                OutputSpec("mask_list", TypeExpr.list_of(MASK)),
-                OutputSpec(
+            body=(
+                Input("size", INT, default=4),
+                Output("image", IMAGE),
+                Output("mask", MASK),
+                Output("maybe_image", IMAGE, optional=True, tooltip="always ABSENT here"),
+                Output("image_list", TypeExpr.list_of(IMAGE)),
+                Output("mask_list", TypeExpr.list_of(MASK)),
+                Output(
                     "image_grid",
                     TypeExpr.list_of(TypeExpr.list_of(IMAGE)),
-                    doc="nested list<list<dev.image>>",
+                    tooltip="nested list<list<dev.image>>",
                 ),
             ),
         )
@@ -322,15 +321,15 @@ class GallerySockets(Node):
             node_type="dev.gallery.sockets",
             display_name="Gallery: Sockets",
             category="dev/gallery",
-            inputs=(
-                InputSpec("req_image", IMAGE),
-                InputSpec("opt_image", IMAGE, required=False),
-                InputSpec("union2", TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
-                InputSpec(
+            body=(
+                Input("req_image", IMAGE),
+                Input("opt_image", IMAGE, required=False),
+                Input("union2", TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
+                Input(
                     "union3",
                     TypeExpr.union(DEV_IMAGE, GALLERY_MASK, GALLERY_LATENT),
                 ),
-                InputSpec(
+                Input(
                     "union4",
                     TypeExpr.union(
                         DEV_IMAGE,
@@ -339,17 +338,17 @@ class GallerySockets(Node):
                         GALLERY_AUDIO,
                         CORE_STRING,
                     ),
-                    doc="5 members - past the frontend's 3-slice pie truncation",
+                    tooltip="5 members - past the frontend's 3-slice pie truncation",
                 ),
-                InputSpec(
+                Input(
                     "opt_union3",
                     TypeExpr.union(DEV_IMAGE, GALLERY_MASK, GALLERY_LATENT),
                     required=False,
                 ),
-                InputSpec("any_in", TypeExpr.wildcard()),
-                InputSpec("opt_any", TypeExpr.wildcard(), required=False),
+                Input("any_in", TypeExpr.wildcard()),
+                Input("opt_any", TypeExpr.wildcard(), required=False),
+                Output("image", IMAGE),
             ),
-            outputs=(OutputSpec("image", IMAGE),),
         )
 
     @classmethod
@@ -380,21 +379,21 @@ class GalleryLists(Node):
             node_type="dev.gallery.lists",
             display_name="Gallery: Lists",
             category="dev/gallery",
-            inputs=(
-                InputSpec("list_req", TypeExpr.list_of(IMAGE)),
-                InputSpec("list_opt", TypeExpr.list_of(IMAGE), required=False),
-                InputSpec(
+            body=(
+                Input("list_req", TypeExpr.list_of(IMAGE)),
+                Input("list_opt", TypeExpr.list_of(IMAGE), required=False),
+                Input(
                     "list_of_union",
                     TypeExpr.list_of(TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
-                    doc="list<dev.image|dev.gallery.mask> - union-of-lists is not expressible",
+                    tooltip="list<dev.image|dev.gallery.mask> - union-of-lists is not expressible",
                 ),
-                InputSpec(
+                Input(
                     "list_nested",
                     TypeExpr.list_of(TypeExpr.list_of(IMAGE)),
                     required=False,
                 ),
+                Output("list_out", TypeExpr.list_of(IMAGE)),
             ),
-            outputs=(OutputSpec("list_out", TypeExpr.list_of(IMAGE)),),
         )
 
     @classmethod
@@ -420,8 +419,10 @@ class GalleryMatch(Node):
             node_type="dev.gallery.match",
             display_name="Gallery: Match",
             category="dev/gallery",
-            inputs=(InputSpec("var_in", TypeExpr.variable("T")),),
-            outputs=(OutputSpec("var_out", TypeExpr.variable("T")),),
+            body=(
+                Input("var_in", TypeExpr.variable("T")),
+                Output("var_out", TypeExpr.variable("T")),
+            ),
         )
 
     @classmethod
@@ -446,11 +447,11 @@ class GalleryExoticOut(Node):
                 "execution (no concrete runtime type) - running this node "
                 "is a contract error by design."
             ),
-            inputs=(InputSpec("trigger", STRING, default=""),),
-            outputs=(
-                OutputSpec("union_out", TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
-                OutputSpec("any_out", TypeExpr.wildcard()),
-                OutputSpec("maybe_any", TypeExpr.wildcard(), optional=True),
+            body=(
+                Input("trigger", STRING, default=""),
+                Output("union_out", TypeExpr.union(DEV_IMAGE, GALLERY_MASK)),
+                Output("any_out", TypeExpr.wildcard()),
+                Output("maybe_any", TypeExpr.wildcard(), optional=True),
             ),
         )
 

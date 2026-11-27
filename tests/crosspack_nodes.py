@@ -1,7 +1,7 @@
 """CPU resident model fixtures for cross-pack composition."""
 
 from dinkster_inference_wire.types import MODEL_TYPE_ID
-from dinkster_schema import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
 
 MODEL = TypeExpr.concrete(MODEL_TYPE_ID)
 FLOAT = TypeExpr.concrete("FLOAT")
@@ -12,8 +12,7 @@ class ModelSource(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="source.model",
-            inputs=(InputSpec("weight", FLOAT),),
-            outputs=(OutputSpec("model", MODEL),),
+            body=(Input("weight", FLOAT), Output("model", MODEL)),
         )
 
     @classmethod
@@ -26,8 +25,12 @@ class ModelMerge(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="merge.simple",
-            inputs=(InputSpec("a", MODEL), InputSpec("b", MODEL), InputSpec("ratio", FLOAT)),
-            outputs=(OutputSpec("model", MODEL),),
+            body=(
+                Input("a", MODEL),
+                Input("b", MODEL),
+                Input("ratio", FLOAT),
+                Output("model", MODEL),
+            ),
         )
 
     @classmethod
@@ -41,8 +44,7 @@ class ModelWeight(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="source.weight",
-            inputs=(InputSpec("model", MODEL),),
-            outputs=(OutputSpec("weight", FLOAT),),
+            body=(Input("model", MODEL), Output("weight", FLOAT)),
         )
 
     @classmethod

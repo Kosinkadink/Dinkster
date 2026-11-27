@@ -12,11 +12,10 @@ from dinkster_caches import MemoryLRUCache, encode_entry
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, validate
 from dinkster_schema import (
-    InputFamilySpec,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -106,8 +105,7 @@ class IntPrimitive(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             "dinkster.int",
-            inputs=(InputSpec("value", integer),),
-            outputs=(OutputSpec("value", integer),),
+            body=(Input("value", integer), Output("value", integer)),
         )
 
     @classmethod
@@ -121,8 +119,7 @@ class StringPrimitive(Node):
         string = TypeExpr.concrete("STRING")
         return NodeSchema(
             "dinkster.string",
-            inputs=(InputSpec("value", string),),
-            outputs=(OutputSpec("value", string),),
+            body=(Input("value", string), Output("value", string)),
         )
 
     @classmethod
@@ -135,15 +132,16 @@ class MakeTuple(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.tuple.make",
-            input_families=(
-                InputFamilySpec("items", TypeExpr.variable("T"), independent_types=True),
+            body=(
+                Input("first", TypeExpr.variable("A")),
+                Input("second", TypeExpr.variable("B")),
+                Output("tuple", TypeExpr.tuple_of(TypeExpr.variable("A"), TypeExpr.variable("B"))),
             ),
-            outputs=(OutputSpec("tuple", TypeExpr.tuple_from_family("items")),),
         )
 
     @classmethod
-    def execute(cls, *, items: Mapping[str, object]) -> Mapping[str, object]:
-        return cls.outputs(tuple=tuple(items.values()))
+    def execute(cls, *, first: object, second: object) -> Mapping[str, object]:
+        return cls.outputs(tuple=(first, second))
 
 
 class GetTupleItem(Node):
@@ -151,11 +149,11 @@ class GetTupleItem(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             "std.tuple.get",
-            inputs=(
-                InputSpec("tuple", TypeExpr.variable("Tuple")),
-                InputSpec("index", TypeExpr.concrete("INT"), default=0),
+            body=(
+                Input("tuple", TypeExpr.variable("Tuple")),
+                Input("index", TypeExpr.concrete("INT"), default=0),
+                Output("item", TypeExpr.tuple_element("tuple", "index")),
             ),
-            outputs=(OutputSpec("item", TypeExpr.tuple_element("tuple", "index")),),
         )
 
     @classmethod
@@ -169,8 +167,7 @@ class AddInts(Node):
         integer = TypeExpr.concrete("INT")
         return NodeSchema(
             "std.math.add_ints",
-            inputs=(InputSpec("a", integer), InputSpec("b", integer)),
-            outputs=(OutputSpec("sum", integer),),
+            body=(Input("a", integer), Input("b", integer), Output("sum", integer)),
         )
 
     @classmethod
@@ -186,8 +183,10 @@ class MakeRange(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.make_range",
-            inputs=(InputSpec("count", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            body=(
+                Input("count", TypeExpr.concrete("INT")),
+                Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),
+            ),
         )
 
     @classmethod
@@ -202,8 +201,10 @@ class SumList(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sum_list",
-            inputs=(InputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
-            outputs=(OutputSpec("total", TypeExpr.concrete("INT")),),
+            body=(
+                Input("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),
+                Output("total", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -217,8 +218,7 @@ class BadListOutput(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.bad_list_output",
-            inputs=(),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
+            body=(Output("values", TypeExpr.list_of(TypeExpr.concrete("INT"))),),
         )
 
     @classmethod
@@ -234,11 +234,11 @@ class CollectIndependentValues(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.collect-independent",
-            inputs=(
-                InputSpec("left", TypeExpr.wildcard()),
-                InputSpec("right", TypeExpr.wildcard()),
+            body=(
+                Input("left", TypeExpr.wildcard()),
+                Input("right", TypeExpr.wildcard()),
+                Output("values", TypeExpr.list_of(TypeExpr.wildcard())),
             ),
-            outputs=(OutputSpec("values", TypeExpr.list_of(TypeExpr.wildcard())),),
             input_values=True,
         )
 
@@ -254,8 +254,10 @@ class PickIndependentValue(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.pick-independent",
-            inputs=(InputSpec("values", TypeExpr.list_of(TypeExpr.wildcard())),),
-            outputs=(OutputSpec("item", TypeExpr.wildcard()),),
+            body=(
+                Input("values", TypeExpr.list_of(TypeExpr.wildcard())),
+                Output("item", TypeExpr.wildcard()),
+            ),
             input_values=True,
         )
 
@@ -393,8 +395,8 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
                 "pair": GraphNode(
                     "std.tuple.make",
                     {
-                        "items.first": Link("integer", "value"),
-                        "items.second": Link("text", "value"),
+                        "first": Link("integer", "value"),
+                        "second": Link("text", "value"),
                     },
                 ),
                 "first": GraphNode("std.tuple.get", {"tuple": Link("pair", "tuple"), "index": 0}),
@@ -434,7 +436,7 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
                     ),
                     "next": GraphNode(
                         "std.tuple.make",
-                        {"items.count": Link("sum", "sum"), "items.label": Link("label", "item")},
+                        {"first": Link("sum", "sum"), "second": Link("label", "item")},
                     ),
                 }
             ),
@@ -501,36 +503,37 @@ def test_engine_runs_independently_typed_tuple_nodes_and_caches() -> None:
 
 
 @pytest.mark.parametrize(("index", "expected", "type_id"), [(0, 7, "INT"), (1, "label", "STRING")])
-def test_worker_projects_tuple_selectors_in_output_families(
+def test_worker_projects_tuple_selectors_in_output_groups(
     index: int, expected: object, type_id: str
 ) -> None:
     from dinkster_protocol import Invocation
-    from dinkster_schema import OutputFamilySpec, OutputInterface, elaborate
+    from dinkster_schema import Group, Named, elaborate
+    from dinkster_schema.nest import Item, Members
 
     class Pick(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "test.family-pick",
-                inputs=(
-                    InputSpec(
+                body=(
+                    Input(
                         "values",
                         TypeExpr.tuple_of(TypeExpr.concrete("INT"), TypeExpr.concrete("STRING")),
                     ),
-                    InputSpec("index", TypeExpr.concrete("INT")),
-                ),
-                output_families=(
-                    OutputFamilySpec("picked", TypeExpr.tuple_element("values", "index")),
+                    Input("index", TypeExpr.concrete("INT")),
+                    Group(
+                        "picked",
+                        value=Output("pick", TypeExpr.tuple_element("values", "index")),
+                        keys=Named(("left", "right")),
+                    ),
                 ),
             )
 
         @classmethod
         def execute(
-            cls, *, values: tuple[int, str], index: int, output_spec: OutputInterface
+            cls, *, values: tuple[int, str], index: int, picked: Members[Item]
         ) -> Mapping[str, object]:
-            return cls.outputs(
-                picked={name: values[index] for name in output_spec.family("picked")}
-            )
+            return {"picked": {member.key: values[index] for member in picked}}
 
     async def scenario() -> None:
         registry = make_registry()
@@ -614,8 +617,8 @@ def test_tuple_nodes_preserve_position_types_through_production_hosts(
                     "pair": GraphNode(
                         "std.tuple.make",
                         {
-                            "items.label": Link("text", "value"),
-                            "items.count": Link("integer", "value"),
+                            "first": Link("text", "value"),
+                            "second": Link("integer", "value"),
                         },
                     ),
                     "selected": GraphNode(
@@ -649,8 +652,10 @@ class TakesScalar(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.takes_scalar",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+            body=(
+                Input("value", TypeExpr.concrete("INT")),
+                Output("out", TypeExpr.concrete("INT")),
+            ),
         )
 
 

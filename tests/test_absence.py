@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 from dinkster_caches import MemoryLRUCache
-from dinkster_engine import Engine, ExecutionError
-from dinkster_graph import Graph, GraphNode, Link
+from dinkster_engine import Engine, ExecutionError, GraphValidationError
+from dinkster_graph import AbsentInput, Graph, GraphNode, Link
 from dinkster_protocol import ExpandedReturn, LiteralInput, LocalExpansion, LocalNode, PresentOutput
 from dinkster_schema import (
     ABSENT,
@@ -22,10 +22,10 @@ from dinkster_schema import (
     AbsentOutput,
     AbsentPolicy,
     ExpansionBuilder,
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -59,8 +59,10 @@ class MaybeProduce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.maybe_produce",
-            inputs=(InputSpec("produce", TypeExpr.concrete("BOOLEAN")),),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+            body=(
+                Input("produce", TypeExpr.concrete("BOOLEAN")),
+                Output("value", TypeExpr.concrete("INT"), optional=True),
+            ),
         )
 
     @classmethod
@@ -77,8 +79,7 @@ class IllegalAbsent(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.illegal_absent",
-            inputs=(),
-            outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+            body=(Output("value", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -95,8 +96,10 @@ class AddOne(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.add_one",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT")),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+            body=(
+                Input("value", TypeExpr.concrete("INT")),
+                Output("out", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -112,11 +115,11 @@ class Coalesce(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.coalesce",
-            inputs=(
-                InputSpec("value", TypeExpr.concrete("INT"), on_absent="accept"),
-                InputSpec("fallback", TypeExpr.concrete("INT")),
+            body=(
+                Input("value", TypeExpr.concrete("INT"), on_absent="accept"),
+                Input("fallback", TypeExpr.concrete("INT")),
+                Output("out", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -131,11 +134,11 @@ class WithOptional(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.with_optional",
-            inputs=(
-                InputSpec("base", TypeExpr.concrete("INT")),
-                InputSpec("extra", TypeExpr.concrete("INT"), required=False),
+            body=(
+                Input("base", TypeExpr.concrete("INT")),
+                Input("extra", TypeExpr.concrete("INT"), required=False),
+                Output("out", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -150,11 +153,11 @@ class WithDefault(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.with_default",
-            inputs=(
-                InputSpec("base", TypeExpr.concrete("INT")),
-                InputSpec("extra", TypeExpr.concrete("INT"), required=False, default=100),
+            body=(
+                Input("base", TypeExpr.concrete("INT")),
+                Input("extra", TypeExpr.concrete("INT"), required=False, default=100),
+                Output("out", TypeExpr.concrete("INT")),
             ),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
         )
 
     @classmethod
@@ -169,8 +172,10 @@ class Strict(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.strict",
-            inputs=(InputSpec("value", TypeExpr.concrete("INT"), on_absent="fail"),),
-            outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
+            body=(
+                Input("value", TypeExpr.concrete("INT"), on_absent="fail"),
+                Output("out", TypeExpr.concrete("INT")),
+            ),
         )
 
     @classmethod
@@ -242,8 +247,7 @@ def test_blocked_required_output_reports_once_per_run(cache_enabled: bool, messa
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.block",
-                inputs=(),
-                outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+                body=(Output("value", TypeExpr.concrete("INT")),),
             )
 
         @classmethod
@@ -396,16 +400,16 @@ def test_demanded_lazy_absence_uses_existing_policies_and_producer_cache() -> No
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     node_type=f"test.lazy-absent-{policy}",
-                    inputs=(
-                        InputSpec(
+                    body=(
+                        Input(
                             "value",
                             TypeExpr.concrete("INT"),
                             required=policy != "omit",
                             on_absent=policy,
                             lazy=True,
                         ),
+                        Output("out", TypeExpr.concrete("INT")),
                     ),
-                    outputs=(OutputSpec("out", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod
@@ -512,6 +516,78 @@ def test_fail_policy_names_the_origin() -> None:
     run_scenario(scenario())
 
 
+# -- an input whose wire gives nothing ---------------------------------------
+
+
+def test_absent_input_skips_a_required_input_and_cascades() -> None:
+    async def scenario() -> None:
+        AddOne.ran.clear()
+        engine = make_engine()
+        graph = Graph(
+            nodes={
+                "a": GraphNode("test.add_one", {"value": AbsentInput("the member was removed")}),
+                "b": GraphNode("test.add_one", {"value": Link("a", "out")}),
+            }
+        )
+        result = await engine.run(graph, ["b"])
+        assert AddOne.ran == []
+        assert set(result.skipped) == {"a", "b"}
+        assert result.executed == ()
+        final = result.outputs["b"]["out"]
+        assert is_absent(final)
+        assert final.meta.get(ABSENT_ORIGIN_META_KEY) == "a/value"
+        assert final.meta.get(ABSENT_REASON_META_KEY) == "the member was removed"
+        assert final.meta.get(ABSENT_STANDS_FOR_META_KEY) == "INT"
+
+    run_scenario(scenario())
+
+
+def test_absent_input_on_an_optional_input_is_unconnected() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        sent = Graph(
+            nodes={"w": GraphNode("test.with_default", {"base": 5, "extra": AbsentInput()})}
+        )
+        first = await engine.run(sent, ["w"])
+        assert first.skipped == ()
+        assert first.outputs["w"]["out"].resolve() == 105
+
+        unconnected = Graph(nodes={"w": GraphNode("test.with_default", {"base": 5})})
+        second = await engine.run(unconnected, ["w"])
+        assert second.cached == ("w",)
+
+    run_scenario(scenario())
+
+
+def test_absent_input_on_an_accepting_input_arrives_as_none() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        graph = Graph(
+            nodes={"c": GraphNode("test.coalesce", {"value": AbsentInput(), "fallback": 7})}
+        )
+        result = await engine.run(graph, ["c"])
+        assert result.skipped == ()
+        assert result.outputs["c"]["out"].resolve() == 7
+
+    run_scenario(scenario())
+
+
+def test_absent_input_on_a_failing_input_is_refused_before_the_run() -> None:
+    async def scenario() -> None:
+        engine = make_engine()
+        graph = Graph(
+            nodes={"s": GraphNode("test.strict", {"value": AbsentInput("the option is off")})}
+        )
+        with pytest.raises(GraphValidationError) as refused:
+            await engine.run(graph, ["s"])
+        (diagnostic,) = [d for d in refused.value.diagnostics if d.severity == "error"]
+        assert diagnostic.code == "absent-input"
+        assert diagnostic.node_id == "s"
+        assert "the option is off" in diagnostic.message
+
+    run_scenario(scenario())
+
+
 # -- document-time diagnostics ----------------------------------------------
 
 
@@ -524,7 +600,7 @@ def test_cached_forwarded_absence_preserves_source_provenance(return_kind: str) 
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 "test.forward_absent",
-                outputs=(OutputSpec("value", TypeExpr.concrete("INT"), optional=True),),
+                body=(Output("value", TypeExpr.concrete("INT"), optional=True),),
                 may_expand_graph=return_kind != "mapping",
             )
 

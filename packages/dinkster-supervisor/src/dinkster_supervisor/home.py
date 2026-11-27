@@ -39,6 +39,7 @@ Routing, in order:
 
 Status wire: the supervisor's protocol 1 (see ``supervisor.py``) plus
 ``"role": "home"``, ``"installations"`` (how many the store registry lists),
+``"projectsFolder"`` (the default parent for new projects' Files folders),
 ``"frontend"`` and ``"frontendKind"`` (the shared frontend's folder or
 development server, and which of ``installed``, ``folder`` or ``dev`` it is,
 so a client can tell whether it is the one it would have served),
@@ -49,6 +50,21 @@ the process's own port, or why there is none) and ``"open": {"root",
 engine's, ``stopped`` when none is open or the open engine was stopped on
 purpose. Restart with nothing open opens the default installation, or refuses
 with a ``message`` saying why.
+
+``homeId`` changes with each Home incarnation. An explicit ``?project=<id>``
+adds ``execution`` with the verified project revision, host namespace,
+installation and engine identity, and ``filesystem.binding``. This opaque
+binding invalidates when the selected execution context changes; it is not
+authentication or permission to use native files. Unknown runtime provenance
+reports an unknown host and null identities/filesystem. No open, ready context
+or valid explicit project means null execution. WSL paths belong to the named
+Linux distribution, not the caller's native filesystem.
+
+``POST /api/mounts/resolve-path`` requires a single ``X-Dinkster-Execution``
+header containing the validated status ``execution`` object as JSON. Home
+revalidates it before forwarding any path bytes; missing/invalid snapshots
+return 400 and changed/unverified bindings return 409
+``execution-binding-mismatch``. This check does not grant file access.
 
 ``GET /supervisor/installations`` lists each installation's root with its
 frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
@@ -105,6 +121,8 @@ import ipaddress
 import json
 import logging
 import os
+import platform
+import re
 import shutil
 import signal
 import sys
@@ -112,11 +130,13 @@ from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import aiohttp
 from aiohttp import web
 from dinkster_library import AsyncLibraryClient, LibraryError
 from dinkster_library.asset_identity import digest_bytes
+from dinkster_library.client import MAX_MESSAGE
 from dinkster_library.http_routes import (
     ERROR_STATUS,
     LIST_ERROR_STATUS,
@@ -138,7 +158,15 @@ from .home_frontend import (
     is_engine_path,
     proxy_dev,
 )
-from .home_setup import SETUP_KEY, SetupJobs, SetupRefused, handle_job, handle_plan, handle_start
+from .home_setup import (
+    SETUP_KEY,
+    SetupJobs,
+    SetupRefused,
+    handle_active_job,
+    handle_job,
+    handle_plan,
+    handle_start,
+)
 from .supervisor import (
     CORS_KEY,
     HTTP_TASKS_KEY,
@@ -518,6 +546,8 @@ class Home:
         default_root: Path | None = None,
     ) -> None:
         self.link = EngineLink(state="stopped")
+        self.home_id = uuid4().hex
+        self.selection_epoch = 0
         self.target: OpenTarget | None = None
         self.opened: list[OpenTarget] = []
         """Every engine this process opened, in order; shutdown stops them all."""
@@ -586,6 +616,7 @@ class Home:
         With nothing open, open the default installation: the one ``dinkster``
         opens when the registry lists it, else the only one listed.
         """
+        self.selection_epoch += 1
         if self.target is None:
             known = await asyncio.to_thread(self._installations)
             await self._replace(OpenTarget(self._default_installation(known), "main"))
@@ -648,6 +679,7 @@ class Home:
             target = self.target
             if target is None:
                 raise LookupError("No installation is open.")
+            self.selection_epoch += 1
             await self._cancel()
             self._set(state="stopped", base_url="")
             for callback in self._on_change:
@@ -658,6 +690,7 @@ class Home:
         """Stop every engine this process opened; return those stopped and those that failed."""
         await self.setup.close()
         async with self._changing:
+            self.selection_epoch += 1
             await self._cancel()
             self._set(state="stopped", base_url="")
             for callback in self._on_change:
@@ -689,6 +722,7 @@ class Home:
             await self._replace_locked(target)
 
     async def _replace_locked(self, target: OpenTarget) -> None:
+        self.selection_epoch += 1
         await self._cancel()
         self.target = target
         if target not in self.opened:
@@ -947,6 +981,8 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
         body: object = {}
         if method != "GET":
             try:
+                if method == "POST" and identifier is None:
+                    request = request.clone(client_max_size=MAX_MESSAGE)
                 body = await request.json()
             except ValueError as error:
                 return web.json_response({"error": f"invalid JSON: {error}"}, status=400)
@@ -1004,6 +1040,15 @@ async def _route(request: web.Request) -> web.StreamResponse:
     home = request.app[HOME_KEY]
     if home.engine_absent and (answer := await _answer_from_library(request)):
         return answer
+    if request.method == "POST" and request.path == "/api/mounts/resolve-path":
+        refused = await _check_execution_binding(request)
+        if refused is not None:
+            return refused
+        headers = request.headers.copy()
+        del headers["X-Dinkster-Execution"]
+        request = request.clone(headers=headers)
+    # No suspension after binding validation: the proxy captures this selection's
+    # URL and registers for selection-change cancellation before its first await.
     origin = request.headers.get("Origin")
     if origin is not None and home.link.base_url:
         # The origin check already passed; the engine sees the request as its own page's.
@@ -1013,11 +1058,153 @@ async def _route(request: web.Request) -> web.StreamResponse:
     return await proxy_to_engine(request)
 
 
+def _execution_host() -> dict[str, str | None]:
+    """Host namespace facts, not authority to grant a caller native file access."""
+    if sys.platform == "linux":
+        kernel = platform.release().lower()
+        if "microsoft" in kernel or "wsl" in kernel:
+            marker = Path("/etc/dinkster-desktop-owner")
+            try:
+                distribution = marker.read_text("ascii").strip()
+                if (
+                    "wsl2" in kernel
+                    and not marker.is_symlink()
+                    and re.fullmatch(r"Dinkster-Desktop-[a-f0-9]{12}", distribution)
+                ):
+                    return {"kind": "wsl2", "distribution": distribution}
+            except (OSError, ValueError):
+                pass
+            return {"kind": "unknown", "distribution": None}
+    return {"kind": "native", "distribution": None}
+
+
+async def _execution_status(request: web.Request) -> dict[str, object] | None:
+    from .environment_runtime import engine_provenance
+
+    home = request.app[HOME_KEY]
+    project = request.query.get("project", "")
+    target, epoch, url = home.target, home.selection_epoch, home.link.base_url
+    if (
+        target is None
+        or home.link.state != "ready"
+        or len(request.query.getall("project", [])) != 1
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", project) is None
+    ):
+        return None
+    unknown: dict[str, object] = {
+        "project": None,
+        "host": {"kind": "unknown", "distribution": None},
+        "installation": None,
+        "engine": None,
+        "filesystem": None,
+    }
+    try:
+        before = await asyncio.to_thread(engine_provenance, target.root, target.engine)
+        if before is None:
+            return unknown
+        engine = cast("dict[str, object]", before["engine"])
+        if engine["url"] != url:
+            return unknown
+        host = _execution_host()
+        async with request.app[SESSION_KEY].get(
+            f"{url}/api/projects/{project}",
+            timeout=aiohttp.ClientTimeout(total=5),
+            allow_redirects=False,
+        ) as response:
+            if response.status != 200:
+                return None
+            body: object = await response.json()
+        raw = cast("dict[str, object]", body).get("project") if isinstance(body, dict) else None
+        if not isinstance(raw, dict):
+            return None
+        record = cast("dict[str, object]", raw)
+        if (
+            record.get("id") != project
+            or record.get("deleted") is not False
+            or type(record.get("revision")) is not int
+        ):
+            return None
+        installation = cast("dict[str, object]", before["installation"])
+        environment = record.get("environment")
+        if environment is not None and (
+            not isinstance(environment, dict)
+            or cast("dict[str, object]", environment).get("id") != installation["id"]
+        ):
+            return None
+        after = await asyncio.to_thread(engine_provenance, target.root, target.engine)
+        if (
+            before != after
+            or home.target != target
+            or home.selection_epoch != epoch
+            or home.link.state != "ready"
+            or home.link.base_url != url
+            or _execution_host() != host
+        ):
+            return None
+        binding = digest_bytes(
+            json.dumps(
+                [home.home_id, epoch, host, before, project, record["revision"], environment],
+                sort_keys=True,
+            ).encode()
+        )
+        return {
+            "project": {"id": project, "revision": record["revision"]},
+            "host": host,
+            "installation": installation,
+            "engine": engine,
+            "filesystem": ({"binding": binding} if host["kind"] in {"native", "wsl2"} else None),
+        }
+    except (OSError, ValueError, aiohttp.ClientError, TimeoutError):
+        return None
+
+
+async def _check_execution_binding(request: web.Request) -> web.Response | None:
+    headers = request.headers.getall("X-Dinkster-Execution", [])
+    try:
+        expected: object = json.loads(headers[0]) if len(headers) == 1 else None
+    except ValueError:
+        expected = None
+    project = (
+        cast("dict[str, object]", expected).get("project") if isinstance(expected, dict) else None
+    )
+    identifier = cast("dict[str, object]", project).get("id") if isinstance(project, dict) else None
+    if (
+        not isinstance(identifier, str)
+        or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", identifier) is None
+    ):
+        return web.json_response(
+            {"error": "execution-binding-invalid", "message": "A validated execution is required."},
+            status=400,
+            headers={"Cache-Control": "no-store"},
+        )
+    current = await _execution_status(
+        request.clone(rel_url=request.rel_url.with_query({"project": identifier}))
+    )
+    if (
+        current is None
+        or current["filesystem"] is None
+        or json.dumps(current, sort_keys=True) != json.dumps(expected, sort_keys=True)
+    ):
+        return web.json_response(
+            {
+                "error": "execution-binding-mismatch",
+                "message": "The selected execution no longer matches the validated binding.",
+            },
+            status=409,
+            headers={"Cache-Control": "no-store"},
+        )
+    return None
+
+
 async def _handle_status(request: web.Request) -> web.Response:
     home = request.app[HOME_KEY]
+    count = await home.installation_count()
+    execution = await _execution_status(request)
     status = home.link.status_wire()
     status["role"] = "home"
     status["supervisor"] = {"pid": os.getpid()}
+    status["homeId"] = home.home_id
+    status["execution"] = execution
     if home.target is not None:
         status["open"] = home.target.wire()
     frontends = request.app[FRONTENDS_KEY]
@@ -1028,13 +1215,13 @@ async def _handle_status(request: web.Request) -> web.Response:
         status["installationFrontend"] = frontends.installation_url
     if frontends.installation_warning:
         status["installationFrontendWarning"] = frontends.installation_warning
-    count = await home.installation_count()
     if count is not None:
         status["installations"] = count
     instance = request.app[INSTANCE_KEY]
     if instance is not None:
         status["instance"] = instance
     status["openFolder"] = _can_open_folder(request)
+    status["projectsFolder"] = str((dinkster_home() / "projects").resolve())
     return web.json_response(status)
 
 
@@ -1082,7 +1269,7 @@ def _can_open_folder(request: web.Request) -> bool:
 
 
 async def _handle_open_folder(request: web.Request) -> web.Response:
-    """Show a project's output folder, read from its record here, never from the request."""
+    """Show a project's Files folder, read from its record, never from the request."""
     opener = request.app[OPEN_FOLDER_KEY]
     if opener is None or not _can_open_folder(request):
         return web.json_response(
@@ -1104,14 +1291,14 @@ async def _handle_open_folder(request: web.Request) -> web.Response:
     except (LibraryError, _EngineOpening, aiohttp.ClientError, ValueError, KeyError):
         project = None
     record = cast("dict[str, object]", project) if isinstance(project, dict) else {}
-    folder = record.get("folder")
+    folder = record.get("filesFolder", record.get("folder"))
     if record.get("deleted") is not False or not isinstance(folder, str):
         return web.json_response(
-            {"error": "no-folder", "message": "the project has no output folder"}, status=404
+            {"error": "no-folder", "message": "the project has no Files folder"}, status=404
         )
     if not await asyncio.to_thread(Path(folder).is_dir):
         return web.json_response(
-            {"error": "no-folder", "message": "the project's output folder does not exist"},
+            {"error": "no-folder", "message": "the project's Files folder does not exist"},
             status=404,
         )
     await opener(Path(folder))
@@ -1477,7 +1664,7 @@ def create_home_app(
     installation's own frontend instead. ``library`` is the shared library
     answered while no engine is starting or running; with None those routes
     pass to the engine like any other. ``exit`` is called once a shutdown
-    request has been answered. ``open_folder`` shows a project's output folder in
+    request has been answered. ``open_folder`` shows a project's Files folder in
     this machine's file manager; with None the process offers no way to open it.
     """
     app = web.Application()
@@ -1584,6 +1771,7 @@ def create_home_app(
     app.router.add_get("/supervisor/installations/restore", _handle_restore_plan)
     app.router.add_post("/supervisor/installations/restore", handle_start)
     app.router.add_post("/supervisor/setup", handle_start)
+    app.router.add_get("/supervisor/setup/active", handle_active_job)
     app.router.add_get("/supervisor/setup/{id}", handle_job)
     app.router.add_delete("/supervisor/setup/{id}", handle_job)
     app.router.add_get("/supervisor/installations/jobs/{id}", handle_job)

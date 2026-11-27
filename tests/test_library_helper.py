@@ -1088,7 +1088,21 @@ def test_finished_history_is_shared_immutable_paged_and_does_not_resurrect(tmp_p
         )
         assert page["digests"] == ["blake3:" + "ef" * 32]
         assert page["cursor"] is None
-        second.call("projects.register", id="unrelated")
+        second.call("projects.register", id="unrelated", startWith={"kind": "empty"})
+        for start in (
+            {"kind": "project", "project": "film"},
+            {"kind": "workflow", "name": "Scene", "content": "{}"},
+        ):
+            with pytest.raises(LibraryError) as blocked:
+                first.call(
+                    "projects.register",
+                    id="with-contents",
+                    filesFolder=str(tmp_path / "with-contents"),
+                    startWith=start,
+                )
+            assert blocked.value.code == "busy"
+        assert first.call("projects.get", id="with-contents") == {"project": None}
+        assert not (tmp_path / "with-contents").exists()
         with closing(sqlite3.connect(tmp_path / "records.sqlite", timeout=0)) as database:
             database.execute("BEGIN IMMEDIATE")
             database.rollback()
@@ -4786,6 +4800,98 @@ def test_asset_browse_groups_aliases_and_binds_scope_project_and_filters(tmp_pat
     assert not (tmp_path / "empty-assets" / "library.sqlite").exists()
 
 
+def test_project_registration_allocates_known_folders_and_retains_them(
+    tmp_path: Path,
+) -> None:
+    from dinkster_assets import MountConfiguration, MountDef, MountTable
+
+    from dinkster.mounts_api import MountService
+
+    old_output = tmp_path / "old-output"
+    old_output.mkdir()
+    with LibraryClient(tmp_path / "library") as helper:
+        MountConfiguration.load(helper).save(
+            (
+                MountDef("output", old_output, "readwrite"),
+                MountDef("film-output", tmp_path / "unrelated"),
+                MountDef("film-input", tmp_path / "unrelated-input"),
+                MountDef("existing-input", tmp_path / "input-conflict" / "input"),
+            ),
+            output_mount="output",
+        )
+        helper.call("folders.grants.patch", revision=1, patch={"future": "keep grants"})
+        legacy = helper.call("projects.register", id="legacy")
+        created: dict[str, dict[str, object]] = {}
+        for identifier in ("film", "portraits"):
+            parent = tmp_path / identifier
+            document = cast(
+                "dict[str, object]",
+                helper.call("projects.register", id=identifier, filesFolder=str(parent))["project"],
+            )
+            created[identifier] = document
+            assert document["filesFolder"] == str(parent)
+            assert document["folder"] == str(parent / "output")
+            assert (parent / "output").is_dir()
+            assert (parent / "input").is_dir()
+        service = MountService(MountTable(), library=helper)
+        for identifier, mount_id in (("film", "film-output-2"), ("portraits", "portraits-output")):
+            context = service.project_context(identifier)
+            assert context.output_mount == mount_id
+            assert service.table.get(mount_id) == MountDef(
+                mount_id, tmp_path / identifier / "output", "readwrite"
+            )
+            assert mount_id not in service.project_context("legacy").mounts
+            input_id = "film-input-2" if identifier == "film" else "portraits-input"
+            assert service.projects.input(identifier, None) == input_id
+            assert service.table.get(input_id) == MountDef(
+                input_id, tmp_path / identifier / "input", "readwrite"
+            )
+            assert input_id in context.mounts
+            assert input_id not in service.project_context("legacy").mounts
+        grants = cast("dict[str, object]", helper.call("folders.get")["grants"])
+        assert cast("dict[str, object]", grants["values"])["future"] == "keep grants"
+        baseline, cursor = helper.call("folders.get"), helper.call("changes.head")["cursor"]
+        assert helper.call(
+            "projects.register", id="film", filesFolder=str(tmp_path / "ignored")
+        ) == {"project": created["film"]}
+        assert (
+            helper.call("projects.register", id="legacy", filesFolder=str(tmp_path / "unused"))
+            == legacy
+        )
+        assert not (tmp_path / "ignored").exists()
+        assert not (tmp_path / "unused").exists()
+        assert helper.call("folders.get") == baseline
+        assert helper.call("changes", cursor=cursor)["items"] == []
+        blocked = tmp_path / "blocked"
+        blocked.write_bytes(b"not a directory")
+        for path in (
+            "relative",
+            42,
+            str(tmp_path / "film"),
+            str(tmp_path / "input-conflict"),
+            str(blocked),
+        ):
+            with pytest.raises(LibraryError) as invalid:
+                helper.call("projects.register", id="refused", filesFolder=path)
+            assert invalid.value.code == "invalid"
+            assert helper.call("projects.get", id="refused") == {"project": None}
+            assert helper.call("folders.get") == baseline
+            assert helper.call("changes", cursor=cursor)["items"] == []
+        payload = tmp_path / "film" / "output" / "retained.bin"
+        payload.write_bytes(b"keep after deletion")
+        input_payload = tmp_path / "film" / "input" / "retained.bin"
+        input_payload.write_bytes(b"keep source after deletion")
+        helper.call("projects.delete", id="film", revision=1)
+        helper.call("projects.restore", id="film", revision=2)
+        assert payload.read_bytes() == b"keep after deletion"
+        assert input_payload.read_bytes() == b"keep source after deletion"
+        assert helper.call("folders.get") == baseline
+        assert helper.call("projects.get", id="legacy") == legacy
+    with LibraryClient(tmp_path / "library") as reopened:
+        assert reopened.call("projects.get", id="portraits") == {"project": created["portraits"]}
+        assert reopened.call("folders.get") == baseline
+
+
 def test_project_registration_and_revision_conflicts(tmp_path: Path) -> None:
     with LibraryClient(tmp_path) as first, LibraryClient(tmp_path) as second:
         with ThreadPoolExecutor(2) as pool:
@@ -4862,7 +4968,7 @@ def test_project_identity_fields_filters_and_remembered_deletion(tmp_path: Path)
         assert patched["uid"] == registered["uid"]
         assert patched["created"] == registered["created"]
         assert patched["revision"] == 2
-        assert patched["packs"] == {"extra": ["grain", "color"]}
+        assert patched["packs"] == {"extra": ["grain", "color"], "allInstalled": True}
         assert patched["accountProject"] == {"issuer": "https://example.test", "id": "shared-film"}
         assert first.call("projects.list", environment="editing")["items"] == [patched]
         assert first.call("projects.list", environment="other")["items"] == []

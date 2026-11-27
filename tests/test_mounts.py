@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Mapping
 from dataclasses import replace
@@ -28,8 +29,10 @@ from dinkster_assets import (
     AssetWriter,
     LibraryStore,
     LocalAssetLibrary,
+    MountConfiguration,
     MountDef,
     MountSnapshotResolver,
+    MountSnapshotWriter,
     MountTable,
     digest_bytes,
     dump_mounts,
@@ -43,12 +46,13 @@ from dinkster_assets.resolution import MountMaterialization, ResolutionStore
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_graph import Graph, GraphNode, graph_to_wire
+from dinkster_library import LibraryClient
 from dinkster_protocol import AssetFolderContext
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -130,8 +134,7 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -601,12 +604,12 @@ def test_public_mount_roots_in_ordinary_hosts(
     )
     (pack / "root_probe.py").write_text(
         "import json\n"
-        "from dinkster_api.v1 import Node, NodeSchema, OutputSpec, TypeExpr, mount_roots_for_kind\n"
+        "from dinkster_api.v1 import Node, NodeSchema, Output, TypeExpr, mount_roots_for_kind\n"
         "class Probe(Node):\n"
         "    @classmethod\n"
         "    def define_schema(cls):\n"
-        "        return NodeSchema(node_type='rootprobe.read', inputs=(), "
-        "outputs=(OutputSpec('roots', TypeExpr.concrete('STRING')),))\n"
+        "        return NodeSchema(node_type='rootprobe.read',  "
+        "body=(Output('roots', TypeExpr.concrete('STRING')),))\n"
         "    @classmethod\n"
         "    def execute(cls):\n"
         "        roots = mount_roots_for_kind('model/embedding')\n"
@@ -909,6 +912,87 @@ async def wait_for_state(
             await asyncio.sleep(0.02)
 
 
+def test_mount_folder_sizes_observe_current_files_without_hashing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "models"
+    seed(root, {"one.bin": b"abc", "nested/two.bin": b"elevenbytes"})
+    table = MountTable(tmp_path / "snapshot.json")
+    table.add(MountDef("models", root))
+    table.add(MountDef("alias", root))
+    table.add(MountDef("pending", tmp_path / "pending"))
+    table.scan("models")
+    table.scan("alias")
+    (root / ".hidden").write_bytes(b"ignored")
+    (root / "partial.part").write_bytes(b"unfinished")
+    outside = tmp_path / "outside.bin"
+    outside.write_bytes(b"outside the grant")
+    symlink_or_skip(root / "outside.bin", outside)
+
+    def no_hash(*args: object, **kwargs: object) -> None:
+        pytest.fail("folder size observation must not hash file contents")
+
+    monkeypatch.setattr("dinkster_assets.library.digest_file_with_record", no_hash)
+
+    async def scenario() -> None:
+        client = await make_client(MountService(table))
+
+        async def sizes() -> dict[str, object]:
+            response = await client.get("/api/mounts")
+            assert response.status == 200
+            return {row["id"]: row["folderSize"] for row in (await response.json())["mounts"]}
+
+        try:
+            observed = await sizes()
+            available = observed["models"]
+            assert isinstance(available, dict)
+            assert available["status"] == "available"
+            assert available["bytes"] == 14
+            assert isinstance(available["folder"], str)
+            assert str(root) not in available["folder"]
+            assert observed["alias"] == available
+            assert observed["pending"] == {"status": "unavailable"}
+            (root / "one.bin").write_bytes(b"12345")
+            (root / "added.bin").write_bytes(b"seven!!")
+            assert (await sizes())["models"] == {**available, "bytes": 23}
+            (root / "nested/two.bin").unlink()
+            assert (await sizes())["models"] == {**available, "bytes": 12}
+            (root / "one.bin").unlink()
+            (root / "added.bin").unlink()
+            assert (await sizes())["models"] == {**available, "bytes": 0}
+            private = tmp_path / "private"
+            seed(private, {"secret.bin": b"private contents outside the grant"})
+            nested = root / "nested"
+            original_directory = nested.stat()
+            scandir = os.scandir
+            replaced = False
+
+            def replace_directory(path: int | str | os.PathLike[str]):
+                nonlocal replaced
+                selected = (
+                    os.path.samestat(original_directory, os.fstat(path))
+                    if isinstance(path, int)
+                    else Path(path) == nested
+                )
+                if selected and not replaced:
+                    replaced = True
+                    nested.rename(root / "retained")
+                    nested.symlink_to(private, target_is_directory=True)
+                return scandir(path)
+
+            with monkeypatch.context() as race:
+                race.setattr(os, "scandir", replace_directory)
+                if scandir in os.supports_fd:
+                    race.setattr(os, "supports_fd", os.supports_fd | {replace_directory})
+                assert (await sizes())["models"] == {"status": "unavailable"}
+            root.rename(tmp_path / "removed")
+            assert (await sizes())["models"] == {"status": "unavailable"}
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_mounts_read_surface(tmp_path: Path) -> None:
     root = tmp_path / "granted"
     seed(
@@ -1124,6 +1208,134 @@ def _folder_paging_table(tmp_path: Path) -> MountTable:
     return table
 
 
+@pytest.mark.parametrize(
+    ("sort", "expected"),
+    [
+        ("newest", ["second/Zebra.png", "first/Zebra.png", "first/deep/apple.png"]),
+        ("name", ["first/deep/apple.png", "first/Zebra.png", "second/Zebra.png"]),
+        ("path", ["first/Zebra.png", "first/deep/apple.png", "second/Zebra.png"]),
+    ],
+)
+def test_mount_entries_order_across_enabled_mounts(
+    tmp_path: Path, sort: str, expected: list[str]
+) -> None:
+    import os
+
+    table = MountTable(tmp_path / "snap.json", index_root=tmp_path / "indexes")
+    files = {
+        "first/Zebra.png": 1_700_000_100.25,
+        "first/deep/apple.png": 1_700_000_100.25,
+        "second/Zebra.png": 1_700_000_200.5,
+        "second/notes.txt": 1_700_000_300.0,
+        "disabled/hidden.png": 1_700_000_400.0,
+    }
+    for relative, modified in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(relative.encode())
+        os.utime(path, (modified, modified))
+    for mount_id in ("first", "second", "disabled"):
+        table.add(MountDef(mount_id, tmp_path / mount_id))
+        table.scan(mount_id)
+    service = MountService(table)
+    service.projects.update(
+        "default", ["first", "second"], available=service.mount_ids(), output=None
+    )
+
+    async def scenario() -> None:
+        async with await make_client(service) as client:
+            params = {"sort": sort, "kind": "media/image", "limit": "1"}
+            rows = []
+            cursor = None
+            for _ in expected:
+                response = await client.get(
+                    "/api/mounts/entries",
+                    params={**params, **({"cursor": cursor} if cursor else {})},
+                )
+                assert response.status == 200
+                body = await response.json()
+                assert body["total"] == 3
+                rows.extend(body["entries"])
+                cursor = body.get("cursor")
+            assert cursor is None
+            assert [row["virtualPath"] for row in rows] == [f"mounts/{p}" for p in expected]
+            assert [row["modifiedAt"] for row in rows] == [files[p] for p in expected]
+
+            response = await client.get("/api/mounts/entries", params={**params, "mount": "first"})
+            body = await response.json()
+            assert body["total"] == 2
+            selected_rows = body["entries"]
+            selected_cursor = body["cursor"]
+            response = await client.get(
+                "/api/mounts/entries",
+                params={**params, "mount": "first", "cursor": selected_cursor},
+            )
+            body = await response.json()
+            assert body["total"] == 2
+            assert "cursor" not in body
+            selected_rows.extend(body["entries"])
+            assert [row["virtualPath"] for row in selected_rows] == [
+                f"mounts/{p}" for p in expected if p.startswith("first/")
+            ]
+            for scope in ({}, {"mount": "second"}):
+                response = await client.get(
+                    "/api/mounts/entries",
+                    params={**params, **scope, "cursor": selected_cursor},
+                )
+                assert response.status == 400
+                assert await response.json() == {"error": "cursor does not match this query"}
+            response = await client.get(
+                "/api/mounts/entries",
+                params={**params, "mount": ["second", "first", "first"], "limit": "10"},
+            )
+            body = await response.json()
+            assert body["total"] == 3
+            assert [row["virtualPath"] for row in body["entries"]] == [
+                f"mounts/{p}" for p in expected
+            ]
+            for mount, status in (("disabled", 403), ("unknown", 404), ("", 400)):
+                response = await client.get(
+                    "/api/mounts/entries", params={"mount": ["first", mount]}
+                )
+                assert response.status == status
+            response = await client.get("/api/mounts/first/entries", params={"mount": "second"})
+            assert response.status == 400
+
+            response = await client.get(
+                "/api/mounts/first/entries",
+                params={"sort": sort, "path": "deep", "q": "APPLE", "recursive": "false"},
+            )
+            body = await response.json()
+            assert body["total"] == 1
+            assert [row["name"] for row in body["entries"]] == ["apple.png"]
+            response = await client.get(
+                "/api/mounts/entries", params={**params, "recursive": "false"}
+            )
+            assert (await response.json())["total"] == 2
+            response = await client.get("/api/mounts/disabled/entries", params=params)
+            assert response.status == 403
+            response = await client.get("/api/mounts/entries", params={"path": "deep"})
+            assert response.status == 400
+            response = await client.get("/api/mounts/entries", params={"sort": "invalid"})
+            assert response.status == 400
+            response = await client.get("/api/mounts/entries", params=params)
+            cursor = (await response.json())["cursor"]
+            service.projects.update(
+                "default", ["first"], available=service.mount_ids(), output=None
+            )
+            response = await client.get("/api/mounts/entries", params={**params, "cursor": cursor})
+            assert response.status == 400
+            assert await response.json() == {"error": "cursor does not match this query"}
+            response = await client.get(
+                "/api/mounts/entries",
+                params={**params, "mount": "first", "cursor": selected_cursor},
+            )
+            assert response.status == 400
+            assert await response.json() == {"error": "cursor does not match this query"}
+
+    run_scenario(scenario())
+
+
 def test_mount_entries_recursive_subtree_pages_stay_scoped(tmp_path: Path) -> None:
     table = _folder_paging_table(tmp_path)
 
@@ -1172,6 +1384,7 @@ def test_mount_entries_immediate_children_include_first_page_folders(
         resp = await client.get("/api/mounts/mixed/entries", params=params)
         first = await resp.json()
         assert first["folders"] == listed["folders"] == ["deep", "other"]
+        assert first["folderCounts"] == {"deep": 2, "other": 1}
         assert [row["virtualPath"] for row in first["entries"]] == [
             "mounts/mixed/models/a-cat.safetensors"
         ]
@@ -1181,6 +1394,7 @@ def test_mount_entries_immediate_children_include_first_page_folders(
         )
         second = await resp.json()
         assert "folders" not in second
+        assert "folderCounts" not in second
         assert [row["virtualPath"] for row in second["entries"]] == [
             "mounts/mixed/models/b-dog.safetensors"
         ]
@@ -1188,10 +1402,18 @@ def test_mount_entries_immediate_children_include_first_page_folders(
         resp = await client.get("/api/mounts/mixed/entries", params={"recursive": "false"})
         root = await resp.json()
         assert root["folders"] == ["models", "notes"]
+        assert root["folderCounts"] == {"models": 5, "notes": 1}
         assert [row["name"] for row in root["entries"]] == [
             "alpha.txt",
             "root-dog.txt",
         ]
+        resp = await client.get(
+            "/api/mounts/mixed/entries",
+            params={"path": "models", "recursive": "false", "q": "cat"},
+        )
+        filtered = await resp.json()
+        assert filtered["folderCounts"] == {"deep": 1, "other": 0}
+        assert [row["name"] for row in filtered["entries"]] == ["a-cat.safetensors"]
         await client.close()
 
     run_scenario(scenario())
@@ -1232,6 +1454,8 @@ def test_mount_entries_cursor_binds_every_filter(tmp_path: Path) -> None:
             {**base, "path": "models/deep", "cursor": cursor},
             {**base, "recursive": "false", "cursor": cursor},
             {**base, "q": "dog", "cursor": cursor},
+            {**base, "sort": "newest", "cursor": cursor},
+            {**base, "sort": "name", "cursor": cursor},
         )
         for params in mismatches:
             resp = await client.get("/api/mounts/mixed/entries", params=params)
@@ -1521,6 +1745,217 @@ def test_helper_project_edit_after_shared_model_location_change(
                 await client.close()
 
         run_scenario(scenario())
+
+
+@pytest.mark.parametrize("restart", [False, True])
+@pytest.mark.parametrize("shared", [False, True])
+def test_mount_access_updates_refuse_stale_and_selected_then_persist(
+    tmp_path: Path, restart: bool, shared: bool
+) -> None:
+    config = tmp_path / "mounts.toml"
+    mounts = tuple(MountDef(name, tmp_path / name, "readwrite") for name in ("first", "second"))
+    config.write_text(dump_mounts(mounts, output_mount="first"))
+    table = MountTable(output_mount="first", index_root=tmp_path / "indexes")
+    for mount in mounts:
+        mount.path.mkdir()
+        table.add(mount)
+        table.scan(mount.id)
+    helper = LibraryClient(tmp_path / "library") if shared else None
+    if helper is not None:
+        MountConfiguration.load(helper).save(mounts, output_mount="first")
+    service = MountService(
+        table, config, allow_changes=True, restart_for_changes=restart, library=helper
+    )
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            state = await (await client.get("/api/mounts")).json()
+            revision = state["revision"]
+            refused = await client.put(
+                "/api/mounts/first/access", json={"mode": "read", "revision": revision}
+            )
+            assert refused.status == 409
+            assert "replacement" in (await refused.json())["error"]
+            response = await client.put(
+                "/api/mounts/second/access", json={"mode": "read", "revision": revision}
+            )
+            assert response.status == 200, await response.text()
+            changed = await response.json()
+            assert {row["id"]: row["mode"] for row in changed["mounts"]} == {
+                "first": "readwrite",
+                "second": "read",
+            }
+            assert changed["revision"] != revision
+            stale = await client.put(
+                "/api/mounts/second/access", json={"mode": "readwrite", "revision": revision}
+            )
+            assert stale.status == 409
+            persisted = (
+                MountConfiguration.load(helper).mounts
+                if helper is not None
+                else load_mounts(config)
+            )
+            assert {mount.id: mount.mode for mount in persisted}["second"] == "read"
+            restored_table = MountTable(output_mount="first")
+            for mount in persisted:
+                restored_table.add(mount)
+            restored = MountService(restored_table, config, library=helper)
+            restored_state = restored.project_response("default")
+            restored_rows = cast(list[dict[str, object]], restored_state["mounts"])
+            assert {row["id"]: row["mode"] for row in restored_rows} == {
+                "first": "readwrite",
+                "second": "read",
+            }
+            response = await client.put(
+                "/api/mounts/second/access",
+                json={"mode": "readwrite", "revision": changed["revision"]},
+            )
+            assert response.status == 200
+            persisted = (
+                MountConfiguration.load(helper).mounts
+                if helper is not None
+                else load_mounts(config)
+            )
+            assert {mount.id: mount.mode for mount in persisted} == {
+                "first": "readwrite",
+                "second": "readwrite",
+            }
+            revision = (await response.json())["revision"]
+            peer_mounts = tuple(
+                replace(mount, priority=37) if mount.id == "first" else mount for mount in persisted
+            )
+            if helper is not None:
+                MountConfiguration.load(helper).save(peer_mounts, output_mount="first")
+            else:
+                config.write_text(dump_mounts(peer_mounts, output_mount="first"))
+            refused = await client.put(
+                "/api/mounts/second/access", json={"mode": "read", "revision": revision}
+            )
+            assert refused.status == 409
+            persisted = (
+                MountConfiguration.load(helper).mounts
+                if helper is not None
+                else load_mounts(config)
+            )
+            assert {mount.id: (mount.mode, mount.priority) for mount in persisted} == {
+                "first": ("readwrite", 37),
+                "second": ("readwrite", 0),
+            }
+            if helper is None:
+                config.unlink()
+                refused = await client.put(
+                    "/api/mounts/second/access", json={"mode": "read", "revision": revision}
+                )
+                assert refused.status == 409
+                assert not config.exists()
+        finally:
+            await service.close()
+            await client.close()
+            if helper is not None:
+                helper.close()
+
+    run_scenario(scenario())
+
+
+def test_access_change_during_scan_keeps_catalog_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import dinkster_assets.library as library_module
+
+    root = tmp_path / "input"
+    seed(root, {"source.txt": b"retained contents"})
+    service = MountService(
+        MountTable(index_root=tmp_path / "indexes"), tmp_path / "mounts.toml", allow_changes=True
+    )
+    entered, release = Event(), Event()
+
+    def held_digest(path: Path):
+        entered.set()
+        assert release.wait(10)
+        return real_digest_file_with_record(path)
+
+    monkeypatch.setattr(library_module, "digest_file_with_record", held_digest)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        ws = await client.ws_connect("/api/events?clientId=scan-access")
+        try:
+            added = await client.post(
+                "/api/mounts", json={"id": "input", "path": str(root), "mode": "readwrite"}
+            )
+            assert added.status == 201
+            assert await asyncio.to_thread(entered.wait, 10)
+            state = await (await client.get("/api/mounts")).json()
+            changed = await client.put(
+                "/api/mounts/input/access", json={"mode": "read", "revision": state["revision"]}
+            )
+            assert changed.status == 200
+            release.set()
+            async with asyncio.timeout(10):
+                while True:
+                    state = await (await client.get("/api/mounts")).json()
+                    if state["mounts"][0]["state"] == "ready":
+                        break
+                    await ws.receive_json()
+            assert state["mounts"][0]["mode"] == "read"
+            assert service.table.ref("mounts/input/source.txt").read_bytes() == b"retained contents"
+        finally:
+            release.set()
+            await ws.close()
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX directory permission fixture")
+def test_unwritable_mount_refuses_add_and_keeps_existing_files_readable(tmp_path: Path) -> None:
+    if sys.platform != "win32" and os.geteuid() == 0:
+        pytest.skip("run as an unprivileged user to exercise actual write refusal")
+    root = tmp_path / "readonly"
+    root.mkdir()
+    (root / "kept.txt").write_bytes(b"readable content")
+    root.chmod(0o555)
+    snapshot = tmp_path / "snapshot.json"
+    table = MountTable(snapshot, index_root=tmp_path / "indexes", output_mount="existing")
+    table.add(MountDef("existing", root, "readwrite"))
+    table.scan("existing")
+    service = MountService(table, tmp_path / "mounts.toml", allow_changes=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            with pytest.raises(PermissionError):
+                (root / "not-created.txt").write_bytes(b"denied")
+            refused = await client.post(
+                "/api/mounts", json={"id": "new", "path": str(root), "mode": "readwrite"}
+            )
+            assert refused.status == 400
+            assert "Cannot save here" in (await refused.json())["error"]
+            state = await (await client.get("/api/mounts")).json()
+            assert [row["id"] for row in state["mounts"]] == ["existing"]
+            assert state["mounts"][0]["state"] == "ready"
+            assert "Permission denied" in state["mounts"][0]["saveError"]
+            assert state["outputMount"] is None
+            assert table.ref("mounts/existing/kept.txt").read_bytes() == b"readable content"
+            for authority in (table, MountSnapshotWriter(snapshot)):
+                with pytest.raises(AssetError, match="Cannot save here"):
+                    authority.writable_root("existing")
+            refused = await client.put("/api/mounts/output", json={"id": "existing"})
+            assert refused.status == 400
+            root.chmod(0o755)
+            table.scan("existing")
+            recovered = await (await client.get("/api/mounts")).json()
+            assert "saveError" not in recovered["mounts"][0]
+            assert recovered["outputMount"] == "existing"
+            assert MountSnapshotWriter(snapshot).writable_root("existing") == root
+        finally:
+            root.chmod(0o755)
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_output_mount_selection_is_persisted_and_published(tmp_path: Path) -> None:
@@ -1870,6 +2305,7 @@ def test_project_asset_routes_require_live_library_projects(
                     ("GET", f"/api/mounts/locations?project={project}", None),
                     ("GET", f"/api/mounts/input/list?project={project}", None),
                     ("GET", f"/api/mounts/input/entries?project={project}", None),
+                    ("GET", f"/api/mounts/entries?project={project}", None),
                     (
                         "POST",
                         "/api/mounts/resolve-path",
@@ -2044,6 +2480,268 @@ def test_operator_default_import_destination_matches_upload_and_survives_revocat
             )
             assert response.status == 403
             assert not (tmp_path / "output" / "must-not-fallback.txt").exists()
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path) -> None:
+    from dinkster_assets import MountConfiguration
+    from dinkster_library import LibraryClient
+    from dinkster_server.projects import add_project_routes
+
+    root = tmp_path / "library"
+    mounts = tuple(
+        MountDef(name, tmp_path / name, "read" if name == "reference" else "readwrite")
+        for name in ("imports", "renders", "reference")
+    )
+    for mount in mounts:
+        mount.path.mkdir()
+
+    async def scenario() -> None:
+        for restarted in (False, True):
+            with LibraryClient(root) as helper:
+                if not restarted:
+                    MountConfiguration.load(helper).save(mounts, output_mount="renders")
+                table = MountTable()
+                service = MountService(table, library=helper, allow_changes=True)
+                for mount in mounts:
+                    table.scan(mount.id)
+                library = ServerLibrary(
+                    vault=AssetVault(root / "vault"),
+                    store=LibraryStore(helper),
+                    local_resolver=table,
+                    project_folders_for=service.project_context,
+                    upload_writer=AssetWriter(table),
+                    import_mount=lambda project, folders=service.projects: (
+                        folders.input(project, "imports") or "imports"
+                    ),
+                )
+                app = create_app(make_engine, SCHEMAS, library=library)
+                add_project_routes(app, helper, engine_version="0.0.18")
+                add_mount_routes(app, service)
+                async with TestClient(TestServer(app)) as client:
+                    if not restarted:
+                        for project in ("film", "portrait"):
+                            response = await client.post(
+                                "/api/projects",
+                                json={"id": project, "filesFolder": str(tmp_path / project)},
+                            )
+                            assert response.status == 200, await response.text()
+                            await wait_for_state(
+                                client, f"{project}-input", "ready", project=project
+                            )
+                            response = await client.post(
+                                "/api/assets",
+                                params={"scope": "local", "project": project, "name": "first.txt"},
+                                data=project.encode(),
+                            )
+                            assert response.status == 201, await response.text()
+                            assert (
+                                tmp_path / project / "input" / "first.txt"
+                            ).read_bytes() == project.encode()
+                            response = await client.put(
+                                f"/api/mounts/projects/{project}",
+                                json={
+                                    "mounts": [f"{project}-input", "renders"],
+                                    "outputMount": "renders",
+                                    "inputMount": f"{project}-input",
+                                },
+                            )
+                            assert response.status == 200, await response.text()
+                            response = await client.put(
+                                f"/api/mounts/projects/{project}",
+                                json={
+                                    "mounts": ["renders", f"{project}-input"],
+                                    "outputMount": "renders",
+                                },
+                            )
+                            assert response.status == 200, await response.text()
+                            response = await client.put(
+                                f"/api/mounts/projects/{project}",
+                                json={"mounts": ["renders"], "outputMount": "renders"},
+                            )
+                            assert response.status == 400, await response.text()
+                            response = await client.post(
+                                "/api/assets",
+                                params={"scope": "local", "project": project, "name": "source.txt"},
+                                data=project.encode(),
+                            )
+                            assert response.status == 201, await response.text()
+                            assert (
+                                tmp_path / project / "input" / "source.txt"
+                            ).read_bytes() == project.encode()
+                        for destination in ("reference", "unknown", "portrait-input"):
+                            response = await client.put(
+                                "/api/mounts/projects/film",
+                                json={
+                                    "mounts": ["film-input", "renders", "reference"],
+                                    "outputMount": "renders",
+                                    "inputMount": destination,
+                                },
+                            )
+                            assert response.status == 400, await response.text()
+                    else:
+                        for project in ("film", "portrait"):
+                            await wait_for_state(
+                                client, f"{project}-input", "ready", project=project
+                            )
+                            locations = await (
+                                await client.get(
+                                    "/api/mounts/locations", params={"project": project}
+                                )
+                            ).json()
+                            assert locations["importMount"] == f"{project}-input"
+                        response = await client.put(
+                            "/api/mounts/projects/portrait",
+                            json={
+                                "mounts": ["film-input", "renders"],
+                                "outputMount": "renders",
+                                "inputMount": "film-input",
+                            },
+                        )
+                        assert response.status == 200, await response.text()
+                        response = await client.post(
+                            "/api/assets",
+                            params={"scope": "local", "project": "portrait", "name": "source.txt"},
+                            data=b"portrait",
+                        )
+                        assert response.status == 201, await response.text()
+                        assert (
+                            tmp_path / "film" / "input" / "source_00001.txt"
+                        ).read_bytes() == b"portrait"
+                        assert (tmp_path / "film" / "input" / "source.txt").read_bytes() == b"film"
+                        assert (await client.delete("/api/mounts/film-input")).status == 200
+                        response = await client.post(
+                            "/api/assets",
+                            params={"scope": "local", "project": "portrait", "name": "refused.txt"},
+                            data=b"refused",
+                        )
+                        assert response.status == 403, await response.text()
+                        assert not (tmp_path / "imports" / "refused.txt").exists()
+                        assert not (tmp_path / "renders" / "refused.txt").exists()
+                await service.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("limited", (False, True))
+def test_native_file_import_copies_with_upload_policy_and_operator_authority(
+    tmp_path: Path, limited: bool
+) -> None:
+    import io
+
+    import numpy as np
+    from dinkster_assets import LATENT_MEDIA_TYPE
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
+    from PIL import Image
+    from safetensors.numpy import save
+
+    source = tmp_path / "outside-mounts.bin"
+    data = b"native source\n" * 700_000
+    source.write_bytes(data)
+    encoded = io.BytesIO()
+    Image.new("RGB", (3, 2), (19, 37, 89)).save(encoded, "PNG")
+    image = encoded.getvalue()
+    image_source = tmp_path / "outside-mounts.png"
+    image_source.write_bytes(image)
+    latent = save({"latent_tensor": np.array([1.25], dtype=np.float32)})
+    latent_source = tmp_path / "outside-mounts.latent"
+    latent_source.write_bytes(latent)
+    small = bytes(range(63))
+    small_source = tmp_path / "below-limit.bin"
+    small_source.write_bytes(small)
+    imports = tmp_path / "imports"
+    imports.mkdir()
+    table = MountTable(index_root=tmp_path / "indexes")
+    table.add(MountDef("imports", imports, "readwrite"))
+    table.scan("imports")
+    service = MountService(table, allow_changes=True)
+    store = LibraryStore(tmp_path / "catalog.sqlite")
+
+    async def scenario() -> None:
+        library = ServerLibrary(
+            vault=AssetVault(tmp_path / "vault"),
+            store=store,
+            local_resolver=table,
+            project_folders_for=service.project_context,
+            upload_writer=AssetWriter(table),
+            upload_limits={
+                "generic": 64,
+                "media/image": len(image) - 1,
+                "data/latent": len(latent) - 1,
+            }
+            if limited
+            else None,
+        )
+        app = create_app(
+            make_engine,
+            SCHEMAS,
+            library=library,
+            authenticator=StaticBearerAuthenticator(
+                {
+                    "operator": Principal(
+                        "operator", {"local": frozenset({"settings:write", "assets:write"})}
+                    ),
+                    "writer": Principal("writer", {"local": frozenset({"assets:write"})}),
+                }
+            ),
+        )
+        add_mount_routes(app, service)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        try:
+            for native, body, media_type, kind in (
+                (source, data, "application/octet-stream", None),
+                (small_source, small, "application/octet-stream", None),
+                (image_source, image, "image/png", "media/image"),
+                (latent_source, latent, LATENT_MEDIA_TYPE, "data/latent"),
+            ):
+                params = {"scope": "local", "name": native.name}
+                if kind is not None:
+                    params["kind"] = kind
+                payload = {"path": str(native), "mediaType": media_type}
+                url = "/api/mounts/import-file"
+                response = await client.post(
+                    url, params=params, json=payload, headers={"Authorization": "Bearer writer"}
+                )
+                assert response.status == 403
+                service.allow_changes = False
+                response = await client.post(
+                    url, params=params, json=payload, headers={"Authorization": "Bearer operator"}
+                )
+                assert response.status == 403
+                service.allow_changes = True
+                response = await client.post(
+                    url, params=params, json=payload, headers={"Authorization": "Bearer operator"}
+                )
+                assert response.status == 201, await response.text()
+                assert str(tmp_path) not in await response.text()
+                result = await response.json()
+                assert result["asset"] == {
+                    "digest": digest_bytes(body),
+                    "name": native.name,
+                    "size": len(body),
+                    "mediaType": media_type,
+                    "virtualPath": "" if kind == "data/latent" else f"mounts/imports/{native.name}",
+                }
+                if kind == "data/latent":
+                    stored = library.vault.resolve(digest_bytes(body))
+                    assert stored is not None and stored.read_bytes() == body
+                else:
+                    assert (imports / native.name).read_bytes() == body
+                if kind is not None:
+                    assert store.media_grant("local", digest_bytes(body), kind) is not None
+                assert native.read_bytes() == body
+            response = await client.post(
+                "/api/mounts/import-file",
+                params={"scope": "local", "name": "not-a-file.bin"},
+                json={"path": str(tmp_path), "mediaType": "application/octet-stream"},
+                headers={"Authorization": "Bearer operator"},
+            )
+            assert response.status == 400
+            assert str(tmp_path) not in await response.text()
         finally:
             await client.close()
 

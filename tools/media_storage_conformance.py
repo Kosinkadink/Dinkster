@@ -14,10 +14,10 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -58,9 +58,7 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
     class Source(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
-            return NodeSchema(
-                node_type="measure.source", outputs=(OutputSpec("images", image_type),)
-            )
+            return NodeSchema(node_type="measure.source", body=(Output("images", image_type),))
 
         @classmethod
         def execute(cls) -> Mapping[str, object]:
@@ -72,8 +70,10 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="measure.view",
-                inputs=(InputSpec("images", image_type, accepts_storage=True),),
-                outputs=(OutputSpec("images", image_type),),
+                body=(
+                    Input("images", image_type, accepts_storage=True),
+                    Output("images", image_type),
+                ),
             )
 
         @classmethod
@@ -90,8 +90,10 @@ async def measure(frames: int, height: int, width: int) -> dict[str, int]:
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="measure.inspect",
-                inputs=(InputSpec("images", image_type, accepts_storage=True),),
-                outputs=(OutputSpec("sum", integer_type),),
+                body=(
+                    Input("images", image_type, accepts_storage=True),
+                    Output("sum", integer_type),
+                ),
             )
 
         @classmethod

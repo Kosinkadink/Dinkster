@@ -26,7 +26,8 @@ as a new forward operation with a new opId and current baseRevision. Rebase
 and resubmit after a stale base; post a client-materialized checkpoint to free
 retained-log capacity. The server never transforms patches. Board patches are
 applied and validated before ordering, and a Board checkpoint must match its
-accepted revision; workflow and image patches remain opaque.
+accepted revision. A host write check can also materialize workflow and image
+patches before ordering, retaining remembered values for undo.
 Keep actor ids safe for document node ids and JavaScript cursor-map keys:
 `.` is graph addressing syntax and `__proto__` is unsafe as an object key.
 

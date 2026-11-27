@@ -13,10 +13,10 @@ from dinkster_assets.produced import ProducedAssetInventory
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     build_node_types,
     build_schemas,
@@ -37,8 +37,7 @@ class EchoAsset(Node):
         asset = TypeExpr.concrete("ASSET")
         return NodeSchema(
             node_type="test.echo_asset",
-            inputs=(InputSpec("asset", asset),),
-            outputs=(OutputSpec("asset", asset),),
+            body=(Input("asset", asset), Output("asset", asset)),
         )
 
     @classmethod

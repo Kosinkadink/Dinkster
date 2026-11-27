@@ -33,14 +33,15 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from dinkster_caches import MemoryLRUCache
+from dinkster_caches import DiskCacheStore, MemoryLRUCache
 from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode
+from dinkster_protocol import CacheStore
 from dinkster_schema import (
-    InputSpec,
+    Input,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     TypeExpr,
     configure_logging,
     install_stream_capture,
@@ -268,8 +269,7 @@ class LogChatty(Node):
             node_type="execlog.chatty",
             display_name="Log Chatty",
             category="test",
-            inputs=(InputSpec("value", STRING),),
-            outputs=(OutputSpec("value", STRING),),
+            body=(Input("value", STRING), Output("value", STRING)),
         )
 
     @classmethod
@@ -312,6 +312,97 @@ def test_engine_surfaces_log_events_with_provenance() -> None:
         kinds = [e.kind for e in events if e.node_id == "c" or e.kind == "node_event"]
         assert kinds[0] == "node_started"
         assert kinds[-1] == "node_finished"
+
+    run_scenario(scenario())
+
+
+class LogWarner(Node):
+    @classmethod
+    def define_schema(cls) -> NodeSchema:
+        return NodeSchema(
+            node_type="execlog.warner",
+            category="test",
+            body=(Input("value", STRING), Output("value", STRING)),
+        )
+
+    @classmethod
+    def execute(cls, *, value: str) -> Mapping[str, object]:
+        report_log("info", f"working on {value}")
+        if len(value) > 3:
+            report_log("warning", f"{value} is long", data={"length": len(value)})
+            report_log("warning", f"{value} shows an earlier view")
+        return cls.outputs(value=value.upper())
+
+
+def test_a_cached_result_shows_the_warnings_its_node_gave(tmp_path: Path) -> None:
+    """A run that takes a node from the cache shows, on that node, the
+    warnings the node gave when it made the result, and no info notes; a
+    result made without warnings shows none, and a node that runs again
+    shows only its new warnings. The warnings survive the disk cache."""
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        events: list[EngineEvent] = []
+
+        def engine(cache: CacheStore) -> Engine:
+            return Engine(
+                schemas={"execlog.warner": LogWarner.schema()},
+                registry=registry,
+                worker=InProcessWorker({"execlog.warner": LogWarner}, registry),
+                cache=cache,
+                on_event=events.append,
+            )
+
+        async def run(target: Engine, value: str) -> tuple[str, list[dict[str, object]]]:
+            events.clear()
+            graph = Graph(nodes={"w": GraphNode("execlog.warner", {"value": value})})
+            result = await target.run(graph, ["w"])
+            kinds = [e.kind for e in events if e.node_id == "w"]
+            ending = "node_cached" if "node_cached" in kinds else "node_finished"
+            assert kinds[-1] == ending, kinds
+            logs = [
+                {k: v for k, v in cast("Mapping[str, object]", e.detail["data"]).items()}
+                for e in events
+                if e.kind == "node_event" and e.node_id == "w" and e.detail["name"] == "log"
+            ]
+            assert all(isinstance(log.pop("ts"), float) for log in logs)
+            assert all(e.run_id == result.run_id for e in events if e.node_id == "w")
+            return ending, logs
+
+        warned = [
+            {"level": "warning", "message": "hello is long", "length": 5},
+            {"level": "warning", "message": "hello shows an earlier view"},
+        ]
+        memory = engine(MemoryLRUCache())
+        first = await run(memory, "hello")
+        assert first == (
+            "node_finished",
+            [{"level": "info", "message": "working on hello"}, *warned],
+        )
+        assert await run(memory, "hello") == ("node_cached", warned)
+        assert await run(memory, "hi") == (
+            "node_finished",
+            [{"level": "info", "message": "working on hi"}],
+        )
+        assert await run(memory, "hi") == ("node_cached", [])
+        assert await run(memory, "howdy") == (
+            "node_finished",
+            [
+                {"level": "info", "message": "working on howdy"},
+                {"level": "warning", "message": "howdy is long", "length": 5},
+                {"level": "warning", "message": "howdy shows an earlier view"},
+            ],
+        )
+
+        assert (await run(engine(DiskCacheStore(tmp_path, registry)), "hello"))[0] == (
+            "node_finished"
+        )
+        # A fresh engine reads the entry back from disk.
+        assert await run(engine(DiskCacheStore(tmp_path, registry)), "hello") == (
+            "node_cached",
+            warned,
+        )
 
     run_scenario(scenario())
 

@@ -5,5 +5,5 @@ packages (`dinkster_schema`, `dinkster_values`, ...) are reachable in Python,
 but only what `v1` exports is covered by the compat test suite and the
 additive-only promise. Import the version you target explicitly::
 
-    from dinkster_api.v1 import Node, NodeSchema, InputSpec, OutputSpec, TypeExpr
+    from dinkster_api.v1 import Node, NodeSchema, Input, Output, TypeExpr
 """

@@ -7,7 +7,8 @@ schema_version = 1
 # Five widget kinds
 
 Select several colors in **selections**, edit the source in **markdown**,
-add or reorder swatches in **colors**, and edit the JSON array in **items**.
+add a color in the dimmed row at the end of **colors** and drag colors to
+reorder them, and edit the JSON array in **items**.
 Run the node to see all stored values as JSON in its text output.
 
 The **Open node help** button runs the frontend's `node.help` command. Select

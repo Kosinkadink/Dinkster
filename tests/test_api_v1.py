@@ -29,6 +29,60 @@ from dinkster_workers import InProcessWorker
 from tests.async_scenarios import run_scenario
 
 GOLDEN_V1_SURFACE = (
+    "Formula",
+    "Numbered",
+    "Named",
+    "Count",
+    "FollowList",
+    "NamedList",
+    "Lookup",
+    "lookup",
+    "pack_function",
+    "CallContext",
+    "Set",
+    "Toggle",
+    "Reset",
+    "Swap",
+    "Append",
+    "Randomize",
+    "SetMode",
+    "AddMember",
+    "RemoveMember",
+    "ClearMembers",
+    "SetEach",
+    "Disconnect",
+    "AddNode",
+    "Pick",
+    "Ask",
+    "OpenPicker",
+    "OpenEditor",
+    "PasteImage",
+    "Call",
+    "Queue",
+    "Interrupt",
+    "Copy",
+    "Download",
+    "OpenLink",
+    "Rule",
+    "State",
+    "Note",
+    "Editor",
+    "Button",
+    "Section",
+    "Row",
+    "Use",
+    "Option",
+    "Choice",
+    "Group",
+    "Variant",
+    "TypeChoice",
+    "Described",
+    "BodyRow",
+    "Step",
+    "Item",
+    "Members",
+    "Record",
+    "member_id",
     "MAX_COMPOSITOR_DIMENSION",
     "MAX_COMPOSITOR_LAYERS",
     "CompositorLayer",
@@ -138,22 +192,15 @@ GOLDEN_V1_SURFACE = (
     "BooleanWidget",
     "ColorWidget",
     "CompositorWidget",
-    "ConditionalWidgetCondition",
-    "ConditionalWidgetGroup",
     "CurveWidget",
     "ComboOption",
     "ComboWidget",
-    "ControlAfterGenerate",
+    "AfterRunMode",
     "CustomWidgetDescriptor",
     "Deprecation",
-    "DynamicComboOption",
-    "DynamicComboSpec",
-    "DynamicSlotSpec",
-    "InputFamilyOptionSource",
     "InputFamilyMapping",
     "InputFamilyMember",
-    "InputFamilySpec",
-    "InputSpec",
+    "Input",
     "MappingSource",
     "MountWidget",
     "MultiComboWidget",
@@ -161,16 +208,12 @@ GOLDEN_V1_SURFACE = (
     "NodeOutputError",
     "NodeSchema",
     "NumberWidget",
-    "OutputCountSpec",
-    "OutputDescriptorsSpec",
     "OutputFamilyMapping",
     "OutputFamilyMember",
-    "OutputFamilySpec",
-    "OutputInterface",
     "OutputKnownValue",
     "OutputProbeSpec",
     "OutputRepresents",
-    "OutputSpec",
+    "Output",
     "ReplacementCase",
     "ReplacementLink",
     "ReplacementMigration",
@@ -181,7 +224,6 @@ GOLDEN_V1_SURFACE = (
     "SearchVisibility",
     "SelectorSpec",
     "SlotValue",
-    "SlotVariant",
     "StringWidget",
     "TextCompletionItem",
     "TextCompletionKind",
@@ -236,7 +278,6 @@ GOLDEN_V1_SURFACE = (
     "CONTEXT_WINDOWS_TYPE",
     "CONTROL_NET_TYPE",
     "DICT_TYPE",
-    "FLOATS_TYPE",
     "GLIGEN_TYPE",
     "HISTOGRAM_TYPE",
     "PHOTOMAKER_TYPE",
@@ -289,7 +330,6 @@ GOLDEN_V1_SURFACE = (
     "OPTICAL_FLOW_TYPE",
     "POSE_KEYPOINT_TYPE",
     "POSE_TYPE",
-    "RESOLUTION_PREVIEW_TYPE",
     "RESOURCE_HANDLE_TYPE",
     "SAMPLER_TYPE",
     "SAM3_TRACK_DATA_TYPE",
@@ -471,9 +511,11 @@ GOLDEN_V1_SURFACE = (
     "admit_video_source",
     "bind_video_value",
     "MountSnapshotWriter",
+    "MOUNT_TYPE",
     "SAVE_TARGET_TYPE",
     "SaveTarget",
     "SaveTargetWidget",
+    "register_mount_type",
     "register_save_target_type",
     "register_audio_value_type",
     "register_video_value_type",
@@ -549,10 +591,10 @@ class ReadThermometer(api.Node):
             node_type="weather.read",
             display_name="Read Thermometer",
             category="weather",
-            inputs=(api.InputSpec("degrees", api.TypeExpr.concrete(api.CORE_FLOAT)),),
-            outputs=(
-                api.OutputSpec("reading", api.TypeExpr.concrete("weather.celsius")),
-                api.OutputSpec(
+            body=(
+                api.Input("degrees", api.TypeExpr.concrete(api.CORE_FLOAT)),
+                api.Output("reading", api.TypeExpr.concrete("weather.celsius")),
+                api.Output(
                     "warning",
                     api.TypeExpr.concrete(api.CORE_STRING),
                     optional=True,
@@ -576,13 +618,21 @@ class DescribeReading(api.Node):
             node_type="weather.describe",
             display_name="Describe Reading",
             category="weather",
-            inputs=(api.InputSpec("reading", api.TypeExpr.concrete("weather.celsius")),),
-            outputs=(api.OutputSpec("text", api.TypeExpr.concrete(api.CORE_STRING)),),
+            body=(
+                api.Input("reading", api.TypeExpr.concrete("weather.celsius")),
+                api.Group(
+                    "marks",
+                    value=api.Input("mark", api.TypeExpr.concrete(api.CORE_STRING)),
+                    keys=api.Numbered(""),
+                    grows="button",
+                ),
+                api.Output("text", api.TypeExpr.concrete(api.CORE_STRING)),
+            ),
         )
 
     @classmethod
-    def execute(cls, *, reading: Celsius) -> Mapping[str, object]:
-        return cls.outputs(text=f"{reading.degrees:.1f} C")
+    def execute(cls, *, reading: Celsius, marks: api.Members[api.Item]) -> Mapping[str, object]:
+        return {"text": f"{reading.degrees:.1f} C" + "".join(str(m.value) for m in marks)}
 
 
 def register_weather_types(registry: api.TypeRegistry) -> None:
@@ -617,12 +667,15 @@ def test_pack_authored_through_the_door_runs() -> None:
     graph = Graph(
         nodes={
             "read": GraphNode("weather.read", {"degrees": 21.5}),
-            "say": GraphNode("weather.describe", {"reading": Link("read", "reading")}),
+            "say": GraphNode(
+                "weather.describe",
+                {"reading": Link("read", "reading"), "marks.2": "!", "marks.1": "?"},
+            ),
         }
     )
     result = run_scenario(engine.run(graph, ["read", "say"]))
 
-    assert result.outputs["say"]["text"].resolve() == "21.5 C"
+    assert result.outputs["say"]["text"].resolve() == "21.5 C!?"
     reading = result.outputs["read"]["reading"]
     assert reading.type_id == "weather.celsius"
     warning = result.outputs["read"]["warning"]

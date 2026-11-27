@@ -75,7 +75,7 @@ network = false
 writable-mounts = false
 TOML
 cat > src/maple_text/__init__.py <<'PY'
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Shout(Node):
@@ -84,8 +84,8 @@ class Shout(Node):
         return NodeSchema(
             node_type="maple-text.shout",
             display_name="Shout",
-            inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
-            outputs=(OutputSpec("shouted", TypeExpr.concrete("STRING")),),
+            inputs=(Input("text", TypeExpr.concrete("STRING")),),
+            outputs=(Output("shouted", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod

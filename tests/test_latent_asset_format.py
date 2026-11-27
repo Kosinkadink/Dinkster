@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import struct
+from pathlib import Path
 
 import pytest
 from dinkster_assets import (
@@ -19,15 +20,25 @@ def safetensors(header: dict[str, object], body: bytes) -> io.BytesIO:
     return io.BytesIO(struct.pack("<Q", len(encoded)) + encoded + body)
 
 
-def test_plain_comfyui_profile_records_legacy_scaling() -> None:
+@pytest.mark.parametrize("byte_length", (4, 1024**3 + 4))
+def test_plain_comfyui_profile_records_legacy_scaling(tmp_path: Path, byte_length: int) -> None:
     source = safetensors(
         {
             "__metadata__": {"format": "not-a-profile-selector", "prompt": "{}"},
-            "latent_tensor": {"dtype": "F32", "shape": [1], "data_offsets": [0, 4]},
+            "latent_tensor": {
+                "dtype": "F32",
+                "shape": [byte_length // 4],
+                "data_offsets": [0, byte_length],
+            },
         },
-        b"data",
+        b"",
     )
-    assert parse_latent_asset(source).legacy_scale is True
+    with (tmp_path / "samples.latent").open("w+b") as sparse:
+        sparse.write(source.getvalue())
+        sparse.truncate(sparse.tell() + byte_length)
+        descriptor = parse_latent_asset(sparse)
+    assert descriptor.legacy_scale is True
+    assert descriptor.tensors[0].byte_length == byte_length
 
 
 @pytest.mark.parametrize("marker_offset", [0, 4])

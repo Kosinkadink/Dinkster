@@ -1,7 +1,7 @@
 import json
 import os
 
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr
 
 
 class Inspect(Node):
@@ -9,12 +9,12 @@ class Inspect(Node):
     def define_schema(cls):
         return NodeSchema(
             node_type="multipart-model.loaded_model",
-            inputs=(
-                InputSpec("model", TypeExpr.concrete("MODEL")),
-                InputSpec("value", TypeExpr.concrete("INT")),
-                InputSpec("producer_pid", TypeExpr.concrete("INT")),
+            body=(
+                Input("model", TypeExpr.concrete("MODEL")),
+                Input("value", TypeExpr.concrete("INT")),
+                Input("producer_pid", TypeExpr.concrete("INT")),
+                Output("summary", TypeExpr.concrete("STRING")),
             ),
-            outputs=(OutputSpec("summary", TypeExpr.concrete("STRING")),),
         )
 
     @classmethod

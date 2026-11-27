@@ -66,14 +66,15 @@ responses so a CORS-configured child can never double-stamp. The child
 engine needs no CORS configuration behind a supervisor.
 
 Status wire: {"protocol": 1, "state": "starting"|"ready"|"failed"|
-"stopped", "detail"?: str, "engine"?: {"pid"?: int, "exitCode"?: int},
+"stopped", "detail"?: str, "engine"?: {"pid"?: int, "instance"?: str, "exitCode"?: int},
 "progress"?: {"done": int, "total": int, "phase"?: str}, "instance"?: str}.
 Optional fields are omitted when unknown, never null. "progress" is the
 settled frontend contract: emitted exactly while the engine's health body
 reports in-flight composition, absent otherwise; protocol stays 1 because
 the growth is additive. Launchers may supply an opaque instance identifier
 and require the same value in status responses to bind readiness to the
-process they started.
+process they started. engine.instance is a random incarnation value for each
+engine-child launch, including restarts under an unchanged supervisor.
 """
 
 from __future__ import annotations
@@ -95,6 +96,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 import aiohttp
 from aiohttp import WSMsgType, web
@@ -301,6 +303,7 @@ class EngineLink:
     detail: str = ""
     base_url: str = ""
     pid: int | None = None
+    instance: str | None = None
     exit_code: int | None = None
     progress: dict[str, object] | None = None
     """Mirrored composition progress from the engine's health body
@@ -314,6 +317,8 @@ class EngineLink:
         engine: dict[str, object] = {}
         if self.pid is not None:
             engine["pid"] = self.pid
+        if self.instance is not None:
+            engine["instance"] = self.instance
         if self.exit_code is not None:
             engine["exitCode"] = self.exit_code
         if engine:
@@ -436,6 +441,7 @@ class EngineProcess:
         log.info("starting engine: %s", " ".join(command))
         self._process = await asyncio.create_subprocess_exec(*command)
         self.link.pid = self._process.pid
+        self.link.instance = uuid4().hex
         self._watch_task = asyncio.create_task(self._watch(self._process))
 
     async def _watch(self, process: asyncio.subprocess.Process) -> None:

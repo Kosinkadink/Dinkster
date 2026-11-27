@@ -70,7 +70,8 @@ Surface:
 - POST   /api/jobs                       submit {clientId, jobId, graph,
                                          targets, priority?, attention?,
                                          singleJobMultiGpu?,
-                                         sourceDocument?, scope?, placement?}
+                                         sourceDocument?, workflowName?, scope?,
+                                         placement?}
                                          (placement maps top-level node ids
                                          to worker names; scope is
                                          selected from jobs:submit grants;
@@ -78,7 +79,11 @@ Surface:
                                          canonical asset digest of the
                                          workflow document the job came
                                          from - execution-opaque provenance,
-                                         echoed on the job wire). The 202
+                                         echoed on the job wire; workflowName:
+                                         the workflow's name when submitted,
+                                         at most 1024 characters, kept with
+                                         the run and echoed on the job and
+                                         history wires). The 202
                                          response carries jobRef: the
                                          server-assigned globally unique
                                          job reference (platform plan;
@@ -247,6 +252,7 @@ from dinkster_engine import (
     ProviderResolutionError,
     RunResult,
 )
+from dinkster_engine.automatic import resolve_automatic
 from dinkster_graph import (
     Graph,
     GraphNode,
@@ -330,6 +336,7 @@ from .auth import (
     principal_for,
     resolve_scope,
 )
+from .call_budget import CALL_BUDGETS_KEY, call_budgets
 from .events import (
     BINARY_BLOB_KEY,
     DROPPABLE_KINDS,
@@ -348,6 +355,16 @@ from .library import (
     run_media_publication,
     run_owned_thread,
 )
+from .lookups import (
+    LOOKUP_DISPATCH_KEY,
+    LookupDispatch,
+    LookupMarks,
+    announce_asset_kinds,
+    install_lookups,
+    lookups_changed,
+    recorded_asset_kinds,
+)
+from .pack_functions import PackFunctionDispatch, install_pack_functions
 from .pack_settings import PackSettingsStore
 from .pack_surfaces import FrontendModuleRead, PackRouteDispatch, install_pack_surfaces
 from .paging import decode_cursor, encode_cursor
@@ -355,6 +372,7 @@ from .preflight import (
     asset_preflight,
     bind_model_names,
     graph_asset_names,
+    graph_model_assets,
     graph_node_types,
     graph_provider_selections,
     parse_asset_consent,
@@ -631,12 +649,18 @@ def job_to_wire(
         wire["extensionSnapshotDigest"] = job.execution.extension_snapshot_digest
     if job.source_document:
         wire["sourceDocument"] = job.source_document
+    if job.workflow_name:
+        wire["workflowName"] = job.workflow_name
+    if job.automatic:
+        wire["automaticValues"] = [record.to_wire() for record in job.automatic]
     if job.error is not None:
         wire["error"] = job.error
     if job.result_offers:
         wire["resultOffers"] = {node: dict(offers) for node, offers in job.result_offers.items()}
     if job.artifact_offers:
         wire["artifactOffers"] = list(job.artifact_offers)
+    if job.artifacts_published:
+        wire["artifacts"] = [_artifact_wire(artifact) for artifact in job.artifacts]
     if job.result is not None:
         wire["outputs"] = {
             node_id: {out: value_descriptor(v, registry) for out, v in outs.items()}
@@ -926,6 +950,10 @@ class PackInfo:
     'local:<path>') - where the bytes came from, never identity."""
     publisher: str = ""
     """Canonical publisher id ('local' for unpublished installs)."""
+    type_storage: tuple[tuple[str, str], ...] = ()
+    """Borrowed type ids and the packs selected to store their values in this worker."""
+    type_storage_choices: tuple[str, ...] = ()
+    """Types with competing installed storage providers and no installed owner."""
     blueprints: tuple[PackBlueprintAsset, ...] = ()
     """Starter workflow documents the pack ships; descriptors ride the
     packs table inline, bodies ride the lazy per-pack endpoint. Never
@@ -980,6 +1008,10 @@ class PackInfo:
             wire["source"] = self.source
         if self.publisher:
             wire["publisher"] = self.publisher
+        if self.type_storage:
+            wire["typeStorage"] = dict(self.type_storage)
+        if self.type_storage_choices:
+            wire["typeStorageChoices"] = list(self.type_storage_choices)
         if self.icon is not None:
             # Descriptor only - bytes ride /api/packs/{packId}/icon, never
             # inline (the table would re-download on every schema refresh).
@@ -1458,7 +1490,7 @@ class ServerState:
 
         Validates the delta against the same rules construction applies -
         node-type collisions refused, pack-table entries may repeat only
-        when identical (two compat workers both contributing "comfy"),
+        when their identity agrees (type storage may change as packs load),
         every attribution names a known type and a known table entry -
         then merges state, re-derives the cross-pack replacement
         diagnostics over the COMPLETE mapping, bumps the surface epoch,
@@ -1475,7 +1507,9 @@ class ServerState:
         merged_packs = dict(self.packs)
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and existing != info:
+            if existing is not None and replace(
+                existing, type_storage=(), type_storage_choices=()
+            ) != replace(info, type_storage=(), type_storage_choices=()):
                 raise ValueError(f"announce redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type, pack_id in node_packs.items():
@@ -1791,7 +1825,9 @@ class ServerState:
         }
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and existing != info:
+            if existing is not None and replace(
+                existing, type_storage=(), type_storage_choices=()
+            ) != replace(info, type_storage=(), type_storage_choices=()):
                 raise ValueError(f"replace redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type in node_packs:
@@ -2505,7 +2541,13 @@ async def handle_nodes(request: web.Request) -> web.Response:
             *cast("list[str]", needs["extra"]),
             *(str(pack["pack"]) for pack in cast("list[dict[str, object]]", needs["packs"])),
         }
-    return web.json_response(nodes_wire(state, enabled))
+    wire = nodes_wire(state, enabled)
+    library = request.app.get(LIBRARY_KEY)
+    if library is not None:
+        cast("dict[str, object]", wire["dinkster"])["uploadLimits"] = (
+            dict(library.upload_limits) if library.upload_limits is not None else None
+        )
+    return web.json_response(wire)
 
 
 def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str, object]:
@@ -2587,7 +2629,13 @@ def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str,
         "dinkster": {
             "version": _dinkster_version(),
             "schemaWire": SCHEMA_WIRE_VERSION,
-            "graphFeatures": ["typedLiteral", "decimalInt", "regions", "placement"],
+            "graphFeatures": [
+                "typedLiteral",
+                "decimalInt",
+                "regions",
+                "placement",
+                "absentInput",
+            ],
             "mergeableTypes": sorted(
                 type_id
                 for type_id in state.engine.registry.type_ids()
@@ -3339,6 +3387,12 @@ async def handle_submit(request: web.Request) -> web.Response:
     source_document = body.get("sourceDocument", "")
     if not isinstance(source_document, str) or (source_document and not is_digest(source_document)):
         raise _bad_request("'sourceDocument' must be a canonical asset digest ('blake3:<64 hex>')")
+    # The name the person sees for the workflow, kept for the run's record. Like
+    # sourceDocument it never joins execution or cache identity.
+    workflow_name = body.get("workflowName", "")
+    if not isinstance(workflow_name, str) or len(workflow_name) > 1024:
+        raise _bad_request("'workflowName' must be a string of at most 1024 characters")
+    workflow_name = workflow_name.strip()
     export_snapshot = None
     if "exportSnapshot" in body:
         raw_snapshot = body["exportSnapshot"]
@@ -3398,6 +3452,8 @@ async def handle_submit(request: web.Request) -> web.Response:
         "scope": scope,
         "sourceDocument": source_document,
     }
+    if workflow_name:
+        fingerprint_payload["workflowName"] = workflow_name
     if "project" in body:
         fingerprint_payload["project"] = project
     if export_snapshot is not None:
@@ -3493,6 +3549,9 @@ async def handle_submit(request: web.Request) -> web.Response:
             raise _bad_request(str(exc)) from exc
         graph = lowered.graph
         targets = list(lowered.targets)
+        graph, automatic = await resolve_automatic(
+            graph, targets, execution.schemas, call_lookup=request.app.get(LOOKUP_DISPATCH_KEY)
+        )
         with use_asset_folders(asset_folders):
             try:
                 graph, missing_names = await asyncio.to_thread(
@@ -3615,7 +3674,11 @@ async def handle_submit(request: web.Request) -> web.Response:
         # consent is TOCTOU-proof: verified ingest means a consented identity
         # can only ever land the exact bytes it names.
         if library is not None:
+            assert execution.schemas is not None
             referenced = graph_asset_names(preflight_graph)
+            model_assets = graph_model_assets(preflight_graph, execution.schemas)
+            for digest, (name, _kind) in model_assets.items():
+                referenced.setdefault(digest, name)
             # Node-declared requirements ([[pack.assets]] nodes = [...]): a
             # fixed internal model a node type needs joins the preflight set
             # the moment the graph instantiates that type - no widget, no
@@ -3637,6 +3700,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     referenced.setdefault(digest, need.name)
             if referenced:
                 await run_media_publication(library, lambda: recover_asset_observations(library))
+                acquired_kinds: set[str] = set()
                 local_plan = await asyncio.to_thread(
                     asset_preflight,
                     library,
@@ -3645,7 +3709,10 @@ async def handle_submit(request: web.Request) -> web.Response:
                     hinted_sources,
                     scope=scope,
                     project=project,
+                    acquired_kinds=acquired_kinds,
+                    model_kinds={digest: kind for digest, (_name, kind) in model_assets.items()},
                 )
+                announce_asset_kinds(request.app, acquired_kinds)
         if (
             execution.preflight_provider_assets is not None
             and remote_provider_plan
@@ -3679,6 +3746,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 principal_id=principal.principal_id,
                 principal_kind=principal.kind,
                 source_document=source_document,
+                workflow_name=workflow_name,
                 export_snapshot=export_snapshot,
                 fingerprint=fingerprint,
                 execution=execution,
@@ -3687,6 +3755,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 attention_config=attention_config,
                 single_job_multi_gpu=single_job_multi_gpu,
                 cache_enabled=cache_enabled,
+                automatic=automatic,
             )
         except JobGraphAdmissionError as exc:
             return web.json_response(
@@ -4688,6 +4757,9 @@ def create_app(
     schemas: Mapping[str, NodeSchema],
     *,
     pack_route_dispatch: PackRouteDispatch | None = None,
+    pack_function_dispatch: PackFunctionDispatch | None = None,
+    lookup_dispatch: LookupDispatch | None = None,
+    lookup_marks: LookupMarks | None = None,
     frontend_module_read: FrontendModuleRead | None = None,
     max_running_jobs: int = 1,
     governor: MemoryGovernor | None = None,
@@ -4730,6 +4802,7 @@ def create_app(
     redactor: PathRedactor | None = None,
     execution_journal: ExecutionJournal | None = None,
     full_free: FullFree | None = None,
+    prepare_project_run: Callable[[str], Awaitable[None]] | None = None,
     prepare_remote_run: Callable[[str, Mapping[str, object] | None], Awaitable[None]] | None = None,
     finish_remote_run: Callable[[str], Awaitable[None]] | None = None,
     federated_asset_paths: Mapping[str, str] | None = None,
@@ -4823,19 +4896,28 @@ def create_app(
         except AssetError:
             return False
 
-    async def complete_result(job: Job, result: RunResult) -> RunResult:
-        for node_id, outputs in result.outputs.items():
-            if node_id not in job.result_offers:
-                await publish_outputs(job.run_id, node_id, outputs)
+    async def publish_artifacts(job: Job) -> None:
         assert library is not None
         store = library.store
-        if result.artifacts:
-            record_outputs = library.record_saved_outputs
-            result = await run_media_publication(library, lambda: record_outputs(job, result))
+        # Retention may create files before a later catalog write fails; never retry it here.
+        job.artifacts_publication_started = True
+        if job.artifacts:
+            record_artifacts = library.record_saved_artifacts
+            artifacts = await run_media_publication(
+                library, lambda: record_artifacts(job, job.artifacts)
+            )
+            announce_asset_kinds(
+                app,
+                {
+                    kind
+                    for artifact in artifacts
+                    for kind in recorded_asset_kinds("asset/file", artifact.media_type)
+                },
+            )
 
             def persist_artifacts() -> list[dict[str, object]]:
                 offers: list[dict[str, object]] = []
-                for index, artifact in enumerate(result.artifacts):
+                for index, artifact in enumerate(artifacts):
                     roots = [artifact.digest]
                     if artifact.preview is not None:
                         roots.append(artifact.preview.digest)
@@ -4854,7 +4936,16 @@ def create_app(
                 return offers
 
             job.artifact_offers = await run_owned_thread(persist_artifacts)
-        return result
+            job.artifacts = artifacts
+        job.artifacts_published = True
+
+    async def complete_result(job: Job, result: RunResult) -> RunResult:
+        for node_id, outputs in result.outputs.items():
+            if node_id not in job.result_offers:
+                await publish_outputs(job.run_id, node_id, outputs)
+        job.artifacts = result.artifacts
+        await publish_artifacts(job)
+        return replace(result, artifacts=job.artifacts)
 
     async def settle_job(job: Job, terminal_state: JobState) -> None:
         from dinkster_library import LibraryError
@@ -4863,6 +4954,14 @@ def create_app(
         from .library import run_owned_thread
         from .projects import record_project_run
 
+        if terminal_state == "completed" and lookup_marks is not None:
+            changed = lookups_changed(graph_node_types(job.graph), lookup_marks, after_run=True)
+            if changed:
+                state.hub.publish(
+                    {"type": "lookups_changed", "functions": changed},
+                    client_id=None,
+                    droppable=False,
+                )
         if finish_remote_run is not None:
             try:
                 await finish_remote_run(job.run_id)
@@ -4896,10 +4995,12 @@ def create_app(
                     "principalId": job.principal_id,
                     "principalKind": job.principal_kind,
                 },
-                artifacts_complete=job.result is not None,
+                artifacts_complete=job.artifacts_published,
             )
 
         try:
+            if not job.artifacts_publication_started:
+                await publish_artifacts(job)
             if library.scratch_root is not None:
                 scratch = library.scratch_root
                 vault = library.vault
@@ -4949,6 +5050,8 @@ def create_app(
         from .projects import project_for_run
 
         project = await project_for_run(app, job.project)
+        if prepare_project_run is not None:
+            await prepare_project_run(job.project)
         if prepare_remote_run is not None:
             link = (
                 cast("Mapping[str, object] | None", project["accountProject"]) if project else None
@@ -5015,6 +5118,7 @@ def create_app(
     app = web.Application(client_max_size=ENGINE_JOB_SUBMISSION_LIMIT_BYTES)
     app[STATE_KEY] = state
     app[PACK_SETTINGS_KEY] = PackSettingsStore(pack_settings_root)
+    app[CALL_BUDGETS_KEY] = call_budgets()
     permission_store = principal_permissions or PrincipalPermissionStore()
     install_browser_request_security(
         app,
@@ -5027,6 +5131,21 @@ def create_app(
         install_response_compression(app)
     route_capabilities = install_pack_surfaces(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
+    )
+    route_capabilities.update(
+        install_pack_functions(app, pack_function_dispatch, app[CALL_BUDGETS_KEY]["press"])
+    )
+    route_capabilities.update(
+        install_lookups(
+            app,
+            schemas=lambda: state.schemas,
+            node_pack=lambda node_type: state.node_packs.get(node_type, CORE_PACK_ID),
+            epoch=lambda: state.schema_epoch,
+            dispatch=lookup_dispatch,
+            budgets=app[CALL_BUDGETS_KEY],
+            marks=lookup_marks,
+            publish=lambda event: state.hub.publish(dict(event), client_id=None, droppable=False),
+        )
     )
     federated_paths = frozenset[str]()
     if federated_asset_paths is not None:

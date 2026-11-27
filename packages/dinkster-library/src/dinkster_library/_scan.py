@@ -187,6 +187,7 @@ class Scans:
                             if selected is None or name == selected
                             else dict(row)
                             for name, row in seed.items()
+                            if not rules.matches(name, Path(name).name)
                         }
                     )
                 with self._lock:

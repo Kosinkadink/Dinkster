@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import replace
-from http.client import HTTPException
 from pathlib import Path
 
 from dinkster_assets import (
@@ -17,10 +16,9 @@ from dinkster_assets import (
     RemoteSource,
     SaveTarget,
 )
-from dinkster_assets.acquire import AcquisitionResult
 from dinkster_assets.civitai import CivitaiFile
 from dinkster_assets.fetch import FetchAborted
-from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.huggingface import HuggingFaceFile
 from dinkster_assets.model import model_is_hidden, model_ref_is_hidden
 from dinkster_assets.mounts import ModelFileSelection
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
@@ -65,10 +63,14 @@ class ModelDownloads:
         self.provenance = provenance
         self.credentials = ProviderCredentials()
 
-    def disabled_locations(self, digest: str, project: str) -> tuple[str, ...]:
+    def disabled_locations(
+        self, digest: str, project: str, *, kind: str | None = None
+    ) -> tuple[str, ...]:
         enabled = self.mounts.project_context(project).mounts
         matches: set[str] = set()
         for mount in self.mounts.table.ready_snapshot():
+            if kind is not None and mount.asset_kind != kind:
+                continue
             for ref in mount.refs:
                 if ref.digest != digest:
                     continue
@@ -126,12 +128,27 @@ class ModelDownloads:
         with use_asset_folders(context):
             return model_is_hidden(digest=digest)
 
-    def target(self, kind: str, project: str) -> MountDef | None:
+    def target(self, kind: str, project: str, *, location: str | None = None) -> MountDef | None:
         table = self.mounts.table
+        enabled = self.mounts.project_context(project).mounts
+        selected: set[str] | None = None
+        if location is not None:
+            settings = self.mounts.model_settings()
+            selected = (
+                {
+                    mount.id
+                    for row in settings.locations
+                    if row.id == location
+                    for mount in row.mounts(0)
+                }
+                if settings is not None
+                else set()
+            )
         candidates = [
             mount
-            for mount_id in self.mounts.project_context(project).mounts
-            if table.kind(mount_id) == kind
+            for mount_id in enabled
+            if (selected is None or mount_id in selected)
+            and table.kind(mount_id) == kind
             and (mount := table.get(mount_id)) is not None
             and mount.mode == "readwrite"
         ]
@@ -140,10 +157,6 @@ class ModelDownloads:
             key=lambda mount: (table.source(mount.id) != "shared-models", mount.priority),
             default=None,
         )
-
-    def destination(self, need: AssetNeed, project: str) -> str | None:
-        target = self.target(need.kind, project)
-        return str(target.path) if target is not None else None
 
     def download_selected(
         self,
@@ -189,8 +202,10 @@ class ModelDownloads:
             require_credentials()
             context = self.mounts.project_context(project)
             with use_asset_folders(context):
-                if self.hidden_name(Path(selected.file).name, target.kind) or (
-                    digest is not None and self.hidden_digest(digest, project)
+                if (
+                    self.hidden_digest(digest, project)
+                    if digest is not None
+                    else self.hidden_name(Path(selected.file).name, target.kind)
                 ):
                     raise AssetError("Model hidden for this project; unhide it in model settings")
             if (
@@ -202,6 +217,11 @@ class ModelDownloads:
 
         def publish(ref: AssetRef) -> None:
             require_target()
+            relative = ref.virtual_path.split("/", 2)[2]
+            path = (search_root if ref.virtual_path.startswith("model-files/") else root) / relative
+            with use_asset_folders(self.mounts.project_context(project)):
+                if model_is_hidden(path, ref.digest):
+                    raise AssetError("Model hidden for this project; unhide it in model settings")
             try:
                 before_publish(ref, selected.url)
                 self.provenance.add(
@@ -246,54 +266,28 @@ class ModelDownloads:
             require_target()
 
         destination = SaveTarget(target.id, Path(selected.file).name)
-        ref = writer.reuse_model(
-            destination,
-            sha256=selected.sha256,
-            size=selected.size,
-            digest=digest,
-            before_publish=publish,
-            progress=checked_progress,
-            search_root=search_root,
-            kind=target.kind,
-            admit_file=admit_file,
-        )
+        with use_asset_folders(self.mounts.project_context(project)):
+            ref = writer.reuse_model(
+                destination,
+                sha256=selected.sha256,
+                size=selected.size,
+                digest=digest,
+                before_publish=publish,
+                progress=checked_progress,
+                search_root=search_root,
+                kind=target.kind,
+                admit_file=admit_file,
+            )
         if ref is not None:
             return ref
         require_target()
-        ref = selected.download(
-            writer,
-            destination,
-            digest=digest,
-            before_publish=publish,
-            progress=checked_progress,
-            token=token,
-        )
+        with use_asset_folders(self.mounts.project_context(project)):
+            ref = selected.download(
+                writer,
+                destination,
+                digest=digest,
+                before_publish=publish,
+                progress=checked_progress,
+                token=token,
+            )
         return ref
-
-    def acquire(
-        self,
-        need: AssetNeed,
-        project: str,
-        before_publish: Callable[[AssetRef, str], None],
-    ) -> AcquisitionResult:
-        table = self.mounts.table
-        target = self.target(need.kind, project)
-        if target is None:
-            return AcquisitionResult(need, "failed", detail="Select a writable model folder first")
-        for source in need.sources:
-            if not isinstance(source, RemoteSource):
-                continue
-            try:
-                selection = select_huggingface_file(source.url, token=self.credentials.token())
-                ref = self.download_selected(
-                    selection, target, project, before_publish, digest=need.digest
-                )
-            except (AssetError, OSError, HTTPException):
-                continue
-            table.refresh_publication(target.id)
-            return AcquisitionResult(need, "acquired", path=table.resolve(ref.digest))
-        return AcquisitionResult(
-            need,
-            "failed",
-            detail="No public Hugging Face source verified; existing model files were preserved",
-        )

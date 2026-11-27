@@ -38,11 +38,12 @@ from .model import (
     EncodedPayload,
     PyObjPayload,
     TypeId,
+    UnresolvablePayload,
     Value,
     ValueMeta,
     stable_hash,
 )
-from .names import claim_covers, claims_conflict
+from .names import canonical_name, claim_covers, claims_conflict
 from .streams import MediaStream, make_stream_value, parse_stream_type_id
 from .tuples import make_tuple_value, parse_tuple_type_id
 
@@ -297,6 +298,48 @@ class BatchMergeSpec:
     merge: Callable[[Sequence[object]], object]
 
 
+def _type_spec(
+    type_id: TypeId,
+    *,
+    encode: Encoder | None = None,
+    decode: Decoder | None = None,
+    prepare_buffer_encoding: PrepareBufferEncodingFn | None = None,
+    fingerprint: FingerprintFn | None = None,
+    meta: MetaFn | None = None,
+    coerce: CoerceFn | None = None,
+    input_convert: CoerceFn | None = None,
+    inline: InlineFn | None = None,
+    validate_encoded: ValidateEncodedFn | None = None,
+    validate_encoded_buffer: ValidateEncodedBufferFn | None = None,
+    asset_references_complete: bool = False,
+    may_hold_resident: bool = False,
+) -> TypeSpec:
+    if type(may_hold_resident) is not bool:
+        raise ValueError("resident capability must be a boolean")
+    if type(asset_references_complete) is not bool:
+        raise ValueError("asset reference completeness must be a boolean")
+    if (encode is None) != (decode is None):
+        raise ValueError(f"{type_id}: encode and decode must be declared together")
+    if prepare_buffer_encoding is not None and encode is None:
+        raise ValueError(f"{type_id}: buffer encoding requires a declared codec")
+    return TypeSpec(
+        type_id=type_id,
+        encode=encode if encode is not None else default_encode,
+        decode=decode if decode is not None else default_decode,
+        fingerprint=fingerprint,
+        meta=meta,
+        declared_codec=encode is not None,
+        prepare_buffer_encoding=prepare_buffer_encoding,
+        coerce=coerce,
+        input_convert=input_convert,
+        inline=inline,
+        validate_encoded=validate_encoded,
+        validate_encoded_buffer=validate_encoded_buffer,
+        asset_references_complete=asset_references_complete,
+        may_hold_resident=may_hold_resident,
+    )
+
+
 class TypeRegistry:
     def __init__(self) -> None:
         self._types: dict[TypeId, TypeSpec] = {}
@@ -307,7 +350,10 @@ class TypeRegistry:
         self._type_equivalences: dict[TypeId, tuple[TypeId, str]] = {}
         self._claims: dict[str, tuple[str, ...]] = {}
         self._owners: dict[TypeId, str] = dict.fromkeys(BUILTIN_TYPE_IDS, "core")
+        self._used: dict[TypeId, dict[str, TypeSpec]] = {}
+        self._used_storing: dict[TypeId, str] = {}
         self._registering_pack: str | None = None
+        self._registering_uses: tuple[TypeId, ...] = ()
         self._allow_bare = False
         self._resident_tables: list[ResidencyTable] = []
 
@@ -333,13 +379,17 @@ class TypeRegistry:
         copied._type_equivalences = dict(self._type_equivalences)
         copied._claims = dict(self._claims)
         copied._owners = dict(self._owners)
+        copied._used = {type_id: dict(specs) for type_id, specs in self._used.items()}
+        copied._used_storing = dict(self._used_storing)
         copied._resident_tables = list(self._resident_tables)
         return copied
 
     def inherit_types(self, other: TypeRegistry) -> None:
         """Use peer codecs without replacing local codecs or claiming their declarations."""
         for type_id, spec in other._types.items():
-            if type_id in self._types:
+            if type_id in other._used_storing or (
+                type_id in self._types and type_id not in self._used_storing
+            ):
                 continue
             owner = other.owner_of(type_id)
             if (held := self._conflicting_type_owner(type_id, owner)) is not None:
@@ -349,6 +399,11 @@ class TypeRegistry:
             self._types[type_id] = spec
             if owner is not None:
                 self._owners[type_id] = owner
+            self._used_storing.pop(type_id, None)
+        for type_id, specs in other._used.items():
+            for pack, spec in specs.items():
+                self._used.setdefault(type_id, {}).setdefault(pack, spec)
+            self._select_used(type_id)
         for table in other.resident_tables:
             self.register_resident_table(table)
 
@@ -364,6 +419,8 @@ class TypeRegistry:
         self._type_equivalences = dict(other._type_equivalences)
         self._claims = dict(other._claims)
         self._owners = dict(other._owners)
+        self._used = {type_id: dict(specs) for type_id, specs in other._used.items()}
+        self._used_storing = dict(other._used_storing)
         self._resident_tables = list(other._resident_tables)
 
     def claim_types(self, owner: str, claims: tuple[str, ...]) -> None:
@@ -389,19 +446,42 @@ class TypeRegistry:
 
     @contextmanager
     def registering_pack(
-        self, owner: str, claims: tuple[str, ...], *, allow_bare: bool = False
+        self,
+        owner: str,
+        claims: tuple[str, ...],
+        *,
+        allow_bare: bool = False,
+        uses: tuple[TypeId, ...] = (),
     ) -> Generator[None]:
-        """Attribute registrations and enforce the manifest's type claims."""
+        """Attribute registrations and enforce the manifest's type claims.
+
+        ``uses`` lists other packs' types the pack uses without requiring
+        their owner. The pack may register its own storing for them; a used
+        type it does not register gets the default codec. The owner's
+        registration always wins, and without the owner the using pack
+        whose name sorts first supplies the storing, so the choice does not
+        depend on load order. Using a type never claims it."""
+        for type_id in uses:
+            if type_id in BUILTIN_TYPE_IDS or any(
+                type_id == claim or claim_covers(claim, type_id) for claim in claims
+            ):
+                raise ValueError(f"{owner}: {type_id!r} is not another pack's type to use")
         self.claim_types(owner, claims)
         previous = self._registering_pack
         previous_bare = self._allow_bare
+        previous_uses = self._registering_uses
         self._registering_pack = owner
         self._allow_bare = allow_bare
+        self._registering_uses = uses
         try:
             yield
+            for type_id in uses:
+                if owner not in self._used.get(type_id, {}):
+                    self._add_used(owner, type_id, _type_spec(type_id))
         finally:
             self._registering_pack = previous
             self._allow_bare = previous_bare
+            self._registering_uses = previous_uses
 
     def owner_of(self, type_id: TypeId) -> str | None:
         """Return the owner even when a declared codec has not loaded yet."""
@@ -469,6 +549,9 @@ class TypeRegistry:
             self._types.pop(type_id, None)
             self._renditions.pop(type_id, None)
             self._batch_merges.pop(type_id, None)
+        for type_id in tuple(self._used):
+            if self._used[type_id].pop(owner, None) is not None or type_id in removed:
+                self._select_used(type_id)
         self._asset_decoders = {
             target: spec
             for target, spec in self._asset_decoders.items()
@@ -497,21 +580,33 @@ class TypeRegistry:
         asset_references_complete: bool = False,
         may_hold_resident: bool = False,
     ) -> TypeSpec:
-        if type(may_hold_resident) is not bool:
-            raise ValueError("resident capability must be a boolean")
-        if type(asset_references_complete) is not bool:
-            raise ValueError("asset reference completeness must be a boolean")
-        if (encode is None) != (decode is None):
-            raise ValueError(f"{type_id}: encode and decode must be declared together")
-        if prepare_buffer_encoding is not None and encode is None:
-            raise ValueError(f"{type_id}: buffer encoding requires a declared codec")
         if "<" in type_id or ">" in type_id:
             # The canonical type-id grammar is closed: name | "list<" id ">".
             # Angle brackets are constructor syntax, never part of an atom
             # name - list values are built structurally (wrap/make_list_value),
             # never registered as types.
             raise ValueError(f"type ids must not contain '<' or '>': {type_id}")
-        if type_id in self._types:
+        if self._registering_pack is not None and type_id in self._registering_uses:
+            if self._registering_pack in self._used.get(type_id, {}):
+                raise ValueError(f"type already registered: {type_id}")
+            spec = _type_spec(
+                type_id,
+                encode=encode,
+                decode=decode,
+                prepare_buffer_encoding=prepare_buffer_encoding,
+                fingerprint=fingerprint,
+                meta=meta,
+                coerce=coerce,
+                input_convert=input_convert,
+                inline=inline,
+                validate_encoded=validate_encoded,
+                validate_encoded_buffer=validate_encoded_buffer,
+                asset_references_complete=asset_references_complete,
+                may_hold_resident=may_hold_resident,
+            )
+            self._add_used(self._registering_pack, type_id, spec)
+            return spec
+        if type_id in self._types and type_id not in self._used_storing:
             raise ValueError(f"type already registered: {type_id}")
         owner = self._registering_pack or self.owner_of(type_id)
         builtin = type_id in BUILTIN_TYPE_IDS
@@ -532,14 +627,13 @@ class TypeRegistry:
         held_owner = self._conflicting_type_owner(type_id, owner)
         if held_owner is not None:
             raise ValueError(f"type {type_id!r} is owned by {held_owner!r}, not {owner!r}")
-        spec = TypeSpec(
-            type_id=type_id,
-            encode=encode if encode is not None else default_encode,
-            decode=decode if decode is not None else default_decode,
+        spec = _type_spec(
+            type_id,
+            encode=encode,
+            decode=decode,
+            prepare_buffer_encoding=prepare_buffer_encoding,
             fingerprint=fingerprint,
             meta=meta,
-            declared_codec=encode is not None,
-            prepare_buffer_encoding=prepare_buffer_encoding,
             coerce=coerce,
             input_convert=input_convert,
             inline=inline,
@@ -549,9 +643,66 @@ class TypeRegistry:
             may_hold_resident=may_hold_resident,
         )
         self._types[type_id] = spec
+        self._used_storing.pop(type_id, None)
         if owner is not None:
             self._owners[type_id] = owner
         return spec
+
+    def _add_used(self, pack: str, type_id: TypeId, spec: TypeSpec) -> None:
+        self._used.setdefault(type_id, {})[pack] = spec
+        self._select_used(type_id)
+
+    def _select_used(self, type_id: TypeId) -> None:
+        if type_id in self._types and type_id not in self._used_storing:
+            return
+        users = self._used.get(type_id)
+        if not users:
+            self._used.pop(type_id, None)
+            self._types.pop(type_id, None)
+            self._used_storing.pop(type_id, None)
+            return
+        pack = min(users, key=lambda name: (canonical_name(name.partition("~")[0]), name))
+        self._types[type_id] = users[pack]
+        self._used_storing[type_id] = pack
+
+    def storing_pack(self, type_id: TypeId) -> str | None:
+        """The pack whose storing this registry uses for a type."""
+        return self._used_storing.get(type_id) or self.owner_of(type_id)
+
+    def unreadable_value_message(self, type_id: TypeId, producer: object) -> str | None:
+        storing = self.storing_pack(type_id)
+        if not isinstance(producer, str) or storing in (None, "core"):
+            return None
+        assert storing is not None
+        label = type_id.rpartition(".")[2]
+        article = "an" if label[0].lower() in "aeiou" else "a"
+        return (
+            f"{producer.partition('~')[0]} made {article} {label} value that "
+            f"{storing.partition('~')[0]} cannot read"
+        )
+
+    def storing_mismatch(self, type_id: TypeId, storing: str | None) -> str | None:
+        """Explain why bytes written by ``storing``'s codec cannot be read here.
+
+        None when the writer is unknown, this registry holds no codec for
+        the type, or the same pack's codec is in force here."""
+        if storing is None or type_id not in self._types:
+            return None
+        local = self.storing_pack(type_id)
+        if local in (None, "core"):
+            return None
+        writer = storing.partition("~")[0]
+        reader = local.partition("~")[0]
+        if canonical_name(writer) == canonical_name(reader):
+            return None
+        return (
+            f"the value was stored by pack {writer!r}, but pack {reader!r} stores "
+            f"type {type_id!r} here, so it cannot be read"
+        )
+
+    def used_type_ids(self, pack: str) -> tuple[TypeId, ...]:
+        """Other packs' types this pack registered storing for."""
+        return tuple(type_id for type_id, specs in self._used.items() if pack in specs)
 
     def register_rendition(
         self,
@@ -971,7 +1122,7 @@ class TypeRegistry:
         except KeyError:
             raise KeyError(f"unregistered value type: {type_id}") from None
 
-    def input_object(self, type_id: TypeId, obj: object) -> object:
+    def input_object(self, type_id: TypeId, obj: object, *, producer: object = None) -> object:
         """Convert a resolved typed input, recursively through list storage.
 
         Asset references stay references until worker-side decoding supplies
@@ -980,24 +1131,44 @@ class TypeRegistry:
         if isinstance(obj, Value):
             if obj.type_id != type_id:
                 raise TypeError(f"{type_id} rejects envelope of type {obj.type_id}")
+            producer = obj.meta.get("producer.pack", producer)
             children = value_children(obj)
             if children is not None:
-                converted = [self.input_object(child.type_id, child) for child in children]
+                converted = [
+                    self.input_object(child.type_id, child, producer=producer) for child in children
+                ]
                 return tuple(converted) if parse_tuple_type_id(type_id) is not None else converted
-            obj = obj.resolve()
+            try:
+                obj = obj.resolve()
+            except Exception as exc:
+                message = self.unreadable_value_message(type_id, producer)
+                if message is None:
+                    raise
+                raise UnresolvablePayload(f"{message}: {exc}") from exc
         positions = parse_tuple_type_id(type_id)
         if positions is not None:
             return tuple(
-                self.input_object(position, item)
+                self.input_object(position, item, producer=producer)
                 for position, item in zip(positions, cast(Sequence[object], obj), strict=True)
             )
         element = parse_list_type_id(type_id)
         if element is not None:
-            return [self.input_object(element, item) for item in cast(Sequence[object], obj)]
+            return [
+                self.input_object(element, item, producer=producer)
+                for item in cast(Sequence[object], obj)
+            ]
         spec = self._types.get(type_id)
-        return (
-            spec.input_convert(obj) if spec is not None and spec.input_convert is not None else obj
-        )
+        try:
+            return (
+                spec.input_convert(obj)
+                if spec is not None and spec.input_convert is not None
+                else obj
+            )
+        except Exception as exc:
+            message = self.unreadable_value_message(type_id, producer)
+            if message is None:
+                raise
+            raise UnresolvablePayload(f"{message}: {exc}") from exc
 
     def wrap(self, type_id: TypeId, obj: object) -> Value:
         """Build an envelope for a raw object. Worker shims call this; node

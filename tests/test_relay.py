@@ -23,7 +23,7 @@ from dinkster_memory import (
     PressureSignal,
 )
 from dinkster_memory.resident import ResidentPool
-from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
+from dinkster_schema import Node, NodeSchema, Output, TypeExpr
 from dinkster_values import (
     COST_META_KEY,
     ResourcePins,
@@ -494,7 +494,7 @@ def test_full_release_settles_completed_invocation_cleanup(
                 return NodeSchema(
                     node_type="test.calculate",
                     idempotent=False,
-                    outputs=(OutputSpec("value", TypeExpr.concrete("INT")),),
+                    body=(Output("value", TypeExpr.concrete("INT")),),
                 )
 
             @classmethod
@@ -916,7 +916,7 @@ def test_fresh_shared_resident_result_survives_competing_release(
                 return NodeSchema(
                     node_type="test.load",
                     idempotent=False,
-                    outputs=(OutputSpec("model", TypeExpr.concrete("test.model")),),
+                    body=(Output("model", TypeExpr.concrete("test.model")),),
                 )
 
             @classmethod

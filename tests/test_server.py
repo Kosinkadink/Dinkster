@@ -40,11 +40,11 @@ from dinkster_protocol import (
     PackSettingsSchema,
 )
 from dinkster_schema import (
-    InputSpec,
+    Input,
     MappingSource,
     Node,
     NodeSchema,
-    OutputSpec,
+    Output,
     ReplacementCase,
     ReplacementRule,
     TypeExpr,
@@ -73,7 +73,6 @@ from dinkster_values import (
     register_core_types,
     register_curve_type,
 )
-from dinkster_values.model import PyObjPayload, Value, ValueMeta
 from dinkster_workers import InProcessWorker
 from dinkster_workers.catalog import CatalogTypes
 from scaffold_nodes import (
@@ -94,8 +93,7 @@ class Echo(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.echo",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -108,8 +106,7 @@ class Shout(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.shout",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -127,8 +124,7 @@ class Sleeper(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.sleeper",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
             idempotent=False,  # never coalesced/cached across tests
         )
 
@@ -144,8 +140,7 @@ class Boom(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.boom",
-            inputs=(InputSpec("tag", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("tag", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -158,8 +153,7 @@ class ShapeBoom(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.shape_boom",
-            inputs=(InputSpec("layout", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("layout", STRING), Output("out", STRING)),
         )
 
     @classmethod
@@ -182,8 +176,7 @@ class Previewer(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.previewer",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("out", STRING),),
+            body=(Input("text", STRING), Output("out", STRING)),
             idempotent=False,  # never cached: events must fire every run
         )
 
@@ -201,8 +194,7 @@ class Splitter(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.splitter",
-            inputs=(InputSpec("text", STRING),),
-            outputs=(OutputSpec("words", TypeExpr.list_of(STRING)),),
+            body=(Input("text", STRING), Output("words", TypeExpr.list_of(STRING))),
         )
 
     @classmethod
@@ -919,8 +911,8 @@ def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None
                 ),
             ):
                 schemas = {
-                    "source": NodeSchema("source", outputs=(OutputSpec("value", source),)),
-                    "sink": NodeSchema("sink", inputs=(InputSpec("value", expected),)),
+                    "source": NodeSchema("source", body=(Output("value", source),)),
+                    "sink": NodeSchema("sink", body=(Input("value", expected),)),
                 }
                 problems = validate(graph, schemas, ["sink"], known_types=authority)
                 assert (not problems) is accepted, (source, problems)
@@ -1247,7 +1239,7 @@ def test_invalid_retired_node_value_is_an_admission_error_not_a_server_error() -
         **SCHEMAS,
         "new": NodeSchema(
             "new",
-            inputs=(InputSpec("value", FLOAT),),
+            body=(Input("value", FLOAT),),
             replacements=(
                 ReplacementRule(
                     "old",
@@ -2143,13 +2135,21 @@ class CurveOutput(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="test.curve_output",
-            outputs=(OutputSpec("curve", TypeExpr.concrete(CURVE_TYPE)),),
+            body=(
+                Input("oversized", TypeExpr.concrete("BOOLEAN"), default=False),
+                Output("curve", TypeExpr.concrete(CURVE_TYPE)),
+            ),
         )
 
     @classmethod
-    def execute(cls) -> Mapping[str, object]:
+    def execute(cls, *, oversized: bool = False) -> Mapping[str, object]:
         return cls.outputs(
-            curve=Curve(((0.0, 0.125), (1.25, 0.875), (4.0, 0.25)), "monotone_cubic")
+            curve=Curve(
+                tuple((float(index), float(index)) for index in range(4097))
+                if oversized
+                else ((0.0, 0.125), (1.25, 0.875), (4.0, 0.25)),
+                "monotone_cubic",
+            )
         )
 
 
@@ -2368,7 +2368,7 @@ def test_values_endpoint_file3d_manifest_preserves_named_asset_authority(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.model",
-                outputs=(OutputSpec("file", TypeExpr.concrete("FILE_3D_GLTF")),),
+                body=(Output("file", TypeExpr.concrete("FILE_3D_GLTF")),),
             )
 
         @classmethod
@@ -2458,17 +2458,15 @@ def test_values_endpoint_curve_points_rendition_is_authoritative_and_bounded() -
                 ],
             }
 
-            job = cast(TestServer, client.server).app[STATE_KEY].queue.get("c1", "j1")
-            assert job is not None and job.result is not None
-            outputs = cast(dict[str, dict[str, Value]], job.result.outputs)
-            oversized = {"points": [{"position": index, "value": index} for index in range(4097)]}
-            outputs["curve"]["curve"] = Value(
-                type_id=CURVE_TYPE,
-                fingerprint="oversized-curve",
-                meta=ValueMeta({"pointCount": 4097, "start": 0.0, "end": 4096.0}),
-                payload=PyObjPayload(oversized),
+            await finish_job(
+                client,
+                Graph(nodes={"curve": GraphNode("test.curve_output", {"oversized": True})}),
+                ["curve"],
+                job_id="oversized",
             )
-            response = await client.get(url + "&rendition=curve-points")
+            response = await client.get(
+                values_url("curve", output_id="curve", job_id="oversized", rendition="curve-points")
+            )
             refusal = await response.json()
             assert (response.status, refusal["available"], refusal["reason"]) == (
                 404,
@@ -2578,10 +2576,10 @@ def test_values_endpoint_av_renditions_share_discovery_and_response_mime(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.av_outputs",
-                outputs=(
-                    OutputSpec("audio", TypeExpr.concrete(AUDIO_TYPE), preview=True),
-                    OutputSpec("mp4", TypeExpr.concrete(VIDEO_TYPE), preview=True),
-                    OutputSpec("webm", TypeExpr.concrete(VIDEO_TYPE), preview=True),
+                body=(
+                    Output("audio", TypeExpr.concrete(AUDIO_TYPE), preview=True),
+                    Output("mp4", TypeExpr.concrete(VIDEO_TYPE), preview=True),
+                    Output("webm", TypeExpr.concrete(VIDEO_TYPE), preview=True),
                 ),
             )
 
@@ -2802,8 +2800,10 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="dinkster.string",
-                inputs=(InputSpec("value", TypeExpr.concrete("STRING")),),
-                outputs=(OutputSpec("value", TypeExpr.concrete("STRING")),),
+                body=(
+                    Input("value", TypeExpr.concrete("STRING")),
+                    Output("value", TypeExpr.concrete("STRING")),
+                ),
             )
 
         @classmethod
@@ -2815,11 +2815,11 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="dinkster.set_save_target_prefix",
-                inputs=(
-                    InputSpec("target", save_target),
-                    InputSpec("prefix", TypeExpr.concrete("STRING")),
+                body=(
+                    Input("target", save_target),
+                    Input("prefix", TypeExpr.concrete("STRING")),
+                    Output("save_target", save_target),
                 ),
-                outputs=(OutputSpec("save_target", save_target),),
             )
 
         @classmethod
@@ -2833,15 +2833,15 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="dinkster.save_image",
-                inputs=(
-                    InputSpec(
+                body=(
+                    Input(
                         "target",
                         save_target,
                         required=False,
                         default={"mount": "comfy-output", "prefix": "ComfyUI"},
                     ),
+                    Output("receipt", TypeExpr.concrete(ASSET_TYPE)),
                 ),
-                outputs=(OutputSpec("receipt", TypeExpr.concrete(ASSET_TYPE)),),
                 idempotent=False,
                 output_node=True,
             )
@@ -2994,7 +2994,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
             assert response.status == 202
             unknown_status = await poll_job(client, "j6")
             assert unknown_status["state"] == "failed"
-            assert "no ready mount 'missing-output'" in json.dumps(unknown_status)
+            assert "'missing-output' is not on this machine" in json.dumps(unknown_status)
 
             snapshot.write_text(json.dumps({"mounts": []}), "utf-8")
             response = await client.post(
@@ -3004,7 +3004,7 @@ def test_compat_save_target_reaches_execution_with_default_and_explicit_value(
             assert response.status == 202
             revoked_status = await poll_job(client, "j7")
             assert revoked_status["state"] == "failed"
-            assert "no ready mount 'comfy-output'" in json.dumps(revoked_status)
+            assert "'comfy-output' is not on this machine" in json.dumps(revoked_status)
 
             assert CompatSave.seen == [
                 SaveTarget(mount="comfy-output", prefix="ComfyUI"),

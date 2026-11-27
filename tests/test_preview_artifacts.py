@@ -9,7 +9,7 @@ import shutil
 import sqlite3
 import sys
 import threading
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
@@ -38,7 +38,7 @@ from dinkster_assets.vault import VaultWriter
 from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionError, RunResult
 from dinkster_graph import Graph, GraphNode, graph_to_wire
-from dinkster_protocol import AssetFolderContext
+from dinkster_protocol import AssetFolderContext, SavedArtifact
 from dinkster_schema.reporting import EncodedPreviewArtifact, capture_preview_artifacts
 from dinkster_server import STATE_KEY, ServerLibrary, create_app
 from dinkster_server.library import recover_asset_observations
@@ -77,12 +77,13 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
     module = "preview_fixture_" + digest_bytes(str(tmp_path).encode())[7:19]
     (tmp_path / f"{module}.py").write_text(
         "from __future__ import annotations\n"
+        "import asyncio\n"
         "import base64\n"
         "import os\n"
         "from collections.abc import Mapping\n"
         "from pathlib import Path\n"
-        "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, InputSpec, Node, NodeSchema, "
-        "OutputSpec, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
+        "from dinkster_api.v1 import (CORE_STRING, ExpansionBuilder, Input, Node, NodeSchema, "
+        "Output, TypeExpr, publish_preview_artifact, publish_saved_file_preview, "
         "attach_saved_artifact, AssetWriter, MountSnapshotWriter, SaveTarget)\n"
         "from dinkster_schema.reporting import publish_image_document\n"
         "from dinkster_image_document import ImageDocument\n"
@@ -95,12 +96,13 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "class Preview(Node):\n"
         " @classmethod\n"
         " def define_schema(cls):\n"
-        "  return NodeSchema(node_type='preview-fixture.emit', inputs=(InputSpec('mode', "
-        "TypeExpr.concrete(CORE_STRING)),), outputs=(OutputSpec('out', "
+        "  return NodeSchema(node_type='preview-fixture.emit', body=(Input('mode', "
+        "TypeExpr.concrete(CORE_STRING)), Output('out', "
         "TypeExpr.concrete(CORE_STRING)),))\n"
         " @classmethod\n"
         " def execute(cls, *, mode: str) -> Mapping[str, object]:\n"
         "  global LAST_REF\n"
+        "  if mode == 'no-save': return cls.outputs(out='not saved')\n"
         "  data = FAILED_DATA if mode == 'fail' else DATA\n"
         "  if mode.startswith('document'):\n"
         "   publish_image_document(DOCUMENT)\n"
@@ -118,7 +120,10 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "   writer = MountSnapshotWriter(os.environ['DINKSTER_MOUNTS_SNAPSHOT'])\n"
         "   for index in range(65 if mode == 'mounted-batch' else 2):\n"
         "    ref = AssetWriter(writer).save_bytes(SaveTarget('renders', f'saved-{index}'), "
-        "b'duplicate saved bytes', suffix='.exr', media_type='image/x-exr')\n"
+        "(DATA if index == 0 else FAILED_DATA) if mode == 'mounted-video' "
+        "else b'duplicate saved bytes', "
+        "suffix='.mp4' if mode == 'mounted-video' else '.exr', "
+        "media_type='video/mp4' if mode == 'mounted-video' else 'image/x-exr')\n"
         "    claim = ref.to_wire()\n"
         "    LAST_REF = claim\n"
         "    if mode == 'mounted-forged': claim['digest'] = 'blake3:' + 'a'*64\n"
@@ -147,8 +152,8 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "class Expand(Preview):\n"
         " @classmethod\n"
         " def define_schema(cls):\n"
-        "  return NodeSchema(node_type='preview-fixture.expand', inputs=(InputSpec('mode', "
-        "TypeExpr.concrete(CORE_STRING)),), outputs=(OutputSpec('out', "
+        "  return NodeSchema(node_type='preview-fixture.expand', body=(Input('mode', "
+        "TypeExpr.concrete(CORE_STRING)), Output('out', "
         "TypeExpr.concrete(CORE_STRING)),), may_expand_graph=True)\n"
         " @classmethod\n"
         " def execute(cls, *, mode: str):\n"
@@ -156,7 +161,22 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         "  child = graph.node('preview-fixture.expand' if mode == 'nested' else "
         "'preview-fixture.emit', 'inner' if mode == 'nested' else 'emit', mode='ok')\n"
         "  return graph.finalize(out=child.out('out'))\n"
-        "NODES = (Preview, Expand)\n"
+        "class Finish(Node):\n"
+        " entered = None\n"
+        " @classmethod\n"
+        " def define_schema(cls):\n"
+        "  return NodeSchema(node_type='preview-fixture.finish', body=("
+        "Input('saved', TypeExpr.concrete(CORE_STRING)), "
+        "Input('mode', TypeExpr.concrete(CORE_STRING)), "
+        "Output('out', TypeExpr.concrete(CORE_STRING))), idempotent=False)\n"
+        " @classmethod\n"
+        " async def execute(cls, *, saved, mode):\n"
+        "  if mode == 'failed': raise RuntimeError('downstream failed after save')\n"
+        "  if mode == 'cancelled':\n"
+        "   cls.entered.set()\n"
+        "   await asyncio.Event().wait()\n"
+        "  return cls.outputs(out=saved)\n"
+        "NODES = (Preview, Expand, Finish)\n"
         "def register_types(registry):\n"
         " if DOCUMENT is not None:\n"
         "  registry.register('dinkster.layers', coerce=lambda obj: obj, "
@@ -177,6 +197,173 @@ def _write_preview_pack(tmp_path: Path, data: bytes, *, document: bytes | None =
         encoding="ascii",
     )
     return manifest
+
+
+@pytest.mark.parametrize(
+    ("state", "saved"),
+    [
+        ("completed", True),
+        ("completed", False),
+        ("failed", True),
+        ("failed", False),
+        ("cancelled", True),
+        ("cancelled", False),
+        ("publication-cancelled", True),
+    ],
+)
+def test_saved_files_survive_downstream_failure_and_cancellation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes, state: str, saved: bool
+) -> None:
+    import importlib
+    import json
+
+    from dinkster_graph import Link
+    from dinkster_server import HistoryStore
+
+    manifest = _write_preview_pack(tmp_path, mp4)
+    output = tmp_path / "output"
+    output.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps({"mounts": [{"id": "renders", "root": str(output), "mode": "readwrite"}]}),
+        "ascii",
+    )
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    env = {"PYTHONPATH": str(tmp_path), "DINKSTER_MOUNTS_SNAPSHOT": str(snapshot)}
+    mounts = MountTable()
+    mounts.add(MountDef("renders", output, "readwrite"))
+    mounts.scan("renders")
+    database = tmp_path / "library.sqlite"
+    history_path = tmp_path / "history.sqlite"
+    library = ServerLibrary(
+        vault=AssetVault(tmp_path / "vault"),
+        store=LibraryStore(database),
+        resolver=mounts,
+        local_resolver=mounts,
+        upload_writer=AssetWriter(mounts),
+        project_folders_for=lambda _: AssetFolderContext(("renders",), "renders"),
+    )
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=env)
+        history = HistoryStore(history_path)
+        publication_entered = asyncio.Event()
+        release_publication = threading.Event()
+        if state == "publication-cancelled":
+            loop = asyncio.get_running_loop()
+            original = ServerLibrary.record_saved_artifacts
+
+            def record_artifacts(
+                self: ServerLibrary, job: Job, saved: Sequence[SavedArtifact]
+            ) -> tuple[SavedArtifact, ...]:
+                loop.call_soon_threadsafe(publication_entered.set)
+                if not release_publication.wait(10):
+                    raise TimeoutError("test did not release artifact publication")
+                return original(self, job, saved)
+
+            monkeypatch.setattr(ServerLibrary, "record_saved_artifacts", record_artifacts)
+        try:
+            await composer.add_pack(PackSpec(manifest, in_process=True, env=env))
+            module = importlib.import_module(
+                "preview_fixture_" + digest_bytes(str(tmp_path).encode())[7:19]
+            )
+            module.Finish.entered = asyncio.Event()
+            client = TestClient(
+                TestServer(
+                    create_app(
+                        composer.composition.make_engine,
+                        composer.composition.schemas,
+                        library=library,
+                        history=history,
+                    )
+                )
+            )
+            await client.start_server()
+            try:
+                ws = await client.ws_connect("/api/events?clientId=partial")
+                graph = Graph(
+                    nodes={
+                        "save": GraphNode(
+                            "preview-fixture.emit",
+                            {"mode": "mounted-video" if saved else "no-save"},
+                        ),
+                        "finish": GraphNode(
+                            "preview-fixture.finish", {"saved": Link("save", "out"), "mode": state}
+                        ),
+                    }
+                )
+                response = await client.post(
+                    "/api/jobs",
+                    json={
+                        "clientId": "partial",
+                        "jobId": "run",
+                        "project": "film",
+                        "graph": graph_to_wire(graph),
+                        "targets": ["finish"],
+                    },
+                )
+                assert response.status == 202
+                async with asyncio.timeout(10):
+                    if state == "cancelled":
+                        await module.Finish.entered.wait()
+                        assert (await client.delete("/api/jobs/partial/run")).status == 200
+                    if state == "publication-cancelled":
+                        await publication_entered.wait()
+                        assert (await client.delete("/api/jobs/partial/run")).status == 200
+                        release_publication.set()
+                    while True:
+                        event = await ws.receive_json()
+                        if event["type"] == "job_state" and event["state"] in {
+                            "completed",
+                            "failed",
+                            "cancelled",
+                        }:
+                            break
+                expected_state = "cancelled" if state == "publication-cancelled" else state
+                assert event["state"] == expected_state
+                job = await (await client.get("/api/jobs/partial/run")).json()
+                assert job["state"] == expected_state
+                artifacts = job["artifacts"]
+                saved_media = (mp4, _tiny_mp4(99)) if saved else ()
+                assert len(artifacts) == len(saved_media)
+                for artifact, data in zip(artifacts, saved_media, strict=True):
+                    assert artifact["digest"] == digest_bytes(data)
+                    assert artifact["nodeId"] == "save"
+                    assert (output / artifact["name"]).read_bytes() == data
+                terminal = await (
+                    await client.get(f"/api/library/terminal-results/{job['jobRef']}?scope=local")
+                ).json()
+                assert [offer["artifact"] for offer in terminal["artifacts"]] == [
+                    {**artifact, "index": index} for index, artifact in enumerate(artifacts)
+                ]
+                assert terminal["state"] == expected_state
+                assert terminal["complete"] is (state == "completed")
+                assert len(list(output.glob("*.mp4"))) == (2 if saved else 0)
+                await ws.close()
+            finally:
+                await client.close()
+            reopened = LibraryStore(database)
+            reopened_history = HistoryStore(history_path)
+            try:
+                assert reopened.terminal_result("local", job["jobRef"]) == terminal
+                record = reopened_history.get("local", job["jobRef"])
+                assert record is not None and record.state == expected_state
+                assert record.asset_digests == tuple(
+                    sorted(digest_bytes(data) for data in saved_media)
+                )
+                assert (record.thumbnail is not None) is saved
+                records = reopened.query_assets("local", project="film")
+                assert {row.origin["job"] for group in records for row in group} == (
+                    {job["jobRef"]} if saved else set()
+                )
+            finally:
+                reopened.close()
+                reopened_history.close()
+        finally:
+            release_publication.set()
+            await composer.close()
+
+    run_scenario(scenario())
 
 
 @pytest.mark.parametrize("in_process", (True, False))
@@ -515,8 +702,8 @@ def test_optional_previews_associate_only_with_authorized_files_and_survive_cach
                     ),
                 )
                 try:
-                    retained = library.record_saved_outputs(job, result)
-                    assert retained.artifacts == result.artifacts
+                    retained = library.record_saved_artifacts(job, result.artifacts)
+                    assert retained == result.artifacts
                     if expected:
                         digest = digest_bytes(mp4)
                         assert vault.resolve(digest) is None
@@ -546,9 +733,9 @@ def test_optional_previews_associate_only_with_authorized_files_and_survive_cach
                                 f"WHEN NEW.digest = '{digest_bytes(mp4)}' "
                                 "BEGIN SELECT RAISE(ABORT, 'optional catalog offline'); END"
                             )
-                        without_preview = library.record_saved_outputs(job, result)
-                        assert all(item.preview is None for item in without_preview.artifacts)
-                        assert [item.virtual_path for item in without_preview.artifacts] == [
+                        without_preview = library.record_saved_artifacts(job, result.artifacts)
+                        assert all(item.preview is None for item in without_preview)
+                        assert [item.virtual_path for item in without_preview] == [
                             item.virtual_path for item in result.artifacts
                         ]
                         assert not list(vault.root.glob(".upload-observations/*.json"))
@@ -640,7 +827,7 @@ def test_saved_file_previews_are_lazy_file_backed_results(
         CORE_STRING,
         Node,
         NodeSchema,
-        OutputSpec,
+        Output,
         TypeExpr,
         attach_saved_artifact,
         publish_saved_file_preview,
@@ -665,7 +852,7 @@ def test_saved_file_previews_are_lazy_file_backed_results(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="preview-fixture.saved",
-                outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("out", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -744,7 +931,7 @@ def test_cancelled_async_node_closes_a_threaded_optional_encoder_without_waiting
         CORE_STRING,
         Node,
         NodeSchema,
-        OutputSpec,
+        Output,
         TypeExpr,
         publish_saved_file_preview,
     )
@@ -777,7 +964,7 @@ def test_cancelled_async_node_closes_a_threaded_optional_encoder_without_waiting
             def define_schema(cls) -> NodeSchema:
                 return NodeSchema(
                     node_type="preview-fixture.cancel",
-                    outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+                    body=(Output("out", TypeExpr.concrete(CORE_STRING)),),
                 )
 
             @classmethod
@@ -881,7 +1068,7 @@ def test_encoded_retention_requires_live_output_and_recovers_catalog(
             )
     if failure:
         with pytest.raises((AssetError, OSError)):
-            library.record_saved_outputs(job, result)
+            library.record_saved_artifacts(job, result.artifacts)
         assert library.store.query_assets("local", project="film") == []
         assert list(output.glob("*.mp4")) == (
             [output / "movie.mp4"] if failure == "catalog" else []
@@ -894,9 +1081,11 @@ def test_encoded_retention_requires_live_output_and_recovers_catalog(
     else:
         with ThreadPoolExecutor(max_workers=3) as pool:
             completed = list(
-                pool.map(lambda _index: library.record_saved_outputs(job, result), range(3))
+                pool.map(
+                    lambda _index: library.record_saved_artifacts(job, result.artifacts), range(3)
+                )
             )
-        assert {item.artifacts[0].virtual_path for item in completed} == {
+        assert {item[0].virtual_path for item in completed} == {
             "mounts/renders/movie.mp4",
             "mounts/renders/movie_00001.mp4",
             "mounts/renders/movie_00002.mp4",
@@ -1060,7 +1249,7 @@ def test_image_document_attachments_adopt_sources_before_worker_teardown(
 def test_image_documents_cross_successful_invocations_without_becoming_previews(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail: bool, mp4: bytes
 ) -> None:
-    from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr
     from dinkster_assets.declared import produced_output_scratch
     from dinkster_image_document import ImageDocument
     from dinkster_image_document.document import empty_document
@@ -1089,7 +1278,7 @@ def test_image_documents_cross_successful_invocations_without_becoming_previews(
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="document-fixture.emit",
-                outputs=(OutputSpec("out", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("out", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod
@@ -1508,7 +1697,7 @@ def test_original_document_catalog_failure_recovers_after_restart(
         )
         job = Job(JobKey("client", "job"), Graph(nodes={}), (), 0, "run", "fp", project="film")
         with pytest.raises(AssetError, match="catalog could not be committed"):
-            library.record_saved_outputs(job, RunResult("run", {}, (), (), (), artifacts=artifacts))
+            library.record_saved_artifacts(job, artifacts)
         assert len(list(vault.root.glob(".upload-observations/*.json"))) == 1
         assert library.store.query_assets("local", project="film") == []
         with sqlite3.connect(database) as connection:

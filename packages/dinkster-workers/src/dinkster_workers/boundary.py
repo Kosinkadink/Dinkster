@@ -37,7 +37,7 @@ import sys
 import time
 import uuid
 from collections.abc import Callable, Collection, Generator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -440,6 +440,13 @@ class ValueCodec:
         """Roll back CAS retention after a frame that was never sent."""
         self._conversation, self._conversation_bytes = checkpoint
 
+    def _stored_by(self, type_id: str) -> str | None:
+        """The pack whose codec this side uses for an atom, when one does."""
+        if type_id not in self._registry:
+            return None
+        pack = self._registry.storing_pack(type_id)
+        return None if pack in (None, "core") else pack
+
     def encode(
         self, value: Value, blobs: list[bytes], segments: list[SharedMemory]
     ) -> tuple[dict[str, object], TransferStat]:
@@ -455,6 +462,12 @@ class ValueCodec:
             all_declared = True
             all_reused = bool(children)
             for child in children:
+                if (producer := value.meta.get("producer.pack")) is not None and child.meta.get(
+                    "producer.pack"
+                ) is None:
+                    child = replace(
+                        child, meta=ValueMeta({**child.meta.entries, "producer.pack": producer})
+                    )
                 child_wire, child_stat = self.encode(child, blobs, segments)
                 element_wires.append(child_wire)
                 total_size += child_stat.size_bytes
@@ -497,6 +510,8 @@ class ValueCodec:
                         "size": encoded.size,
                     },
                 }
+                if encoded.storing is not None:
+                    wire["storing"] = encoded.storing
                 blobs.append(meta_data)
                 return wire, TransferStat("shm", encoded.size, codec_ms, declared, True)
             data = encoded.data
@@ -526,6 +541,8 @@ class ValueCodec:
                             "size": encoding.size,
                         },
                     }
+                    if (stored_by := self._stored_by(value.type_id)) is not None:
+                        wire["storing"] = stored_by
                     blobs.append(meta_data)
                     return wire, TransferStat(
                         "shm", encoding.size, codec_ms, spec.declared_codec, False
@@ -542,6 +559,11 @@ class ValueCodec:
             "fingerprint": value.fingerprint,
             "metaBlob": len(blobs),
         }
+        stored_by = (
+            cast(EncodedPayload, payload).storing if reused else self._stored_by(value.type_id)
+        )
+        if stored_by is not None:
+            wire["storing"] = stored_by
         blobs.append(default_encode(dict(value.meta.entries)))
         if self._use_shm and 0 < self._shm_threshold <= len(data):
             segment = _create_segment(data)
@@ -714,8 +736,14 @@ class ValueCodec:
         else:
             raise BoundaryError(f"unknown payload transport: {transport!r}")
         spec = self._registry.spec(type_id) if type_id in self._registry else None
+        storing = wire.get("storing")
+        mismatch = self._registry.storing_mismatch(
+            type_id, storing if isinstance(storing, str) else None
+        )
         if spec is not None and (
-            spec.validate_encoded is not None or spec.validate_encoded_buffer is not None
+            mismatch is not None
+            or spec.validate_encoded is not None
+            or spec.validate_encoded_buffer is not None
         ):
             if segment_view is not None:
                 validation_view = segment_view.toreadonly()
@@ -728,15 +756,17 @@ class ValueCodec:
                 validation_view = None
                 validation_data = data
             try:
+                if mismatch is not None:
+                    raise ValueError(mismatch)
                 if spec.validate_encoded_buffer is not None:
                     if isinstance(validation_data, memoryview):
-                        spec.validate_encoded_buffer(validation_data, meta.entries)
+                        spec.validate_encoded_buffer(validation_data, meta.codec_entries)
                     else:
                         with memoryview(validation_data) as inline_view:
-                            spec.validate_encoded_buffer(inline_view, meta.entries)
+                            spec.validate_encoded_buffer(inline_view, meta.codec_entries)
                 else:
                     assert spec.validate_encoded is not None
-                    spec.validate_encoded(bytes(validation_data), meta.entries)
+                    spec.validate_encoded(bytes(validation_data), meta.codec_entries)
             except Exception as exc:
                 if validation_view is not None:
                     validation_view.release()
@@ -747,8 +777,13 @@ class ValueCodec:
                     assert segment is not None
                     segment.close()
                     segment = None
+                message = self._registry.unreadable_value_message(
+                    type_id, meta.get("producer.pack")
+                )
                 raise EncodedPayloadValidationError(
-                    f"encoded payload validation failed for type '{type_id}': {exc}"
+                    f"{message}: {exc}"
+                    if message is not None
+                    else f"encoded payload validation failed for type '{type_id}': {exc}"
                 ) from exc
             if validation_view is not None:
                 validation_view.release()
@@ -770,9 +805,16 @@ class ValueCodec:
                     transport,
                     cast(SharedMemory, segment).close,
                     size_bytes,
+                    storing=storing if isinstance(storing, str) else None,
                 )
                 if segment_view is not None
-                else EncodedPayload(type_id, data, decoder, transport)
+                else EncodedPayload(
+                    type_id,
+                    data,
+                    decoder,
+                    transport,
+                    storing if isinstance(storing, str) else None,
+                )
             ),
         )
         return value, TransferStat(transport, size_bytes, codec_ms, declared, False)
@@ -922,6 +964,8 @@ def decode_invocation(
             raise PersistentBlobMissing(
                 f"input '{input_id}' of node '{header.get('nodeId')}': {exc}"
             ) from exc
+        except EncodedPayloadValidationError as exc:
+            raise EncodedPayloadValidationError(f"input '{input_id}': {exc}") from exc
         inputs[str(input_id)] = value
     output_members = tuple(
         (str(family_id), tuple(str(suffix) for suffix in suffixes))
@@ -1737,7 +1781,10 @@ def _validate_value_descriptor(
     if (
         element_type is not None
         or positions is not None
-        or set(wire) != {"typeId", "fingerprint", "metaBlob", "payload"}
+        or not {"typeId", "fingerprint", "metaBlob", "payload"}
+        <= set(wire)
+        <= {"typeId", "fingerprint", "metaBlob", "payload", "storing"}
+        or ("storing" in wire and type(wire["storing"]) is not str)
     ):
         raise BoundaryError("invalid value descriptor fields")
     payload = wire["payload"]

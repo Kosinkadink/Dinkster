@@ -236,7 +236,7 @@ def test_in_process_sampling_preserves_invocation_distributed_configuration(nest
     from contextlib import nullcontext
 
     from dinkster_protocol import Invocation, SingleJobMultiGpuExecution
-    from dinkster_schema import Node, NodeSchema, OutputSpec, TypeExpr
+    from dinkster_schema import Node, NodeSchema, Output, TypeExpr
     from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
     from dinkster_workers import InProcessWorker, current_execution_context
 
@@ -245,7 +245,7 @@ def test_in_process_sampling_preserves_invocation_distributed_configuration(nest
         def define_schema(cls) -> NodeSchema:
             return NodeSchema(
                 node_type="test.distributed-context",
-                outputs=(OutputSpec("value", TypeExpr.concrete(CORE_STRING)),),
+                body=(Output("value", TypeExpr.concrete(CORE_STRING)),),
             )
 
         @classmethod

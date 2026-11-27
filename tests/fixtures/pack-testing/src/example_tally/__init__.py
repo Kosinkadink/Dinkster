@@ -5,7 +5,7 @@ import os
 from collections import Counter
 from collections.abc import Mapping
 
-from dinkster_api.v1 import InputSpec, Node, NodeSchema, OutputSpec, TypeExpr, TypeRegistry
+from dinkster_api.v1 import Input, Node, NodeSchema, Output, TypeExpr, TypeRegistry
 
 
 class Shout(Node):
@@ -13,8 +13,10 @@ class Shout(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="example-tally.shout",
-            inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
-            outputs=(OutputSpec("text", TypeExpr.concrete("STRING")),),
+            body=(
+                Input("text", TypeExpr.concrete("STRING")),
+                Output("text", TypeExpr.concrete("STRING")),
+            ),
         )
 
     @classmethod
@@ -27,10 +29,10 @@ class Tally(Node):
     def define_schema(cls) -> NodeSchema:
         return NodeSchema(
             node_type="example-tally.tally",
-            inputs=(InputSpec("text", TypeExpr.concrete("STRING")),),
-            outputs=(
-                OutputSpec("counts", TypeExpr.concrete("example-tally.counts")),
-                OutputSpec("pid", TypeExpr.concrete("INT")),
+            body=(
+                Input("text", TypeExpr.concrete("STRING")),
+                Output("counts", TypeExpr.concrete("example-tally.counts")),
+                Output("pid", TypeExpr.concrete("INT")),
             ),
         )
 

@@ -39,14 +39,17 @@ from typing import Any, NamedTuple, TypeAlias, cast
 
 from dinkster_assets import (
     AssetError,
+    AssetRef,
     AssetVault,
     DeclaredAsset,
     FetchAborted,
+    LocalAssetRef,
     install_declared_assets,
     resolver_from_env,
     use_declared_asset_pack,
 )
 from dinkster_assets.declared import use_produced_output_job
+from dinkster_assets.model import LocalAssetResolver
 from dinkster_assets.scratch import hold_produced_vault
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
@@ -85,6 +88,15 @@ from dinkster_protocol import (
     WorkUnitFailed,
     attention_capability_evidence_to_wire,
     attention_route_token_to_wire,
+)
+from dinkster_protocol.lookups import (
+    LOOKUP_TIME_LIMIT,
+    LookupCallError,
+    lookup_answer_to_wire,
+    lookup_arguments,
+    lookup_functions,
+    lookup_marks,
+    lookup_marks_to_wire,
 )
 from dinkster_protocol.pack_surfaces import (
     PACK_EVENTS_SURFACE,
@@ -156,6 +168,8 @@ from .manifest import (
     validate_registration_claims,
     vision_provider_to_wire,
 )
+from .pack_functions import run_pack_function
+from .pack_wheel import import_root_modules
 from .produced_assets import (
     image_document_values,
     offer_source_assets,
@@ -340,6 +354,122 @@ def _node_classes(entry: str, value: object) -> list[type[Node]]:
     return classes
 
 
+TYPE_PROVIDERS_ENV = "DINKSTER_TYPE_PROVIDERS"
+"""JSON object mapping each used type id to the manifest of the pack that
+stores it in this composition: ``{"type": {"manifest": PATH, "part": PART}}``."""
+
+
+def type_providers_to_env(providers: Mapping[str, PackManifest]) -> str:
+    return json.dumps(
+        {
+            type_id: {"manifest": str(provider.path), "part": provider.part}
+            for type_id, provider in sorted(providers.items())
+        },
+        sort_keys=True,
+    )
+
+
+def type_providers_from_env(raw: str | None) -> dict[str, PackManifest]:
+    """Read the providers the composer chose; an unreadable manifest is skipped
+    here and surfaces when that type's values are refused for lacking storing."""
+    if not raw:
+        return {}
+    document = cast("dict[str, dict[str, str | None]]", json.loads(raw))
+    loaded: dict[tuple[str, str | None], PackManifest | None] = {}
+    providers: dict[str, PackManifest] = {}
+    for type_id, entry in document.items():
+        key = (str(entry["manifest"]), entry.get("part"))
+        if key not in loaded:
+            try:
+                loaded[key] = load_manifest(Path(key[0]), part=key[1])
+            except Exception:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "cannot read the storing pack for %s at %s", type_id, key[0]
+                )
+                loaded[key] = None
+        if (provider := loaded[key]) is not None:
+            providers[type_id] = provider
+    return providers
+
+
+def _unloadable_storing(message: str) -> Callable[..., Any]:
+    def refuse(*_args: object) -> Any:
+        raise ValueError(message)
+
+    return refuse
+
+
+def load_type_providers(
+    registry: TypeRegistry, providers: Mapping[str, PackManifest], user: PackManifest
+) -> None:
+    """Load the types registration of each pack that stores a used type.
+
+    Only the provider's types entry runs here, never its nodes. When it
+    cannot load, its types refuse every value at the wire with the import
+    error and both pack names; this worker never falls back to its own
+    storing, so one run never holds a type stored two ways. Both packs share
+    one module namespace, so a top-level module name both import roots define
+    is refused rather than resolved to one pack's file for both."""
+    grouped: dict[Path, tuple[PackManifest, list[str]]] = {}
+    for type_id, provider in providers.items():
+        grouped.setdefault(provider.path, (provider, []))[1].append(type_id)
+    for provider, type_ids in grouped.values():
+        if all(
+            type_id in registry and registry.storing_pack(type_id) == provider.execution_id
+            for type_id in type_ids
+        ):
+            continue
+        staged = registry.copy()
+        allow_bare = provider.publisher == "dinkster"
+        try:
+            if provider.path != user.path and (
+                shared := import_root_modules(provider) & import_root_modules(user)
+            ):
+                raise ManifestError(
+                    f"both packs define top-level modules {sorted(shared)!r}; "
+                    "keep each pack's modules inside its own import package"
+                )
+            # Appended, so the using pack's own modules keep precedence.
+            roots: list[str] = []
+            add_pack_root_to_import_path(provider, roots)
+            sys.path.extend(root for root in roots if root not in sys.path)
+            with staged.registering_pack(
+                provider.execution_id,
+                provider.type_namespaces,
+                allow_bare=allow_bare,
+                uses=provider.uses_types,
+            ):
+                if provider.types_entry is not None:
+                    register = resolve_entry(provider.types_entry)
+                    if not callable(register):
+                        raise ManifestError(f"entry '{provider.types_entry}' is not callable")
+                    register(staged)
+        except Exception as exc:  # noqa: BLE001 - reported at the wire instead
+            reason = f"{type(exc).__name__}: {exc}"
+            refusals = {
+                type_id: _unloadable_storing(
+                    f"type {type_id!r} is stored by pack {provider.name!r}, but that "
+                    f"pack's types registration cannot load in pack {user.name!r}'s "
+                    f"worker: {reason}"
+                )
+                for type_id in type_ids
+            }
+            # Same claims and uses as the provider itself, so its refusing
+            # registration wins the storing choice exactly as its codec would.
+            with registry.registering_pack(
+                provider.execution_id,
+                provider.type_namespaces,
+                allow_bare=allow_bare,
+                uses=tuple(type_id for type_id in type_ids if type_id in provider.uses_types),
+            ):
+                for type_id, refuse in refusals.items():
+                    registry.register(
+                        type_id, encode=refuse, decode=refuse, validate_encoded=refuse
+                    )
+        else:
+            registry.replace_from(staged)
+
+
 def load_pack(
     manifest: PackManifest,
     *,
@@ -347,6 +477,7 @@ def load_pack(
     import_from_pack_root: bool = False,
     registry: TypeRegistry | None = None,
     saved_preview_vault: AssetVault | None = None,
+    type_providers: Mapping[str, PackManifest] | None = None,
 ) -> tuple[
     InProcessWorker,
     TypeRegistry,
@@ -418,11 +549,20 @@ def load_pack(
         if registry is None:
             registry = TypeRegistry()
             register_core_types(registry)
+        if type_providers:
+            load_type_providers(registry, type_providers, manifest)
+        if registry.used_type_ids(manifest.execution_id) or any(
+            registry.owner_of(type_id) == manifest.execution_id for type_id in registry.type_ids()
+        ):
+            # Another in-process pack loaded this pack's types as their storing
+            # pack; its own load registers them again from the same entry.
+            registry.remove_pack_types(manifest.execution_id)
         previous_types = frozenset(registry.type_ids())
         with registry.registering_pack(
             manifest.execution_id,
             manifest.type_namespaces,
             allow_bare=manifest.publisher == "dinkster",
+            uses=manifest.uses_types,
         ):
             if manifest.types_entry is not None:
                 register = resolve_pack_entry(manifest.types_entry)
@@ -461,6 +601,7 @@ def load_pack(
                 tid
                 for tid in registry.type_ids()
                 if tid not in previous_types
+                and tid not in registry.used_type_ids(manifest.execution_id)
                 and not any(
                     dependency.pack == registry.owner_of(tid)
                     for dependency in manifest.dependencies
@@ -785,7 +926,9 @@ async def serve(
 ) -> None:
     manifest = load_manifest(Path(manifest_path), part=part)
     add_pack_root_to_import_path(manifest, sys.path)
-    worker, registry, node_classes, arm_workers = load_pack(manifest)
+    worker, registry, node_classes, arm_workers = load_pack(
+        manifest, type_providers=type_providers_from_env(os.environ.get(TYPE_PROVIDERS_ENV))
+    )
     with use_declared_asset_pack(manifest.name):
         planner = load_planner(manifest)
         consumers = worker.memory_consumers
@@ -838,10 +981,11 @@ async def serve_many(
     process_maintenance_operations: set[tuple[object, str]] = set()
     loaded: list[tuple[Any, ...]] = []
     selectors = tuple(parts) if parts else (None,) * len(manifest_paths)
+    type_providers = type_providers_from_env(os.environ.get(TYPE_PROVIDERS_ENV))
     for path, part in zip(manifest_paths, selectors, strict=True):
         manifest = load_manifest(Path(path), part=part)
         add_pack_root_to_import_path(manifest, sys.path)
-        pack_load = load_pack(manifest)
+        pack_load = load_pack(manifest, type_providers=type_providers)
         with use_declared_asset_pack(manifest.name):
             loaded.append(
                 (
@@ -1231,6 +1375,12 @@ async def serve_connection(
         hello["compatSkips"] = {
             node_name: diagnostic.to_wire() for node_name, diagnostic in skips.items()
         }
+    lookups = lookup_functions(schemas)
+    if lookups:
+        # The marks of the lookups this pack's schemas declare: which asset
+        # kinds and runs make an answer old. The schema wire carries only the
+        # function's name, so the parent learns the marks from the pack itself.
+        hello["lookups"] = lookup_marks_to_wire(lookup_marks(lookups))
     if extension_contributions:
         hello["extensionContributions"] = [
             {
@@ -2510,6 +2660,7 @@ async def serve_connection(
     full_release_tasks: set[asyncio.Task[None]] = set()
     workgroup_tasks: set[asyncio.Task[None]] = set()
     route_tasks: dict[str, asyncio.Task[None]] = {}
+    function_tasks: dict[str, tuple[asyncio.Task[None], threading.Event]] = {}
     rendition_tasks: dict[str, asyncio.Task[None]] = {}
     rendition_receipts: dict[str, asyncio.Future[None]] = {}
     pack_routes = {route.id: route for _, item in extension_contributions for route in item.routes}
@@ -2534,6 +2685,57 @@ async def serve_connection(
             reply["error"] = "pack-route-failed"
         finally:
             route_tasks.pop(request_id, None)
+        await send(reply)
+
+    lookup_tasks: dict[str, asyncio.Task[None]] = {}
+
+    def call_asset(wire: object) -> object:
+        """The AssetRef a lookup or button call receives; check an unchecked local file first."""
+        data = cast("Mapping[str, object]", wire)
+        resolver = resolver_from_env()
+        try:
+            if data.get("verification") == "unverified":
+                local = LocalAssetRef.from_wire(
+                    data, resolver if isinstance(resolver, LocalAssetResolver) else None
+                )
+                verified = local.verified()
+                if verified is None:
+                    raise LookupCallError("lookup-file-unchecked", "the local file is not checked")
+                return verified
+            return AssetRef.from_wire(data, resolver)
+        except AssetError as exc:
+            raise LookupCallError("lookup-invalid-arguments", str(exc)) from None
+
+    async def run_lookup(header: Mapping[str, Any]) -> None:
+        request_id = str(header.get("requestId", ""))
+        reply: dict[str, object] = {"type": "lookupResult", "requestId": request_id}
+        name = str(header.get("function", ""))
+        try:
+            function = lookups.get(name)
+            if function is None:
+                raise LookupCallError("lookup-unknown", f"no declared lookup {name!r}")
+            raw_args = header.get("args")
+            if not isinstance(raw_args, list):
+                raise LookupCallError("lookup-invalid-arguments", "args must be a list")
+            arguments = await run_sync_resource(
+                lookup_arguments, function, cast("list[object]", raw_args), asset=call_asset
+            )
+            async with asyncio.timeout(LOOKUP_TIME_LIMIT):
+                answer = await run_sync_resource(function, *arguments)
+                if inspect.isawaitable(answer):
+                    answer = await cast("Awaitable[object]", answer)
+            reply["answer"] = lookup_answer_to_wire(function, answer)
+        except LookupCallError as exc:
+            reply["error"] = exc.code
+            log.warning("lookup %s: %s", name, exc.detail or exc.code)
+        except TimeoutError:
+            reply["error"] = "lookup-timeout"
+            log.warning("lookup %s: no answer within %gs", name, LOOKUP_TIME_LIMIT)
+        except Exception:
+            reply["error"] = "lookup-failed"
+            log.warning("lookup %s raised", name, exc_info=True)
+        finally:
+            lookup_tasks.pop(request_id, None)
         await send(reply)
 
     def requested_rendition(header: Mapping[str, Any]):
@@ -2742,6 +2944,15 @@ async def serve_connection(
                     }
                 )
                 continue
+            if maintenance_active and kind == "lookup":
+                await send(
+                    {
+                        "type": "lookupResult",
+                        "requestId": str(header.get("requestId", "")),
+                        "error": "lookup-failed",
+                    }
+                )
+                continue
             if kind == "packRoute":
                 request_id = str(header.get("requestId", ""))
                 if request_id in route_tasks:
@@ -2751,6 +2962,48 @@ async def serve_connection(
                 )
             elif kind == "cancelPackRoute":
                 task = route_tasks.get(str(header.get("requestId", "")))
+                if task is not None:
+                    task.cancel()
+            elif kind == "packFunction":
+                request_id = str(header.get("requestId", ""))
+                if request_id in function_tasks:
+                    raise BoundaryError("duplicate pack function request id")
+                if maintenance_active:
+                    await send(
+                        {
+                            "type": "packFunctionResult",
+                            "requestId": request_id,
+                            "code": "unavailable",
+                            "message": "The pack is busy. Try again in a moment.",
+                        }
+                    )
+                    continue
+                function_cancelled = threading.Event()
+                function_task = track_resource_task(
+                    asyncio.create_task(
+                        run_pack_function(
+                            header, schemas, send, function_cancelled, asset=call_asset
+                        )
+                    )
+                )
+                function_tasks[request_id] = (function_task, function_cancelled)
+                function_task.add_done_callback(
+                    lambda _, request_id=request_id: function_tasks.pop(request_id, None)
+                )
+            elif kind == "cancelPackFunction":
+                running = function_tasks.get(str(header.get("requestId", "")))
+                if running is not None:
+                    running[1].set()
+                    running[0].cancel()
+            elif kind == "lookup":
+                request_id = str(header.get("requestId", ""))
+                if request_id in lookup_tasks:
+                    raise BoundaryError("duplicate lookup request id")
+                lookup_tasks[request_id] = track_resource_task(
+                    asyncio.create_task(run_lookup(header))
+                )
+            elif kind == "cancelLookup":
+                task = lookup_tasks.get(str(header.get("requestId", "")))
                 if task is not None:
                     task.cancel()
             elif kind in ("resolveRendition", "renderRendition"):
@@ -3056,6 +3309,7 @@ async def serve_connection(
             + list(shed_tasks)
             + list(workgroup_tasks)
             + list(route_tasks.values())
+            + [task for task, _ in function_tasks.values()]
             + list(rendition_tasks.values())
             + [task for task, _ in stage_tasks.values()]
             + ([schema_reload_task] if schema_reload_task is not None else [])
@@ -3064,6 +3318,8 @@ async def serve_connection(
             cancellation.set()
         for _, stage_abort in stage_tasks.values():
             stage_abort.set()
+        for _, function_cancelled in function_tasks.values():
+            function_cancelled.set()
         for task in pending:
             task.cancel()
         pending_settlement = asyncio.gather(*pending, return_exceptions=True)

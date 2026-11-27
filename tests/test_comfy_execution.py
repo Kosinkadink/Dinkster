@@ -16,6 +16,7 @@ from dinkster_caches import MemoryLRUCache
 from dinkster_engine import Engine, EventListener, ExecutionError, GraphValidationError
 from dinkster_graph import (
     PORTS_NODE_ID,
+    AbsentInput,
     Graph,
     GraphNode,
     Link,
@@ -251,6 +252,41 @@ def test_validation_error_literal(cache_enabled: bool, value: object, error: boo
         else:
             result = await make_engine().run(graph, ["validation"], cache_enabled=cache_enabled)
             assert result.outputs["validation"]["value"].resolve() == 5.0
+
+    run_scenario(scenario())
+
+
+def test_admission_treats_an_absent_input_as_not_connected() -> None:
+    async def scenario() -> None:
+        graph = Graph({"check": GraphNode("dev.execution.admission", {"value": AbsentInput()})})
+        result = await make_engine().run(graph, ["check"])
+        assert result.skipped == ("check",)
+        assert is_absent(result.outputs["check"]["value"])
+
+    run_scenario(scenario())
+
+
+def test_server_advertises_and_accepts_an_absent_input() -> None:
+    async def scenario() -> None:
+        client = await make_client()
+        try:
+            nodes = await (await client.get("/api/nodes")).json()
+            assert "absentInput" in nodes["dinkster"]["graphFeatures"]
+            graph = Graph(
+                {"check": GraphNode("dev.execution.admission", {"value": AbsentInput("removed")})}
+            )
+            response = await client.post(
+                "/api/jobs", json=submit_body(graph, ["check"], "absent", cache_enabled=False)
+            )
+            assert response.status == 202
+            job_ref = (await response.json())["jobRef"]
+            assert (await wait_terminal(client, "absent"))["state"] == "completed"
+            events = await (await client.get(f"/api/jobs/by-ref/{job_ref}/events?after=0")).json()
+            kinds = [event["type"] for event in events["events"]]
+            assert "node_skipped" in kinds
+            assert "node_started" not in kinds
+        finally:
+            await client.close()
 
     run_scenario(scenario())
 
