@@ -14,7 +14,7 @@ from dinkster_schema import (
     TypeExpr,
 )
 from dinkster_schema.body import all_rows
-from dinkster_values import RecordPayload, Value, is_absent, make_record_value
+from dinkster_values import CORE_COMBO, RecordPayload, Value, is_absent, make_record_value
 
 
 def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
@@ -126,7 +126,7 @@ def _reader(expression: TypeExpr) -> type[Node]:
                     Input("record", expression),
                     Input(
                         "field",
-                        TypeExpr.concrete("COMBO"),
+                        TypeExpr.concrete(CORE_COMBO),
                         default=default,
                         widget=ComboWidget(options=tuple(options)),
                         pin=False,
