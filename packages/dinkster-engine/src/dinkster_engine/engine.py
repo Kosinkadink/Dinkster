@@ -69,6 +69,7 @@ from dinkster_protocol import (
     CachedResult,
     CacheStore,
     CurrentOutputRef,
+    ErrorHint,
     ExportSnapshot,
     ExtensionSnapshot,
     ExternalOutputRef,
@@ -599,6 +600,9 @@ class Engine:
         self._run_prepared_types: dict[str, set[str]] = {}
         self._run_prepare_locks: dict[str, asyncio.Lock] = {}
         self._run_blocked_origins: dict[str, set[str]] = {}
+        self._run_network_problems: dict[
+            str, dict[tuple[str, str | None], dict[str, ErrorHint]]
+        ] = {}
         self._run_expansion_origins: dict[str, dict[str, tuple[str, str]]] = {}
         self._compiling_run_ids: set[str] = set()
 
@@ -877,6 +881,73 @@ class Engine:
         it as a node_event with run/node provenance the worker cannot know.
         The blob rides in detail as bytes - listeners that serialize to JSON
         must lift it out (the server's binary frame path does)."""
+        if event.name == "sandbox-network-denied":
+            pack = event.data.get("pack")
+            origin = event.data.get("origin")
+            raw_candidates = event.data.get("nodeIds")
+            candidates = (
+                tuple(
+                    node
+                    for node in cast("Sequence[object]", raw_candidates)
+                    if isinstance(node, str)
+                )
+                if isinstance(raw_candidates, (list, tuple))
+                else (node_id,)
+            )
+            problems = self._run_network_problems.get(run_id)
+            if (
+                not isinstance(pack, str)
+                or (origin is not None and not isinstance(origin, str))
+                or problems is None
+            ):
+                return
+            reported = problems.setdefault((pack, origin), {})
+            if node_id in reported:
+                return
+            attribution = "This node"
+            if len(candidates) > 1:
+                attribution = f"One of these nodes ({', '.join(candidates)})"
+            raw_packs = event.data.get("candidatePacks")
+            packs = (
+                tuple(name for name in cast("Sequence[object]", raw_packs) if isinstance(name, str))
+                if isinstance(raw_packs, (list, tuple))
+                else (pack,)
+            )
+            pack_detail = f"sandboxed pack {pack!r}"
+            if len(packs) > 1:
+                pack_detail = f"sandboxed packs {', '.join(repr(name) for name in packs)}"
+            hint = ErrorHint(
+                "sandbox-network-denied",
+                f"{attribution} in {pack_detail} was refused access to {origin}."
+                if origin is not None
+                else (
+                    f"{attribution} in {pack_detail} was refused internet access; "
+                    "destination unknown."
+                ),
+            )
+            reported[node_id] = hint
+            self._emit(
+                EngineEvent(
+                    "value_diagnostics",
+                    run_id,
+                    node_id,
+                    {
+                        "diagnostics": [
+                            {
+                                "severity": "warning",
+                                "code": hint.code,
+                                "message": hint.message,
+                                "nodeId": node_id,
+                                "pack": pack,
+                                "origin": origin,
+                                "candidateNodeIds": candidates,
+                                "candidatePacks": packs,
+                            }
+                        ]
+                    },
+                )
+            )
+            return
         detail: dict[str, object] = {"name": event.name, "data": dict(event.data)}
         if event.blob is not None:
             detail["blob"] = event.blob
@@ -1550,6 +1621,7 @@ class Engine:
         label: str,
         schema: NodeSchema,
         outputs: Mapping[str, Value],
+        pack: str | None,
         output_types: Mapping[str, TypeExpr] | None = None,
     ) -> CachedResult:
         # Content-identical producers share cache entries, not diagnostic
@@ -1561,7 +1633,8 @@ class Engine:
             declaration = (output_types or {}).get(output.id, output.type)
             if output.id in rebound and contains_records(declaration):
                 rebound[output.id] = refresh_record_names(declaration, rebound[output.id])
-        for output_id, value in outputs.items():
+        for output_id in outputs:
+            value = rebound[output_id]
             if is_absent(value) and not value.meta.get("absent.forwarded", False):
                 current = make_absent_value(
                     origin=f"{label}/{output_id}",
@@ -1570,6 +1643,10 @@ class Engine:
                 )
                 rebound[output_id] = replace(
                     current, meta=ValueMeta({**value.meta.entries, **current.meta.entries})
+                )
+            elif pack is not None and not is_absent(value):
+                rebound[output_id] = replace(
+                    value, meta=ValueMeta({**value.meta.entries, "producer.pack": pack})
                 )
         return CachedResult(
             rebound,
@@ -1952,7 +2029,13 @@ class Engine:
                 if inflight.cancelled():
                     continue  # owner's run died; try to take ownership
                 raise
-            outputs = self._cached_output_origins(label, schema, outputs, output_types)
+            outputs = self._cached_output_origins(
+                label,
+                schema,
+                outputs,
+                selection.pack if selection is not None else None,
+                output_types,
+            )
             if not self._cache_hit_valid(schema, outputs, output_types):
                 break
             # Dead-owner check FIRST: a known-unresolvable result must not
@@ -2023,7 +2106,13 @@ class Engine:
                 entry_problem = "stale-resource"
                 hit = None
             if hit is not None:
-                hit = self._cached_output_origins(label, schema, hit, output_types)
+                hit = self._cached_output_origins(
+                    label,
+                    schema,
+                    hit,
+                    selection.pack if selection is not None else None,
+                    output_types,
+                )
                 self._run_artifacts[run_id].extend(hit.artifacts)
                 produced[node_id] = (
                     await resolve_expansion(node_id, hit)
@@ -2168,6 +2257,12 @@ class Engine:
             duration_ms = (time.perf_counter() - started) * 1000.0
 
             if result.error is not None:
+                network_hints = tuple(
+                    nodes[label]
+                    for nodes in self._run_network_problems[run_id].values()
+                    if label in nodes
+                )
+                error = replace(result.error, hints=(*result.error.hints, *network_hints))
                 self._emit(
                     EngineEvent(
                         "node_failed",
@@ -2176,11 +2271,11 @@ class Engine:
                         self._execution_detail(
                             label,
                             selection,
-                            message=result.error.message,
+                            message=error.message,
                         ),
                     )
                 )
-                raise ExecutionError(result.error)
+                raise ExecutionError(error)
             if result.artifact_candidates:
                 message = (
                     "untrusted saved artifact candidates reached the engine without host validation"
@@ -2320,7 +2415,15 @@ class Engine:
                 self._run_artifacts[run_id].extend(saved_artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
             entry = CachedResult(
-                result.outputs,
+                {
+                    name: replace(
+                        value,
+                        meta=ValueMeta({**value.meta.entries, "producer.pack": selection.pack}),
+                    )
+                    if selection is not None and selection.pack is not None and not is_absent(value)
+                    else value
+                    for name, value in result.outputs.items()
+                },
                 result.expansion,
                 (*document_artifacts, *saved_artifacts),
                 tuple(warnings),
@@ -2338,7 +2441,7 @@ class Engine:
                     )
                 produced[node_id] = await resolve_expansion(node_id, entry)
             else:
-                produced[node_id] = result.outputs
+                produced[node_id] = entry
             executed.append(label)
             if publisher := self._runtime().publish_outputs:
                 await publisher(run_id, label, produced[node_id])
@@ -3517,6 +3620,7 @@ class Engine:
         self._run_prepared_types[run_id] = set()
         self._run_prepare_locks[run_id] = asyncio.Lock()
         self._run_blocked_origins[run_id] = set()
+        self._run_network_problems[run_id] = {}
         self._run_expansion_origins[run_id] = {}
         if preview_policy is not None:
             self._run_preview_policy[run_id] = preview_policy
@@ -3627,7 +3731,12 @@ class Engine:
                 outputs=outputs,
                 executed=tuple(executed),
                 cached=tuple(cached),
-                diagnostics=tuple(diagnostics),
+                diagnostics=tuple(diagnostics)
+                + tuple(
+                    Diagnostic("warning", hint.code, hint.message, node_id)
+                    for nodes in self._run_network_problems[run_id].values()
+                    for node_id, hint in nodes.items()
+                ),
                 skipped=tuple(skipped),
                 artifacts=tuple(self._run_artifacts[run_id]),
             )
@@ -3642,6 +3751,7 @@ class Engine:
             self._run_prepared_types.pop(run_id, None)
             self._run_prepare_locks.pop(run_id, None)
             self._run_blocked_origins.pop(run_id, None)
+            self._run_network_problems.pop(run_id, None)
             self._run_expansion_origins.pop(run_id, None)
             _execution_runtime.reset(runtime_token)
             try:

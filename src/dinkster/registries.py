@@ -1203,6 +1203,7 @@ def read_registry_pack_locks(
                 if (
                     not isinstance(published_base, str)
                     or re.fullmatch(r"sha256:[0-9a-f]{64}", published_base) is None
+                    or published_base != binding.get("baseId")
                     or facts.get("artifactDigest") != entry.artifact_digest
                     or facts.get("url") != lock_path
                     or not isinstance(digest, str)
@@ -1211,11 +1212,8 @@ def read_registry_pack_locks(
                     or not 1 <= cast("int", size) <= MEBIBYTE
                 ):
                     raise InstallError("invalid archive/base/lock binding")
-                if published_base != base_id:
-                    if incompatible is not None:
-                        incompatible.append(f"{subject}: requires base {published_base}")
-                        break
-                    raise InstallError("invalid archive/base/lock binding")
+                # The base binding records publication provenance. Target compatibility
+                # comes from requirements and the generation's dependency planner.
                 payload = index.lock_bytes(
                     registry, "/static/" + lock_path, digest, cast("int", size), timeout=timeout
                 )

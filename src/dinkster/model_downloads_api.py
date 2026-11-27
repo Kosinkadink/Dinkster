@@ -18,6 +18,7 @@ from dinkster_assets import AssetError, AssetRef, MountDef, open_verified
 from dinkster_assets.civitai import CivitaiFile, select_civitai_file
 from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.kind import is_asset_kind
 from dinkster_assets.model import hidden_model_identities, hidden_model_ref_identities
 from dinkster_assets.mounts import MountsError
 from dinkster_server.auth import principal_for, resolve_scope
@@ -25,7 +26,7 @@ from dinkster_server.lookups import announce_asset_kinds
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_downloads import ModelDownloads
-from .model_settings import MODEL_FOLDERS, filesystem_space
+from .model_settings import filesystem_space
 from .project_folders import ProjectFolders
 from .provider_credentials import ProviderCredentialsError, ProviderCredentialsExpired
 from .provider_sign_in import add_provider_sign_in_routes
@@ -44,6 +45,7 @@ class _Plan:
     credential_revision: str | None = field(repr=False)
     digest: str | None
     destination_space: dict[str, object]
+    location: str | None
     expires: float = field(default_factory=lambda: time.monotonic() + 900)
 
     def wire(self) -> dict[str, object]:
@@ -312,6 +314,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         scope: str,
         source: str | None,
         asset: AssetRef | None,
+        location: str | None,
     ) -> _Plan | dict[str, object]:
         found = local_status(name, kind, project, asset)
         if found is not None:
@@ -319,7 +322,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         candidates = (source,) if source is not None else sources.for_name(name, kind)
         if len(candidates) != 1:
             return {"status": "picker-required", "sources": list(candidates)}
-        target = downloads.target(kind, project)
+        target = downloads.target(kind, project, location=location)
         if target is None:
             return {"status": "destination-required"}
         credential_revision = None
@@ -342,6 +345,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             credential_revision,
             asset.digest if asset is not None else None,
             filesystem_space(root),
+            location,
         )
 
     def plannable(name: str) -> bool:
@@ -382,7 +386,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     or not name
                     or len(name) > 4096
                     or not isinstance(kind, str)
-                    or kind not in MODEL_FOLDERS
+                    or not kind.startswith("model/")
+                    or not is_asset_kind(kind)
                 ):
                     raise ValueError("expected a model name and supported kind")
                 wanted.append((name, kind))
@@ -430,17 +435,25 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 raise ValueError("expected name, kind, project and scope")
             body = cast("dict[str, object]", raw)
             required = {"name", "kind", "project", "scope"}
-            if not required <= set(body) or set(body) - required - {"source", "asset"}:
-                raise ValueError("expected name, kind, project, scope and optional source or asset")
+            if not required <= set(body) or set(body) - required - {"source", "asset", "location"}:
+                raise ValueError(
+                    "expected name, kind, project, scope and optional source, asset or location"
+                )
             name, kind, project = body["name"], body["kind"], body["project"]
             if (
                 not isinstance(name, str)
                 or not plannable(name)
                 or not isinstance(kind, str)
-                or kind not in MODEL_FOLDERS
+                or not kind.startswith("model/")
+                or not is_asset_kind(kind)
                 or not isinstance(project, str)
             ):
                 raise ValueError("expected a bare model name, supported kind and project")
+            location = body.get("location")
+            if "location" in body and (
+                not isinstance(location, str) or not location or len(location) > 255
+            ):
+                raise ValueError("expected a model location identifier")
             asset = None
             if "asset" in body:
                 wire = body["asset"]
@@ -480,7 +493,15 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             try:
                 task = asyncio.create_task(
                     asyncio.to_thread(
-                        plan, name, kind, project, owner, scope, cast("str | None", source), asset
+                        plan,
+                        name,
+                        kind,
+                        project,
+                        owner,
+                        scope,
+                        cast("str | None", source),
+                        asset,
+                        cast("str | None", location),
                     )
                 )
                 try:
@@ -644,7 +665,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             if job.plan_id == body["planId"]:
                 return web.json_response(job.wire(job_id), status=200)
         if (
-            downloads.target(selected.kind, selected.project) != selected.target
+            downloads.target(selected.kind, selected.project, location=selected.location)
+            != selected.target
             or selected.target.path.resolve() != selected.root
         ):
             return web.json_response({"error": "download-destination-changed"}, status=409)

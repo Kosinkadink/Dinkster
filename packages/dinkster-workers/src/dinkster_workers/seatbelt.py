@@ -371,7 +371,9 @@ class SeatbeltLauncher:
         proxy = None
         if self._policy.egress_allowlist:
             proxy = await EgressProxy.start(
-                spec.endpoint_dir / "egress.sock", self._policy.egress_allowlist
+                spec.endpoint_dir / "egress.sock",
+                self._policy.egress_allowlist,
+                on_denied=spec.on_network_denied,
             )
             environment[EGRESS_PROXY_ENV] = str(proxy.socket_path)
         try:

@@ -8,6 +8,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 
+from filelock import FileLock
+
 from .environment_state import EnvironmentError, read_document, write_document, writer_lock
 
 
@@ -16,8 +18,15 @@ def prepare_process(directory: Path, instance: str) -> None:
     _write(directory, instance, "pending", 0)
 
 
+def process_document(directory: Path) -> dict[str, object]:
+    # Windows cannot replace an open destination, even with delete sharing.
+    # This lock covers I/O only; the supervisor holds its lifetime lock separately.
+    with FileLock(directory / ".state.lock", timeout=30):
+        return read_document(directory / "state.json")
+
+
 def process_state(directory: Path, instance: str, *, pid: int = 0) -> str:
-    document = read_document(directory / "state.json")
+    document = process_document(directory)
     state, recorded_pid = document.get("state"), document.get("pid")
     if (
         document.get("instance") != instance
@@ -36,16 +45,17 @@ def process_state(directory: Path, instance: str, *, pid: int = 0) -> str:
 def _write(
     directory: Path, instance: str, state: str, pid: int, *, descendants: bool = False
 ) -> None:
-    write_document(
-        directory / "state.json",
-        {
-            "instance": instance,
-            "state": state,
-            "pid": pid,
-            "descendantsStopped": descendants,
-            "updatedAt": time.time(),
-        },
-    )
+    with FileLock(directory / ".state.lock", timeout=30):
+        write_document(
+            directory / "state.json",
+            {
+                "instance": instance,
+                "state": state,
+                "pid": pid,
+                "descendantsStopped": descendants,
+                "updatedAt": time.time(),
+            },
+        )
 
 
 @contextmanager

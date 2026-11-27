@@ -355,10 +355,10 @@ async def _value_from_wire(
     ):
         try:
             if spec.validate_encoded_buffer is not None:
-                spec.validate_encoded_buffer(memoryview(data), meta.entries)
+                spec.validate_encoded_buffer(memoryview(data), meta.codec_entries)
             else:
                 assert spec.validate_encoded is not None
-                spec.validate_encoded(data, meta.entries)
+                spec.validate_encoded(data, meta.codec_entries)
         except Exception:
             return None
     raw_storing = out_map.get("storing")

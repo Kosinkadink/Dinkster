@@ -45,7 +45,7 @@ from dinkster_values import GIBIBYTE, MEBIBYTE
 from ._seccomp import seccomp_filter
 from .accelerator import ACCELERATOR_ENV
 from .egress import EGRESS_PROXY_ENV, EgressProxy
-from .launch import HOST_OWNED_ENVIRONMENT, LaunchSpec
+from .launch import HOST_OWNED_ENVIRONMENT, SANDBOX_NETWORK_ENV, LaunchSpec
 
 
 class SandboxError(Exception):
@@ -459,6 +459,7 @@ def _launch_environment(spec: LaunchSpec, policy: SandboxPolicy) -> dict[str, st
     )
     if spec.temporary_directory is not None:
         environment.update(HOME="/tmp", TMPDIR="/tmp", TEMP="/tmp", TMP="/tmp")
+    environment[SANDBOX_NETWORK_ENV] = "1"
     return environment
 
 
@@ -488,7 +489,10 @@ def _worker_command(spec: LaunchSpec, policy: SandboxPolicy) -> list[str]:
                 f"resource.setrlimit({resource_name}, (_limit, _limit))",
             )
         )
-    statements.append("os.execv(sys.executable, [sys.executable] + sys.argv[1:])")
+    statements.append(
+        "os.execv(sys.executable, [sys.executable, '-m', "
+        "'dinkster_workers.sandbox_proxy', sys.executable] + sys.argv[1:])"
+    )
     return [_absolute_executable(spec.python), "-c", "; ".join(statements), *spec.command[1:]]
 
 
@@ -894,13 +898,12 @@ class BubblewrapLauncher:
             )
         environment = _launch_environment(spec, self._policy)
         environment.pop(EGRESS_PROXY_ENV, None)
-        proxy: EgressProxy | None = None
-        if self._policy.egress_allowlist:
-            proxy = await EgressProxy.start(
-                spec.endpoint_dir / "egress.sock",
-                self._policy.egress_allowlist,
-            )
-            environment[EGRESS_PROXY_ENV] = str(proxy.socket_path)
+        proxy = await EgressProxy.start(
+            spec.endpoint_dir / "egress.sock",
+            self._policy.egress_allowlist,
+            on_denied=spec.on_network_denied,
+        )
+        environment[EGRESS_PROXY_ENV] = str(proxy.socket_path)
         try:
             with seccomp_filter() as filter_fd, tempfile.TemporaryFile() as environment_file:
                 environment_file.write(json.dumps(environment).encode("utf-8"))
@@ -920,13 +923,11 @@ class BubblewrapLauncher:
                     pass_fds=(environment_file.fileno(), filter_fd),
                 )
         except BaseException as exc:
-            if proxy is not None:
-                await proxy.close()
+            await proxy.close()
             if isinstance(exc, (OSError, AttributeError)):
                 raise SandboxUnavailable(f"cannot construct hardened pack sandbox: {exc}") from exc
             raise
-        if proxy is not None:
-            cleanup = asyncio.create_task(self._close_egress_after_exit(process, proxy))
-            self._cleanup_tasks.add(cleanup)
-            cleanup.add_done_callback(self._cleanup_tasks.discard)
+        cleanup = asyncio.create_task(self._close_egress_after_exit(process, proxy))
+        self._cleanup_tasks.add(cleanup)
+        cleanup.add_done_callback(self._cleanup_tasks.discard)
         return process

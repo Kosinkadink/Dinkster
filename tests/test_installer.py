@@ -2279,7 +2279,7 @@ def test_registry_selects_pack_against_engine_provided_packages(
     [
         ("compatible", "2.0"),
         ("variant", "1.0"),
-        ("base", "1.0"),
+        ("base", "2.0"),
         ("python", "1.0"),
         ("inference", "1.0"),
         ("missing", None),
@@ -2689,7 +2689,7 @@ def test_published_dependency_origins_are_not_replaced_by_pack_registry(
     lock_path = "locks/" + identity.replace(":", "/") + ".json"
     release = _static_release(entry, b"pack archive")
     main_binding: dict[str, object] = {
-        "baseId": "sha256:" + "c" * 64,
+        "baseId": "sha256:" + "f" * 64,
         "artifactDigest": entry.artifact_digest,
         "digest": identity,
         "size": len(payload),

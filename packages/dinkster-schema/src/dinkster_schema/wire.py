@@ -2077,12 +2077,13 @@ def _rule_to_wire(rule: body.Rule, wire_version: int) -> dict[str, object]:
     wire: dict[str, object] = {"check": _formula_to_wire(rule.check), "message": rule.message}
     if rule.fix:
         wire["fix"] = _steps_to_wire(rule.fix, wire_version)
+        wire["fixLabel"] = rule.fix_label
     return wire
 
 
 def _rule_from_wire(value: object, wire_version: int) -> body.Rule:
     data = _expect_object(value, "rule")
-    _reject_unknown_fields(data, frozenset({"check", "message", "fix"}), "rule")
+    _reject_unknown_fields(data, frozenset({"check", "message", "fix", "fixLabel"}), "rule")
     check = _formula_from_wire(data.get("check"), "rule.check")
     if not isinstance(check, body.Formula):
         raise ValueError("rule.check is a formula")
@@ -2090,6 +2091,7 @@ def _rule_from_wire(value: object, wire_version: int) -> body.Rule:
         check,
         _expect_str(data.get("message"), "rule.message"),
         _steps_from_wire(data.get("fix", []), "rule.fix", wire_version),
+        _expect_str(data.get("fixLabel", ""), "rule.fixLabel"),
     )
 
 

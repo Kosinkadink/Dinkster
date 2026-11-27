@@ -171,6 +171,7 @@ async def workflow_record_wire(
 
 async def project_needs(request: web.Request, identifier: str) -> dict[str, object]:
     from .app import STATE_KEY
+    from .auth import principal_for
     from .library import LIBRARY_KEY
     from .workflow_facts import workflow_facts
 
@@ -180,6 +181,7 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
     state = request.app[STATE_KEY]
     library = request.app[LIBRARY_KEY]
     schemas, node_packs = state.schemas, state.node_packs
+    can_write = principal_for(request).allows("assets:write")
     installed = [
         {"pack": pack, "version": info.version or None}
         for pack, info in sorted(state.packs.items())
@@ -210,9 +212,18 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
                     packs[json.dumps(pack, sort_keys=True)] = pack
         return {
             "packs": [packs[key] for key in sorted(packs)],
-            "extra": selected["extra"],
+            "extra": (
+                sorted(
+                    set(cast("list[str]", selected["extra"]))
+                    | {cast("str", pack["pack"]) for pack in installed}
+                )
+                if selected["allInstalled"]
+                else selected["extra"]
+            ),
             "unknown": unknown,
             "installed": installed,
+            "hasInstalledNodes": bool(schemas),
+            "canWrite": can_write,
         }
 
     return await asyncio.to_thread(compute)
@@ -309,8 +320,10 @@ def add_project_routes(
         )
         relay: asyncio.Task[None] | None = None
         try:
-            if "changes.head" not in cast("list[str]", client.sync.hello["capabilities"]):
-                raise LibraryError("capability", "Library change relay requires updated tools.")
+            if not {"changes.head", "projects.pack-selection"}.issubset(
+                cast("list[str]", client.sync.hello["capabilities"])
+            ):
+                raise LibraryError("capability", "Project library requires updated tools.")
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
             if identity is not None:
                 value: object = json.loads(identity)
