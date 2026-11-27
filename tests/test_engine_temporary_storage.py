@@ -152,6 +152,7 @@ def test_clear_keeps_active_inputs_and_other_engines_on_one_library(
         second = make_library(shared, tmp_path / "engine-two" / "temporary")
         one, two = first.temporary_vaults[0], second.temporary_vaults[0]
         queued = write(one, b"queued input")
+        first.store.grant_asset("local", queued, b"queued input")
         unrelated = write(one, b"unrelated preview")
         other = write(two, b"another engine preview")
         uploaded = write(first.vault, b"uploaded source", temporary=False)
