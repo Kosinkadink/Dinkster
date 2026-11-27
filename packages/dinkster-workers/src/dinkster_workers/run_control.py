@@ -83,10 +83,12 @@ class PreparedRunContext:
 
     async def inhibit(self, node_ids: Sequence[str]) -> None:
         self._check_active()
+        check_secret_data(node_ids)
         await self._context.inhibit(node_ids)
 
     async def override_node(self, node_id: str, inputs: Mapping[str, object]) -> None:
         self._check_active()
+        check_secret_data((node_id, inputs))
         await self._context.override_node(node_id, inputs)
 
 

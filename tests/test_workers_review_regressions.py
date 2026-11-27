@@ -13,6 +13,7 @@ from dinkster_engine import Engine, EngineEvent
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, validate
 from dinkster_protocol import (
     Invocation,
+    InvocationEvent,
     LazyStatusInvocation,
 )
 from dinkster_schema import (
@@ -270,6 +271,166 @@ def test_secret_names_cannot_be_wired_or_executed_without_a_trusted_resolver() -
             assert not lazy_result.error.traceback
 
     run_scenario(scenario())
+
+
+def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from dinkster_schema import report_log, report_progress
+    from dinkster_values import Value, ValueMeta
+
+    secret = "synthetic-invocation-credential"
+    mode = "safe"
+    snapshot = {"text": "safe snapshot"}
+
+    class DeferredText:
+        transport = "pyobj"
+
+        def load(self) -> object:
+            return secret if mode == "deferred" else snapshot["text"]
+
+    class SecretConsumer(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            string = TypeExpr.concrete(CORE_STRING)
+            return NodeSchema(
+                node_type="test.secret_consumer",
+                input_values=True,
+                body=(
+                    Input("credential", string, secret=True, pin=False),
+                    Input("duplicate", string, secret=True, pin=False),
+                    Input("optional", string, secret=True, pin=False, required=False),
+                    Output("text", string),
+                ),
+            )
+
+        @classmethod
+        def execute(
+            cls,
+            *,
+            credential: str,
+            duplicate: str,
+            input_values: Mapping[str, Value],
+            optional: str = "unset",
+        ) -> Mapping[str, object]:
+            print(credential)
+            report_log("warning", credential)
+            report_progress(2, 7, text=credential)
+            if mode == "throw":
+                raise RuntimeError(credential)
+            if mode == "echo":
+                return cls.outputs(text=credential)
+            if mode in ("deferred", "snapshot"):
+                return cls.outputs(text=Value(CORE_STRING, "opaque", ValueMeta(), DeferredText()))
+            authorized = (
+                credential == duplicate == secret
+                and optional == "unset"
+                and input_values["credential"].resolve() == "service_key"
+            )
+            return cls.outputs(text="authorized" if authorized else "wrong credential snapshot")
+
+        @classmethod
+        def check_lazy_status(cls, **kwargs: object) -> list[str]:
+            credential = kwargs["credential"]
+            if mode == "throw":
+                raise RuntimeError(credential)
+            return [str(credential)] if mode == "echo" else []
+
+    async def scenario() -> None:
+        nonlocal mode
+        registry = TypeRegistry()
+        register_core_types(registry)
+
+        @contextlib.contextmanager
+        def pack_context():
+            if mode == "setup":
+                raise RuntimeError(secret)
+            yield
+            if mode == "cleanup":
+                raise RuntimeError(secret)
+
+        worker = InProcessWorker(
+            build_node_types((SecretConsumer,)), registry, pack_context=pack_context
+        )
+        schema = SecretConsumer.schema()
+        inputs = {
+            name: registry.wrap(CORE_STRING, "service_key" if name != "optional" else "missing")
+            for name in ("credential", "duplicate", "optional")
+        }
+        requests: dict[str, int] = {}
+
+        def resolve(name: str) -> str | None:
+            requests[name] = requests.get(name, 0) + 1
+            if name == "missing" or mode == "missing":
+                return None
+            return secret if requests[name] == 1 else "rotated-after-first-resolution"
+
+        for mode in (
+            "safe",
+            "throw",
+            "echo",
+            "deferred",
+            "snapshot",
+            "missing",
+            "setup",
+            "cleanup",
+        ):
+            snapshot["text"] = "safe snapshot"
+            requests.clear()
+            events: list[InvocationEvent] = []
+            result = await worker.invoke(
+                Invocation(
+                    invocation_id="secret-run",
+                    node_id="consumer",
+                    node_type=schema.node_type,
+                    inputs=inputs,
+                    effective_schema=schema,
+                    resolve_secret=resolve,
+                ),
+                events.append,
+            )
+            assert secret not in repr(result)
+            assert secret not in repr(events)
+            if mode in ("safe", "snapshot"):
+                assert result.error is None
+                assert result.outputs is not None
+                snapshot["text"] = secret
+                assert result.outputs["text"].resolve() == (
+                    "authorized" if mode == "safe" else "safe snapshot"
+                )
+                assert [(e.name, e.data) for e in events] == [("progress", {"step": 2, "total": 7})]
+            else:
+                assert result.outputs is None
+                assert result.error is not None
+                assert result.error.message == "Secret execution failed"
+                assert not result.error.traceback
+            requests.clear()
+            lazy = await worker.check_lazy_status(
+                LazyStatusInvocation(
+                    request_id="secret-lazy",
+                    node_id="consumer",
+                    node_type=schema.node_type,
+                    available_inputs=inputs,
+                    connected_undemanded_inputs=(),
+                    effective_schema=schema,
+                    resolve_secret=resolve,
+                )
+            )
+            assert secret not in repr(lazy)
+            if mode in ("safe", "deferred", "snapshot"):
+                assert lazy.error is None
+                assert lazy.requested_inputs == ()
+            else:
+                assert lazy.error is not None
+                assert lazy.error.message == "Secret execution failed"
+                assert not lazy.error.traceback
+        assert inputs["credential"].resolve() == "service_key"
+
+    run_scenario(scenario())
+    print("public-after-secret-invocations")
+    captured = capsys.readouterr()
+    assert secret not in captured.out + captured.err
+    assert "public-after-secret-invocations" in captured.out
 
 
 def test_private_node_returns_refuse_literal_secrets_before_wrapping() -> None:

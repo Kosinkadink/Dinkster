@@ -15,14 +15,14 @@ import os
 import threading
 import time
 import traceback
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from dataclasses import replace
 from types import MappingProxyType
 from typing import cast
 
 from dinkster_assets import AssetError, AssetVault, resolver_from_env
 from dinkster_assets.declared import VAULT_ENV, use_produced_output_job
-from dinkster_assets.privacy import check_secret_data
+from dinkster_assets.privacy import check_secret_data, protect_secret_outputs
 from dinkster_memory import FullReleaseConsumer, Shedder
 from dinkster_memory.resident import ResidentPool
 from dinkster_protocol import (
@@ -86,13 +86,15 @@ from dinkster_schema import (
 from dinkster_schema.body import all_rows
 from dinkster_schema.flatten import described_ids, flatten_body
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.model import Output
+from dinkster_schema.model import SECRET_NAME_PATTERN, Output
 from dinkster_schema.nest import OutputShapeError, flatten_outputs, nest_inputs
 from dinkster_schema.reporting import (
     capture_image_documents,
     capture_preview_artifacts,
     capture_saved_artifacts,
     capture_value_diagnostics,
+    private_output_active,
+    use_private_output,
 )
 from dinkster_values import (
     TypeRegistry,
@@ -105,6 +107,7 @@ from dinkster_values import (
     process_instance_token,
 )
 
+from .boundary import ValueCodec, decode_result, encode_result
 from .error_hints import hints_for
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
@@ -129,6 +132,38 @@ async def _run_sync(call: Callable[..., object], /, *args: object, **kwargs: obj
             task.exception()
         raise asyncio.CancelledError
     return task.result()
+
+
+@contextlib.contextmanager
+def _secret_inputs(
+    schema: NodeSchema,
+    inputs: Mapping[str, Value],
+    resolve: Callable[[str], str | None],
+) -> Generator[Callable[[str], str | None]]:
+    install_stream_capture()
+    with use_private_output(True):
+        credentials: dict[str, str | None] = {}
+        for spec in schema.inputs:
+            if not spec.secret:
+                continue
+            named = inputs.get(spec.id)
+            name = named.resolve() if named is not None and not is_absent(named) else None
+            if name is None:
+                if spec.required:
+                    raise InputCoercionError("Secret is not set")
+                continue
+            if type(name) is not str or SECRET_NAME_PATTERN.fullmatch(name) is None:
+                raise InputCoercionError("Invalid secret name")
+            if name not in credentials:
+                credentials[name] = resolve(name)
+            value = credentials[name]
+            if value is None:
+                if spec.required:
+                    raise InputCoercionError("Secret is not set")
+            elif type(value) is not str or not value:
+                raise InputCoercionError("Invalid secret value")
+        with protect_secret_outputs(value for value in credentials.values() if value is not None):
+            yield credentials.get
 
 
 class InputCoercionError(Exception):
@@ -380,10 +415,10 @@ class InProcessWorker:
         invocation: Invocation,
         on_event: OnInvocationEvent | None = None,
     ) -> InvocationResult:
-        """Invoke with the pack context active across all worker-side work."""
-        if any(spec.secret for spec in invocation.effective_schema.inputs):
-            # Refuse before pack setup can produce side effects or errors.
-            # Credential names are not a trusted resolution channel.
+        """Invoke with private credentials confined to the node's plain arguments."""
+        if not any(spec.secret for spec in invocation.effective_schema.inputs):
+            return await self._invoke(invocation, on_event)
+        if invocation.resolve_secret is None:
             return InvocationResult(
                 error=NodeError(
                     invocation.node_id,
@@ -391,6 +426,45 @@ class InProcessWorker:
                     "Secret inputs require a trusted credential resolver",
                 )
             )
+        try:
+            with _secret_inputs(
+                invocation.effective_schema, invocation.inputs, invocation.resolve_secret
+            ) as resolve:
+                result = await self._invoke(replace(invocation, resolve_secret=resolve), on_event)
+                return self._prepare_private_result(result)
+        except Exception:  # noqa: BLE001 - private failures never expose node-controlled text
+            return InvocationResult(
+                error=NodeError(invocation.node_id, invocation.node_type, "Secret execution failed")
+            )
+
+    def _prepare_private_result(self, result: InvocationResult) -> InvocationResult:
+        if not private_output_active():
+            return result
+        if result.error is not None:
+            raise InputCoercionError("Secret execution failed")
+        # Freeze checked bytes before direct engine adoption can outlive the private scope.
+        codec = ValueCodec(self.registry, use_shm=False)
+        header, blobs, _ = encode_result(codec, result, "", 0)
+        decoded, _ = decode_result(codec, header, blobs, [])
+        outputs = decoded.outputs
+        if decoded.expansion is not None and result.outputs is not None:
+            outputs = {
+                name: replace(
+                    binding.value,
+                    meta=ValueMeta({**binding.value.meta.entries, "absent.forwarded": True}),
+                )
+                if is_absent(binding.value)
+                else binding.value
+                for name, binding in decoded.expansion.bindings
+                if isinstance(binding, PresentOutput) and name in result.outputs
+            }
+        return replace(result, outputs=outputs, expansion=decoded.expansion)
+
+    async def _invoke(
+        self,
+        invocation: Invocation,
+        on_event: OnInvocationEvent | None,
+    ) -> InvocationResult:
         started_at_ns = time.time_ns()
         with (
             self._pack_context(),
@@ -413,16 +487,23 @@ class InProcessWorker:
                         preview_vault=self._saved_preview_vault,
                     )
 
+                if invocation.run_control is not None and (
+                    authority is not None or private_output_active()
+                ):
+
                     async def prepare_values(values: Mapping[str, Value]) -> Mapping[str, Value]:
-                        assert authority is not None
                         values = dict(values)
-                        await _run_sync(authority.capture, values, None, invocation.inputs)
+                        prepared = self._prepare_private_result(InvocationResult(outputs=values))
+                        assert prepared.outputs is not None
+                        values = prepared.outputs
+                        if authority is not None:
+                            await _run_sync(authority.capture, values, None, invocation.inputs)
                         return values
 
-                    if invocation.run_control is not None:
-                        control = PreparedRunContext(invocation.run_control, prepare_values)
-                        invocation = replace(invocation, run_control=control)
+                    control = PreparedRunContext(invocation.run_control, prepare_values)
+                    invocation = replace(invocation, run_control=control)
                 result = await self._invoke_in_context(invocation, on_event)
+                result = self._prepare_private_result(result)
                 if result.outputs is not None and result.saved_artifact_claims:
                     outputs = await _run_sync(
                         SavedArtifactAuthority(
@@ -453,8 +534,9 @@ class InProcessWorker:
         invocation: LazyStatusInvocation,
         on_event: OnInvocationEvent | None = None,
     ) -> LazyStatusResult:
-        del on_event
-        if any(spec.secret for spec in invocation.effective_schema.inputs):
+        if not any(spec.secret for spec in invocation.effective_schema.inputs):
+            return await self._check_lazy_status(invocation, on_event)
+        if invocation.resolve_secret is None:
             return LazyStatusResult(
                 error=NodeError(
                     invocation.node_id,
@@ -462,6 +544,30 @@ class InProcessWorker:
                     "Secret inputs require a trusted credential resolver",
                 )
             )
+        try:
+            with _secret_inputs(
+                invocation.effective_schema, invocation.available_inputs, invocation.resolve_secret
+            ) as resolve:
+                result = await self._check_lazy_status(
+                    replace(invocation, resolve_secret=resolve), on_event
+                )
+                if result.error is not None or any(
+                    type(name) is not str for name in result.requested_inputs or ()
+                ):
+                    raise InputCoercionError("Secret execution failed")
+                check_secret_data(result)
+                return result
+        except Exception:  # noqa: BLE001 - private failures never expose node-controlled text
+            return LazyStatusResult(
+                error=NodeError(invocation.node_id, invocation.node_type, "Secret execution failed")
+            )
+
+    async def _check_lazy_status(
+        self,
+        invocation: LazyStatusInvocation,
+        on_event: OnInvocationEvent | None,
+    ) -> LazyStatusResult:
+        del on_event
         if invocation.executor is not None or invocation.arm is not None:
             return LazyStatusResult(
                 error=NodeError(
@@ -918,7 +1024,18 @@ class InProcessWorker:
         values: dict[str, object] = {}
         for input_id, value in invocation.inputs.items():
             if wants(input_id.split(".", 1)[0]):
-                values[input_id] = unwrap(input_id, value)
+                spec = effective.input(input_id)
+                if spec is not None and spec.secret:
+                    if invocation.resolve_secret is None:
+                        raise InputCoercionError(
+                            "Secret inputs require a trusted credential resolver"
+                        )
+                    name = value.resolve() if not is_absent(value) else None
+                    credential = invocation.resolve_secret(name) if type(name) is str else None
+                    if credential is not None:
+                        values[input_id] = credential
+                else:
+                    values[input_id] = unwrap(input_id, value)
         for input_id in invocation.connected_undemanded_inputs:
             spec = effective.input(input_id)
             values[input_id] = (None,) if spec is not None and spec.type.kind == "list" else None
