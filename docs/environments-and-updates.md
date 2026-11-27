@@ -959,10 +959,12 @@ one version on every variant; the per-variant pack lock decides which
 wheels that means, so the same workflow resolves on `win-nvidia`,
 `linux-cpu` or a remote engine without the document saying anything about
 hardware. The only hardware a workflow can require is what a pack declares
-in its pack manifest (`[pack.sandbox] gpu`, the node's `devices` list): a pack that
-exists only for CUDA fails the plan on a CPU variant with that reason, and
+in its pack manifest's node or provider `devices` list: a node that exists
+only for CUDA fails the plan on a CPU variant with that reason, and
 a pack with a compiled wheel for one torch triple and not another fails
-the same way. Nothing else in the workflow is variant-specific. A sharing
+the same way. `[pack.sandbox] gpu` requests GPU access, not a hard GPU
+requirement, and does not exclude CPU execution. Nothing else in the workflow
+is variant-specific. A sharing
 export can include the derived requirement list next to the document for
 tools that cannot compose, but the document stays the source of truth.
 

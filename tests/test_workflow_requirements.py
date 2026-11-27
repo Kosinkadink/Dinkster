@@ -35,7 +35,7 @@ from dinkster_registry.artifact import build_artifact
 from dinkster_registry.install import LockedPack, Lockfile
 from dinkster_server import PackInfo, ServerLibrary, create_app
 from dinkster_values import TypeRegistry
-from dinkster_workers import InProcessWorker, PackSandboxNeeds, load_manifest
+from dinkster_workers import InProcessWorker, PackSandboxNeeds, VisionProvider, load_manifest
 
 from dinkster.mounts_api import MountService, add_mount_routes
 from dinkster.project_requirements import load_project_requirements, plan_project_requirements
@@ -402,16 +402,36 @@ def test_public_plan_is_read_only_project_filtered_and_verified(
             )
             assert response.status == 403
             assert (await response.json())["error"] == "local-operator-required"
+            with vault.writer(first_digest) as writer:
+                writer.write(b"first")
+                writer.commit()
             declared["tools-a"] = replace(manifest, sandbox=PackSandboxNeeds(gpu=True))
             response = await client.post("/api/workflows/plan", json={"workflows": [workflow()]})
             if engine_variant is not None:
-                assert (await response.json())["errors"] == (
-                    ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
-                )
+                assert (await response.json())["errors"] == []
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "project": "included"}
+            )
+            assert await response.json() == {"packs": [], "assets": [], "errors": []}
+            declared["tools-a"] = replace(
+                declared["tools-a"],
+                vision_providers=(
+                    VisionProvider("cuda-only", "a.load", ("cuda",), ("float32",), "none", ()),
+                ),
+            )
+            response = await client.post(
+                "/api/workflows/plan", json={**body, "project": "included"}
+            )
+            assert await response.json() == {
+                "packs": [],
+                "assets": [],
+                "errors": ["pack tools-a: node a.load declares devices cuda; cpu is not supported"],
+            }
             response = await client.post(
                 "/api/workflows/plan", json={**body, "variant": "win-nvidia"}
             )
             assert (await response.json())["errors"] == []
+            declared["tools-a"] = manifest
             if generation is not None:
                 response = await client.post(
                     "/api/workflows/plan",
@@ -625,12 +645,9 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
     )
     assert wrong_identity.stdout == ""
     target_packs = stage_artifacts(gpu=True)
-    refused = run_plan("linux-cpu")
-    assert refused.returncode == 1
-    assert json.loads(refused.stdout)["plan"]["errors"] == [
-        "pack tools-a: pack.sandbox.gpu requires a GPU"
-    ]
-    assert "blocking errors" in refused.stderr
+    permitted = run_plan("linux-cpu")
+    assert permitted.returncode == 0, permitted.stderr
+    assert json.loads(permitted.stdout)["plan"]["errors"] == []
     assert run_plan("win-nvidia").returncode == 0
     for device in ("cpu", "cuda"):
         custom_root = tmp_path / device
@@ -638,10 +655,8 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
         selected = custom_generation(custom_root, device)
         (selected / "dinkster.lock").write_text(Lockfile.of(target_packs).record_json())
         custom = run_plan("user-target", source_generation=selected)
-        assert custom.returncode == (1 if device == "cpu" else 0), custom.stderr
-        assert json.loads(custom.stdout)["plan"]["errors"] == (
-            ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
-        )
+        assert custom.returncode == 0, custom.stderr
+        assert json.loads(custom.stdout)["plan"]["errors"] == []
         selected_target = run_plan("user-target", "--generation", str(selected))
         assert selected_target.returncode == custom.returncode, selected_target.stderr
         assert selected_target.stdout, selected_target.stderr
@@ -652,10 +667,8 @@ def test_project_registered_records_are_scoped_verified_and_read_only(
         switched = run_plan(
             "user-target", "--generation", str(selected), source_generation=previous
         )
-        assert switched.returncode == (1 if device == "cpu" else 0), switched.stderr
-        assert json.loads(switched.stdout)["plan"]["errors"] == (
-            ["pack tools-a: pack.sandbox.gpu requires a GPU"] if device == "cpu" else []
-        )
+        assert switched.returncode == 0, switched.stderr
+        assert json.loads(switched.stdout)["plan"]["errors"] == []
     absent_target = tmp_path / "not-created"
     absent = run_plan("win-nvidia", "--generation", str(absent_target))
     assert absent.returncode == 0 and absent.stdout == run_plan("win-nvidia").stdout
@@ -979,7 +992,7 @@ def test_acquired_target_device_is_plan_only_and_sealed_inventory_remains_author
     )
     cpu = cast("dict[str, object]", plan(target_generation=scratch, target_device="cpu")["plan"])
     cuda = cast("dict[str, object]", plan(target_generation=scratch, target_device="cuda")["plan"])
-    assert cpu["errors"] == ["pack example: pack.sandbox.gpu requires a GPU"]
+    assert cpu["errors"] == []
     assert cuda["errors"] == []
     assert cuda["packs"] == [{"pack": "example", "version": "1.0.0"}]
     with pytest.raises(RequirementError, match="unsupported acquired target device"):
