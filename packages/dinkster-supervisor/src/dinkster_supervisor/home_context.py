@@ -190,6 +190,8 @@ def _dispatch(root: Path, operation: str, arguments: list[object]) -> object:
         raise EnvironmentError("not an installation Dinkster knows")
     if operation == "update-facts":
         return home_setup.update_facts(root)
+    if operation == "restore-plan":
+        return home_setup.restore_facts(root, cast("int", arguments[0]))
     if operation == "current":
         return read_current(root)
     if operation == "library-root":

@@ -1145,6 +1145,25 @@ async def _handle_update_plan(request: web.Request) -> web.Response:
         )
 
 
+async def _handle_restore_plan(request: web.Request) -> web.Response:
+    root, fields = await _installation_fields(request, {"root", "entry"})
+    try:
+        entry = int(cast("str", fields.get("entry", "")))
+        if entry < 1:
+            raise ValueError("Choose a positive history entry.")
+    except ValueError as error:
+        return web.json_response({"error": "invalid-entry", "message": str(error)}, status=400)
+    try:
+        jobs = request.app[SETUP_KEY]
+        plan = await jobs.plan_restore(root, entry)
+        return web.json_response({"plan": plan, "activeJob": jobs.active_job})
+    except (OSError, ValueError) as error:
+        return web.json_response(
+            {"error": getattr(error, "code", "restore-unavailable"), "message": str(error)},
+            status=409 if isinstance(error, SetupRefused) else 503,
+        )
+
+
 async def _handle_installation_facts(request: web.Request) -> web.Response:
     from .environment_runtime import engine_status
     from .environment_state import EnvironmentError, Generation, read_current
@@ -1562,6 +1581,8 @@ def create_home_app(
     app.router.add_get("/supervisor/setup", handle_plan)
     app.router.add_get("/supervisor/installations/update", _handle_update_plan)
     app.router.add_post("/supervisor/installations/update", handle_start)
+    app.router.add_get("/supervisor/installations/restore", _handle_restore_plan)
+    app.router.add_post("/supervisor/installations/restore", handle_start)
     app.router.add_post("/supervisor/setup", handle_start)
     app.router.add_get("/supervisor/setup/{id}", handle_job)
     app.router.add_delete("/supervisor/setup/{id}", handle_job)

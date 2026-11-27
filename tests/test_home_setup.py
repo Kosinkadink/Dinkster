@@ -22,8 +22,9 @@ from tests.fixtures.environments.build import KEYS, build
 
 @pytest.mark.usefixtures("signed_channels")
 @pytest.mark.parametrize("opened", [False, True])
-def test_update_job_binds_review_and_cancels_real_cli_without_opening_stopped_installation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opened: bool
+@pytest.mark.parametrize("operation", ["update", "restore"])
+def test_installation_job_binds_review_and_cancels_real_cli_without_opening_stopped_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opened: bool, operation: str
 ) -> None:
     from dinkster_supervisor.environment_runtime import (
         engine_assignments,
@@ -42,7 +43,7 @@ def test_update_job_binds_review_and_cancels_real_cli_without_opening_stopped_in
     launch = asyncio.create_subprocess_exec
 
     async def signed_process(executable: str, *arguments: str, **kwargs: Any):
-        if change_before_launch and "update" in arguments and "--yes" in arguments:
+        if change_before_launch and operation in arguments and "--yes" in arguments:
             settings_path = root / "environment.json"
             changed = json.loads(settings_path.read_text())
             changed["responseCompression"] = True
@@ -52,11 +53,13 @@ def test_update_job_binds_review_and_cancels_real_cli_without_opening_stopped_in
                 "from dinkster_supervisor import environment, environment_channel_signatures; "
                 f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}\n"
             )
-            if cancel and "update" in arguments and "--yes" in arguments:
+            if cancel and operation in arguments and "--yes" in arguments:
+                module = "environment_restore" if operation == "restore" else "environment"
+                script += f"from dinkster_supervisor import {module} as observed\n"
                 script += """
 import sys, time
 from pathlib import Path
-observe = environment.preparation_progress
+observe = observed.preparation_progress
 def progress(stage, completed=0, total=0):
     if stage == 'starting-engine':
         marker = Path(sys.argv[sys.argv.index('--progress') + 1])
@@ -67,7 +70,7 @@ def progress(stage, completed=0, total=0):
                 raise ValueError('test did not cancel at activation boundary')
             time.sleep(0.01)
     observe(stage, completed, total)
-environment.preparation_progress = progress
+observed.preparation_progress = progress
 """
             arguments = ("-I", "-c", script + "environment.main()", *arguments[3:])
         return await launch(executable, *arguments, **kwargs)
@@ -90,14 +93,18 @@ environment.preparation_progress = progress
             "--yes",
         )
         assert installed["current"] == 1
-        await asyncio.to_thread(stop_engine, root, "main")
         channel = Path(fixture["mirror"]) / "channels/nightly.json"
         original_channel = channel.read_bytes()
         channel.write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+        if operation == "restore":
+            assert (await home_setup.environment_command(root, "update", "--yes"))["current"] == 2
+        await asyncio.to_thread(stop_engine, root, "main")
+        current = 2 if operation == "restore" else 1
         settings = (root / "environment.json").read_bytes()
-        previous = (root / "builds/1/build.json").read_bytes()
+        previous = (root / "builds" / str(current) / "build.json").read_bytes()
         home = Home(watch_interval=0.01)
-        path = "/supervisor/installations/update"
+        path = "/supervisor/installations/" + operation
+        params = {"root": str(root), **({"entry": "1"} if operation == "restore" else {})}
         async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
             if opened:
                 await home.open(root, "main")
@@ -106,40 +113,55 @@ environment.preparation_progress = progress
                         break
                     await asyncio.sleep(0.05)
                 assert home.link.state == "ready", home.link.detail
-            for params, expected in (
+            for invalid_params, expected in (
                 ({"root": str(tmp_path / "unknown")}, 404),
                 ({"root": "relative"}, 400),
                 ({"root": str(root), "command": "stop"}, 400),
             ):
-                assert (await client.get(path, params=params)).status == expected
-            response = await client.get(path, params={"root": str(root)})
+                assert (await client.get(path, params=invalid_params)).status == expected
+            if operation == "restore":
+                for entry in ("", "0", "-1", "unknown"):
+                    assert (
+                        await client.get(path, params={"root": str(root), "entry": entry})
+                    ).status == 400
+            response = await client.get(path, params=params)
             assert response.status == 200, await response.text()
             plan = (await response.json())["plan"]
-            assert plan["current"] == 1 and plan["version"] == "2.0"
+            if operation == "restore":
+                assert plan["observed"]["current"] == current and plan["exact"] is True
+                plan_id = plan["alternatives"][0]["planId"]
+            else:
+                assert plan["current"] == 1 and plan["version"] == "2.0"
+                plan_id = plan["id"]
             assert (root / "environment.json").read_bytes() == settings
-            assert (root / "builds/1/build.json").read_bytes() == previous
+            assert (root / "builds" / str(current) / "build.json").read_bytes() == previous
             expected_state = "ready" if opened else "stopped"
             before_engines = engine_status(root)
             assert len(before_engines) == 1 and before_engines[0]["state"] == expected_state
-            before_assignments = engine_assignments(root, 1)
-            channel.write_bytes(original_channel)
-            stale = await client.post(path, json={"planId": plan["id"]})
-            assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
-            channel.write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+            before_assignments = engine_assignments(root, current)
+            if operation == "update":
+                channel.write_bytes(original_channel)
+                stale = await client.post(path, json={"planId": plan_id})
+                assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
+                channel.write_bytes(Path(fixture["updatedChannel"]).read_bytes())
             changed = json.loads(settings)
             changed["responseCompression"] = True
             write_document(root / "environment.json", changed)
-            stale = await client.post(path, json={"planId": plan["id"]})
+            stale = await client.post(path, json={"planId": plan_id})
             assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
             (root / "environment.json").write_bytes(settings)
+            assert (await client.post("/supervisor/setup", json={"planId": plan_id})).status == 404
+            other_operation = "restore" if operation == "update" else "update"
             assert (
-                await client.post("/supervisor/setup", json={"planId": plan["id"]})
+                await client.post(
+                    "/supervisor/installations/" + other_operation, json={"planId": plan_id}
+                )
             ).status == 404
             assert (
-                await client.post(path, json={"planId": plan["id"], "root": str(root)})
+                await client.post(path, json={"planId": plan_id, "root": str(root)})
             ).status == 400
             change_before_launch = True
-            response = await client.post(path, json={"planId": plan["id"]})
+            response = await client.post(path, json={"planId": plan_id})
             assert response.status == 202, await response.text()
             raced = await response.json()
             race_path = "/supervisor/installations/jobs/" + raced["id"]
@@ -148,13 +170,15 @@ environment.preparation_progress = progress
                 if raced["state"] not in {"running", "cancelling"}:
                     break
                 await asyncio.sleep(0.05)
-            assert raced["state"] == "failed" and "review a new plan" in raced["error"]["message"]
-            assert (root / "current").read_text() == "1\n"
+            assert raced["state"] == "failed", raced
+            expected_error = "approval is stale" if operation == "restore" else "review a new plan"
+            assert expected_error in raced["error"]["message"], raced
+            assert (root / "current").read_text() == f"{current}\n"
             (root / "environment.json").write_bytes(settings)
             change_before_launch = False
             for cancelling in (True, False):
                 cancel = cancelling
-                response = await client.post(path, json={"planId": plan["id"]})
+                response = await client.post(path, json={"planId": plan_id})
                 assert response.status == 202, await response.text()
                 job = await response.json()
                 job_path = "/supervisor/installations/jobs/" + job["id"]
@@ -166,7 +190,7 @@ environment.preparation_progress = progress
                         assert job["progress"] is not None
                         for start_path in (path, "/supervisor/setup"):
                             assert (
-                                await client.post(start_path, json={"planId": plan["id"]})
+                                await client.post(start_path, json={"planId": plan_id})
                             ).status == 409
                         assert (await client.delete(job_path)).status == 202
                         requested = True
@@ -188,19 +212,18 @@ environment.preparation_progress = progress
                 else:
                     assert home.target is None
                 if cancelling:
-                    assert requested and (root / "current").read_text() == "1\n"
+                    assert requested and (root / "current").read_text() == f"{current}\n"
                     assert (root / "environment.json").read_bytes() == settings
-                    assert (root / "builds/1/build.json").read_bytes() == previous
-                    assert not (root / "builds/2").exists()
+                    assert (root / "builds" / str(current) / "build.json").read_bytes() == previous
+                    assert not (root / "builds" / str(current + 1)).exists()
                 else:
-                    assert (root / "current").read_text() == "2\n"
-                    assert (
-                        json.loads((root / "builds/2/build.json").read_text())["engine"]["version"]
-                        == "2.0"
-                    )
+                    assert (root / "current").read_text() == f"{current + 1}\n"
+                    assert json.loads(
+                        (root / "builds" / str(current + 1) / "build.json").read_text()
+                    )["engine"]["version"] == ("1.0" if operation == "restore" else "2.0")
                 engines = engine_status(root)
                 assert len(engines) == 1 and engines[0]["state"] == expected_state
-                assignments = engine_assignments(root, 1 if cancelling else 2)
+                assignments = engine_assignments(root, current if cancelling else current + 1)
                 assert [
                     {key: value for key, value in row.items() if key != "port"}
                     for row in assignments
@@ -210,7 +233,7 @@ environment.preparation_progress = progress
                 ]
                 if cancelling or not opened:
                     assert assignments[0]["port"] == before_assignments[0]["port"]
-            stale = await client.post(path, json={"planId": plan["id"]})
+            stale = await client.post(path, json={"planId": plan_id})
             assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
 
     try:
