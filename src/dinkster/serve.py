@@ -1304,9 +1304,9 @@ def main(argv: list[str] | None = None) -> None:
         help="drop execution logs of runs that finished more than DAYS ago (default: 30)",
     )
     parser.add_argument(
-        "--limit-uploads",
+        "--no-upload-size-limit",
         action="store_true",
-        help="enforce per-kind upload size limits on a standalone engine; "
+        help="disable upload size limits on a standalone engine (off by default); "
         "managed environments use dinkster-env uploads",
     )
     parser.add_argument(
@@ -1587,10 +1587,10 @@ def _serve(
         args.no_default_packs = True
     if args.selected_packs and args.generation is None:
         parser.error("--selected-packs requires --generation")
-    if args.limit_uploads and args.generation is not None:
+    if args.no_upload_size_limit and args.generation is not None:
         parser.error("managed upload limits are configured with dinkster-env uploads")
     pack_selection: Mapping[str, object] | None = None
-    upload_limits: dict[str, int] | None = {} if args.limit_uploads else None
+    upload_limits: dict[str, int] | None = None if args.no_upload_size_limit else {}
     response_compression = False
     runtime_offline = False
     excluded_nodes: list[str] = []
@@ -1623,7 +1623,10 @@ def _serve(
                     settings.get("responseCompression", False)
                 )
                 runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
-                upload_limits = read_upload_limits(settings.get("uploadLimits"))
+                upload_limits = read_upload_limits(
+                    settings.get("uploadLimits"),
+                    no_upload_size_limit=settings.get("noUploadSizeLimit", False),
+                )
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
                 if scratch_directory is not None:
