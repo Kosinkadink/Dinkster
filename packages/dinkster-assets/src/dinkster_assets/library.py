@@ -299,7 +299,11 @@ class LocalAssetLibrary:
         # Just-written files carry known digests in the writes sidecar;
         # absorbing them here means a scan right after a save costs a
         # stat, not a rehash.
-        index.update(load_write_records(self._root))
+        index.update(
+            (relative, row)
+            for relative, row in load_write_records(self._root).items()
+            if not self._ignore.matches(relative, Path(relative).name)
+        )
         candidates: list[tuple[Path, str, os.stat_result]] = []
         for path in sorted(self._root.rglob("*")):
             if not path.is_file() or path.name.startswith("."):

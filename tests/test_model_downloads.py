@@ -1767,6 +1767,8 @@ def test_model_folders_discover_kinds_aliases_and_exclude_download_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from dinkster_assets import LocalAssetLibrary, MountTable
+    from dinkster_assets.integrity import digest_file_with_record
+    from dinkster_assets.library import append_write_record
 
     from dinkster.model_downloads import shared_model_mounts
     from dinkster.mounts_api import MountService
@@ -1798,6 +1800,13 @@ def test_model_folders_discover_kinds_aliases_and_exclude_download_metadata(
             (directory / f"{folder}.json:Zone.Identifier").write_text("download metadata")
         # A cache from before the exclusion must not resurrect the sidecar.
         LocalAssetLibrary(directory, ignore=()).scan()
+        if os.name != "nt":
+            sidecar = directory / f"{folder}.json:Zone.Identifier"
+            digest, record = digest_file_with_record(sidecar)
+            metadata = sidecar.stat()
+            append_write_record(
+                directory, sidecar.name, digest, metadata.st_size, metadata.st_mtime_ns, record
+            )
     (tmp_path / "model-settings.json").write_text(
         json.dumps(
             {
