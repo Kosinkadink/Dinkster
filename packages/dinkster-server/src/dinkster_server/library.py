@@ -31,9 +31,10 @@ Surface (present only when create_app got a ServerLibrary):
                                          quoted digest ETag, If-None-Match
                                          304, forever cache lifetime (the
                                          icon/blueprint contract)
-- GET    /api/assets/{digest}/preview    WebP of an image's first frame,
-                                         longest edge 512 px; 404 when not
-                                         held or not an image
+- GET    /api/assets/{digest}/preview    shared media thumbnail image, edge 512
+- GET    /api/assets/{digest}/thumbnail  WebP image/video with Duration for video,
+                                         JSON peaks/duration for audio;
+                                         fixed size 128/256/512, default 256
 - GET    /api/assets/{digest}/metadata   digest-keyed probe facts (probe.py:
                                          safetensors headers today); 404
                                          when not held; immutable-cache
@@ -1473,33 +1474,56 @@ async def handle_asset_get(request: web.Request) -> web.StreamResponse:
     )
 
 
-async def handle_asset_preview(request: web.Request) -> web.Response:
-    """A WebP preview of an image asset for the projects page; 404 when the
-    digest is not held or has no preview. The always-on process answers the
-    same route with the same rendering while no engine is open."""
-    from dinkster_library.previews import PREVIEW_MEDIA_TYPE, ContentMismatch, file_preview
+async def handle_asset_thumbnail(request: web.Request) -> web.Response:
+    """The shared digest thumbnail, or its fixed-size Projects page image."""
+    from dinkster_library.previews import (
+        PREVIEW_EDGE,
+        PREVIEW_MEDIA_TYPE,
+        THUMBNAIL_SIZES,
+        ContentMismatch,
+        ThumbnailUnavailable,
+        file_thumbnail,
+        thumbnail_etag,
+    )
 
     digest = request.match_info["digest"]
     if not is_digest(digest):
         return _json_error(400, "malformed digest (expected 'blake3:<64 hex>')")
-    etag = f'"{digest}-preview"'
-    headers = {"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"}
-    if any(tag.value in (f"{digest}-preview", "*") for tag in (request.if_none_match or ())):
-        return web.Response(status=304, headers=headers)
-    path = await asyncio.to_thread(request.app[LIBRARY_KEY].locate, digest)
+    preview = request.path.endswith("/preview")
+    if set(request.query) - {"size"} or len(request.query.getall("size", [])) > 1:
+        return _json_error(400, "thumbnail accepts only one optional size")
     try:
-        preview = None if path is None else await asyncio.to_thread(file_preview, path, digest)
+        size = PREVIEW_EDGE if preview else int(request.query.get("size", "256"))
+        if size not in THUMBNAIL_SIZES:
+            raise ValueError
+    except ValueError:
+        return _json_error(400, "thumbnail size must be 128, 256 or 512")
+    path = await asyncio.to_thread(request.app[LIBRARY_KEY].locate, digest)
+    if path is None:
+        return _json_error(404, "asset not held here")
+    try:
+        result = await asyncio.to_thread(file_thumbnail, path, digest, size)
     except OSError:
-        preview = None
+        return _json_error(404, "asset not held here")
+    except ThumbnailUnavailable as error:
+        return _json_error(404, str(error))
     except ContentMismatch:
         return web.json_response(
             {"error": f"asset content on disk no longer matches {digest}"},
             status=409,
             headers={"Cache-Control": "no-store"},
         )
-    if preview is None:
-        return _json_error(404, "asset not held here or has no preview")
-    return web.Response(body=preview, content_type=PREVIEW_MEDIA_TYPE, headers=headers)
+    etag = thumbnail_etag(digest, size, preview=preview)
+    headers = {"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"}
+    if result.duration is not None:
+        headers["Duration"] = str(result.duration)
+    if any(tag.value in (etag.strip('"'), "*") for tag in (request.if_none_match or ())):
+        return web.Response(status=304, headers=headers)
+    return web.Response(
+        body=result.image if preview else result.body,
+        content_type=PREVIEW_MEDIA_TYPE if preview else result.media_type,
+        headers=headers,
+    )
 
 
 async def handle_asset_metadata(request: web.Request) -> web.Response:
@@ -2006,7 +2030,8 @@ def add_library_routes(app: web.Application, library: ServerLibrary) -> None:
     app.router.add_get("/api/assets/{digest}", handle_asset_get)
     app.router.add_get("/api/assets/{digest}/dependencies", handle_dependencies)
     app.router.add_post("/api/assets/{digest}/render", handle_render)
-    app.router.add_get("/api/assets/{digest}/preview", handle_asset_preview)
+    app.router.add_get("/api/assets/{digest}/preview", handle_asset_thumbnail)
+    app.router.add_get("/api/assets/{digest}/thumbnail", handle_asset_thumbnail)
     app.router.add_get("/api/assets/{digest}/metadata", handle_asset_metadata)
     app.router.add_get("/api/output-profiles/model", handle_model_output_profile)
     if library.provenance is not None:

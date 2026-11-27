@@ -30,8 +30,8 @@ Routing, in order:
   packs (``/needs``) and recording an opening (``POST /opened``) answer here
   through the library helper on the shared library, in the engine's shapes,
   and so do the bytes of a listed project's saved workflow
-  (``GET /api/assets/{digest}``) and the preview of its output
-  (``GET /api/assets/{digest}/preview``);
+  (``GET /api/assets/{digest}``) and the shared thumbnail of its output
+  (``GET /api/assets/{digest}/thumbnail``, or its fixed-size ``/preview`` image);
 - everything else passes to the open engine when it is ready, else 503
   ``engine-not-ready``. The events socket is refused the same way, and every
   proxied socket closes with 1012 when the open engine changes or stops, so
@@ -101,7 +101,15 @@ from dinkster_library.http_routes import (
     project_call,
     restore_call,
 )
-from dinkster_library.previews import PREVIEW_MEDIA_TYPE, ContentMismatch, file_preview
+from dinkster_library.previews import (
+    PREVIEW_EDGE,
+    PREVIEW_MEDIA_TYPE,
+    THUMBNAIL_SIZES,
+    ContentMismatch,
+    ThumbnailUnavailable,
+    file_thumbnail,
+    thumbnail_etag,
+)
 from yarl import URL
 
 from .environment_state import dinkster_home, shared_library
@@ -725,10 +733,16 @@ async def _served_bytes(
     served = await library.call("assets.served", digest=digest)
     if served["role"] != role:
         raise LibraryError("missing", f"asset is not a listed project's {role}")
-    etag = f'"{digest}"' if role == "workflow" else f'"{digest}-preview"'
+    preview = request.path.endswith("/preview")
+    size = PREVIEW_EDGE
+    if role == "output":
+        if set(request.query) - {"size"} or len(request.query.getall("size", [])) > 1:
+            raise ValueError("thumbnail accepts only one optional size")
+        size = PREVIEW_EDGE if preview else int(request.query.get("size", "256"))
+        if size not in THUMBNAIL_SIZES:
+            raise ValueError("thumbnail size must be 128, 256 or 512")
+    etag = f'"{digest}"' if role == "workflow" else thumbnail_etag(digest, size, preview=preview)
     headers = {"ETag": etag, "Cache-Control": "private, max-age=31536000, immutable"}
-    if any(tag.value in (etag.strip('"'), "*") for tag in (request.if_none_match or ())):
-        return web.Response(status=304, headers=headers)
     held = library.root / "vault" / digest[7:9] / digest[7:]
     try:
         if role == "workflow":
@@ -737,10 +751,13 @@ async def _served_bytes(
                 raise ContentMismatch(digest)
             media_type = cast(str, served["mediaType"])
         else:
-            preview = await asyncio.to_thread(file_preview, held, digest)
-            if preview is None:
-                raise LibraryError("missing", "this output has no preview")
-            data, media_type = preview, PREVIEW_MEDIA_TYPE
+            result = await asyncio.to_thread(file_thumbnail, held, digest, size)
+            data = result.image if preview else result.body
+            media_type = PREVIEW_MEDIA_TYPE if preview else result.media_type
+            if result.duration is not None:
+                headers["Duration"] = str(result.duration)
+    except ThumbnailUnavailable as error:
+        raise LibraryError("missing", str(error)) from None
     except OSError:
         raise LibraryError("missing", "asset not held here") from None
     except ContentMismatch:
@@ -749,6 +766,8 @@ async def _served_bytes(
             status=409,
             headers={"Cache-Control": "no-store"},
         )
+    if any(tag.value in (etag.strip('"'), "*") for tag in (request.if_none_match or ())):
+        return web.Response(status=304, headers=headers)
     return web.Response(body=data, content_type=media_type, headers=headers)
 
 
@@ -766,7 +785,11 @@ async def _answer_from_library(request: web.Request) -> web.Response | None:
     statuses = ERROR_STATUS
     try:
         if parts[1] == "assets":
-            if method != "GET" or len(parts) not in (3, 4) or parts[3:] not in ([], ["preview"]):
+            if (
+                method != "GET"
+                or len(parts) not in (3, 4)
+                or parts[3:] not in ([], ["preview"], ["thumbnail"])
+            ):
                 return None
             role = "output" if len(parts) == 4 else "workflow"
             return await _served_bytes(library, request, parts[2], role)

@@ -974,6 +974,10 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
             # The process serves only a listed project's outputs and saved workflows.
             for digest in (upload, elsewhere, model):
                 assert (await process.get(f"/api/assets/{digest}/preview")).status == 404
+                denied = await process.get(
+                    f"/api/assets/{digest}/thumbnail", headers={"If-None-Match": "*"}
+                )
+                assert denied.status == 404
             document = await process.get(f"/api/assets/{known}")
             assert document.status == 200
             assert document.content_type == "application/x-dinkster-workflow+json"
@@ -1027,8 +1031,8 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
             held[wide].unlink()
             held[small].write_bytes(b"unreadable image")
             for client in (engine, process):
-                for digest in (wide, small):
-                    assert (await client.get(f"/api/assets/{digest}/preview")).status == 404
+                for digest, status in ((wide, 404), (small, 409)):
+                    assert (await client.get(f"/api/assets/{digest}/preview")).status == status
                 outputs = await client.get("/api/projects/film/outputs?limit=6")
                 assert outputs.status == 200
                 assert len((await outputs.json())["assets"]) == 4
@@ -1044,6 +1048,152 @@ def test_projects_page_data_answers_from_the_library_with_no_engine(tmp_path: Pa
                 removed = await engine.delete(f"/api/projects/{identifier}", json={"revision": 1})
                 assert removed.status == 200
                 assert (await removed.json())["project"]["deleted"] is True
+
+    run_scenario(scenario())
+
+
+def test_digest_thumbnails_draw_media_without_an_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import builtins
+    import io
+    import struct
+    import wave
+
+    import av
+    import numpy as np
+    from dinkster_assets import AssetVault, LibraryStore
+    from dinkster_library import LibraryClient
+    from dinkster_library.asset_identity import digest_bytes
+    from dinkster_server import ServerLibrary
+    from PIL import Image
+
+    library = tmp_path / "library"
+    library.mkdir()
+    out = io.BytesIO()
+    Image.new("RGB", (900, 300), "red").save(out, "PNG")
+    image = out.getvalue()
+    out = io.BytesIO()
+    with av.open(out, "w", format="mp4") as container:
+        stream = container.add_stream("libx264", rate=4)
+        stream.width, stream.height, stream.pix_fmt = 96, 48, "yuv420p"
+        for color in ((255, 0, 0), (0, 0, 255), (0, 0, 255), (0, 0, 255)):
+            frame = av.VideoFrame.from_ndarray(
+                np.full((48, 96, 3), color, dtype=np.uint8), format="rgb24"
+            )
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    video = out.getvalue()
+    out = io.BytesIO()
+    with wave.open(out, "wb") as recording:
+        recording.setparams((2, 2, 1024, 0, "NONE", "not compressed"))
+        recording.writeframes(
+            b"".join(
+                struct.pack("<hh", *((8192, 24576) if n < 512 else (-16384, -8192)))
+                for n in range(1024)
+            )
+        )
+    audio = out.getvalue()
+    payloads = (image, video, audio, b"not drawable")
+    digests = [digest_bytes(data) for data in payloads]
+    with LibraryClient(library) as helper:
+        helper.call("projects.register", id="film")
+        for index, (digest, data) in enumerate(zip(digests, payloads, strict=True)):
+            held = library / "vault" / digest[7:9] / digest[7:]
+            held.parent.mkdir(parents=True, exist_ok=True)
+            held.write_bytes(data)
+            seen = observation("film", digest, float(index + 1), "produced")
+            seen["id"] = f"{index + 1:032x}"
+            seen["asset"] = {**cast(dict, seen["asset"]), "size": len(data)}
+            helper.call("assets.record", scope="local", observation=seen)
+
+    async def scenario() -> None:
+        engine_app = create_app(
+            make_execution_engine,
+            SCHEMAS,
+            library=ServerLibrary(
+                AssetVault(library / "vault"), LibraryStore(tmp_path / "engine.sqlite")
+            ),
+        )
+        home_app = create_home_app(Home(installations=frozenset), frontend=None, library=library)
+        async with (
+            TestClient(TestServer(engine_app)) as engine,
+            TestClient(TestServer(home_app)) as process,
+        ):
+            for client in (engine, process):
+                for digest, expected_size in ((digests[0], (256, 85)), (digests[1], (96, 48))):
+                    response = await client.get(f"/api/assets/{digest}/thumbnail")
+                    assert response.status == 200, (
+                        await response.text() if response.status != 200 else ""
+                    )
+                    assert response.content_type == "image/webp"
+                    with Image.open(io.BytesIO(await response.read())) as picture:
+                        assert picture.size == expected_size
+                        red, _, blue = cast(
+                            tuple[int, int, int], picture.convert("RGB").getpixel((10, 10))
+                        )
+                        assert red > 200 and blue < 30
+                    if digest == digests[1]:
+                        assert float(response.headers["Duration"]) == 1.0
+                    cached = await client.get(
+                        f"/api/assets/{digest}/thumbnail",
+                        headers={"If-None-Match": response.headers["ETag"]},
+                    )
+                    assert cached.status == 304
+                    larger = await client.get(f"/api/assets/{digest}/thumbnail?size=512")
+                    preview = await client.get(f"/api/assets/{digest}/preview")
+                    assert await larger.read() == await preview.read()
+                    assert larger.headers["ETag"] != response.headers["ETag"]
+                sound = await client.get(f"/api/assets/{digests[2]}/thumbnail?size=128")
+                assert sound.status == 200
+                answer = await sound.json()
+                assert answer == {
+                    "duration": 1.0,
+                    "peaks": [[0.25, 0.75]] * 64 + [[-0.5, -0.25]] * 64,
+                }
+                for suffix in ("?size=129", "?size=256&size=128", "?path=/tmp/a"):
+                    assert (
+                        await client.get(f"/api/assets/{digests[0]}/thumbnail{suffix}")
+                    ).status == 400
+                for digest in (digests[3], "blake3:" + "f" * 64):
+                    refused = await client.get(f"/api/assets/{digest}/thumbnail")
+                    assert refused.status == 404 and (await refused.json())["error"]
+                absent = await client.get(
+                    f"/api/assets/blake3:{'f' * 64}/thumbnail",
+                    headers={"If-None-Match": "*"},
+                )
+                assert absent.status == 404
+
+            original_import = builtins.__import__
+
+            def without_video(name: str, *args: Any, **kwargs: Any) -> Any:
+                if name == "dinkster_video_runtime":
+                    raise ImportError("video runtime unavailable")
+                return original_import(name, *args, **kwargs)
+
+            with monkeypatch.context() as patch:
+                patch.setattr(builtins, "__import__", without_video)
+                refused = await process.get(f"/api/assets/{digests[1]}/thumbnail?size=128")
+                assert refused.status == 404
+                assert "video thumbnail runtime is unavailable" in (await refused.json())["error"]
+                for digest in (digests[0], digests[2]):
+                    assert (await process.get(f"/api/assets/{digest}/thumbnail")).status == 200
+            held = library / "vault" / digests[0][7:9] / digests[0][7:]
+            held.write_bytes(b"changed after thumbnail was cached")
+            for client in (engine, process):
+                changed = await client.get(f"/api/assets/{digests[0]}/thumbnail")
+                assert changed.status == 409
+                assert changed.headers["Cache-Control"] == "no-store"
+            project = (await (await process.get("/api/projects/film")).json())["project"]
+            assert (
+                await process.delete("/api/projects/film", json={"revision": project["revision"]})
+            ).status == 200
+            denied = await process.get(
+                f"/api/assets/{digests[1]}/thumbnail", headers={"If-None-Match": "*"}
+            )
+            assert denied.status == 404
 
     run_scenario(scenario())
 
