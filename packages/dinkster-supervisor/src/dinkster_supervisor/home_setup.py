@@ -1,4 +1,4 @@
-"""Always-on setup/update planning and one cooperatively cancelled installation job."""
+"""Always-on installation planning and one cooperatively cancelled job."""
 
 from __future__ import annotations
 
@@ -73,8 +73,7 @@ async def environment_command(root: Path, *arguments: str) -> dict[str, object]:
         command = context.environment_command("--root", str(root), *arguments)
     process = await asyncio.create_subprocess_exec(
         *command,
-        "--mirror",
-        RELEASE_MIRROR,
+        *(("--mirror", RELEASE_MIRROR) if arguments[0] in {"setup", "update"} else ()),
         "--json",
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
@@ -260,6 +259,16 @@ def update_facts(root: Path) -> dict[str, object]:
     }
 
 
+def restore_facts(root: Path, entry: int) -> dict[str, object]:
+    from .environment_restore_plan import plan_restore
+
+    if type(entry) is not int or entry < 1:
+        raise SetupRefused("invalid-entry", "Choose a recorded history entry.")
+    if (context := installation_context(root)) is not None:
+        return cast("dict[str, object]", context.call(root, "restore-plan", entry))
+    return plan_restore(root, entry)
+
+
 class SetupJobs:
     def __init__(
         self,
@@ -395,31 +404,47 @@ class SetupJobs:
             ):
                 raise SetupRefused(refusal["code"], refusal["message"])
             previous_identity = self._pack_identities[plan_id]
-            facts = (
-                await self.plan_update(Path(cast("str", previous["root"])))
-                if operation == "update"
-                else await self.plan(
+            if operation == "restore":
+                root = Path(cast("str", previous["root"]))
+                if self._installations is None or root not in await asyncio.to_thread(
+                    self._installations
+                ):
+                    raise SetupRefused("unknown-installation", "Choose a registered installation.")
+                proposal = await asyncio.to_thread(
+                    restore_facts, root, cast("int", previous["entry"])
+                )
+                if proposal != previous["proposal"]:
+                    raise SetupRefused(
+                        "plan-changed", "The restore proposal changed. Review a new plan."
+                    )
+                facts = previous
+            elif operation == "update":
+                facts = await self.plan_update(Path(cast("str", previous["root"])))
+            else:
+                facts = await self.plan(
                     Path(cast("str", previous["root"])),
                     cast("str", previous["channel"]),
                     cast("str | None", previous["variant"]),
                 )
-            )
-            refusal = facts["refusal"]
+            refusal = facts.get("refusal")
             if isinstance(refusal, dict):
                 refusal = cast("dict[str, str]", refusal)
                 raise SetupRefused(refusal["code"], refusal["message"])
-            if facts["variant"] is None:
+            if operation != "restore" and facts["variant"] is None:
                 raise SetupRefused("build-not-chosen", "Choose a build before starting setup.")
-            if previous_identity != self._pack_identities[cast("str", facts["id"])] or any(
-                facts[key] != previous[key]
-                for key in (
-                    "root",
-                    "channel",
-                    "variant",
-                    "engineRelease",
-                    "baseId",
-                    "gpus",
-                    *(("selectionApproval",) if operation == "update" else ()),
+            if operation != "restore" and (
+                previous_identity != self._pack_identities[cast("str", facts["id"])]
+                or any(
+                    facts[key] != previous[key]
+                    for key in (
+                        "root",
+                        "channel",
+                        "variant",
+                        "engineRelease",
+                        "baseId",
+                        "gpus",
+                        *(("selectionApproval",) if operation == "update" else ()),
+                    )
                 )
             ):
                 raise SetupRefused(
@@ -429,8 +454,8 @@ class SetupJobs:
             job: dict[str, object] = {
                 "id": job_id,
                 "root": facts["root"],
-                "channel": facts["channel"],
-                "variant": facts["variant"],
+                "channel": facts.get("channel"),
+                "variant": facts.get("variant"),
                 "state": "running",
                 "progress": None,
                 "error": None,
@@ -453,6 +478,32 @@ class SetupJobs:
             )
             return job
 
+    async def plan_restore(self, root: Path, entry: int) -> dict[str, object]:
+        if not root.is_absolute() or self._installations is None:
+            raise SetupRefused("unknown-installation", "Choose a registered installation.")
+        root = await asyncio.to_thread(resolve_installation_root, root)
+        if root not in await asyncio.to_thread(self._installations):
+            raise SetupRefused("unknown-installation", "Choose a registered installation.")
+        proposal = await asyncio.to_thread(restore_facts, root, entry)
+        alternatives: list[dict[str, object]] = []
+        for alternative in cast("list[dict[str, object]]", proposal["alternatives"]):
+            plan_id = uuid4().hex
+            self._plans[plan_id] = {
+                "id": plan_id,
+                "operation": "restore",
+                "root": str(root),
+                "entry": entry,
+                "approval": alternative["approval"],
+                "proposal": proposal,
+            }
+            self._pack_identities[plan_id] = None
+            alternatives.append({**alternative, "planId": plan_id})
+        while len(self._plans) > max(16, len(alternatives)):
+            oldest = next(iter(self._plans))
+            del self._plans[oldest]
+            del self._pack_identities[oldest]
+        return {**proposal, "root": str(root), "alternatives": alternatives}
+
     async def _run(
         self,
         job: dict[str, object],
@@ -472,38 +523,49 @@ class SetupJobs:
         try:
             if self._prepare is not None:
                 await self._prepare()
-            # Updates preserve assignments; only setup allocates a listener.
+            # Only setup allocates a listener; maintenance preserves assignments.
             context = installation_context(root)
-            if operation == "update":
-                assignments = ["--selection-approval", cast("str", plan["selectionApproval"])]
-            elif context is not None:
-                port = cast("int", await asyncio.to_thread(context.call, root, "port"))
-                assignments = ["--port", str(port)]
+            if operation == "restore":
+                arguments = [
+                    "restore",
+                    str(plan["entry"]),
+                    "--approve",
+                    cast("str", plan["approval"]),
+                ]
             else:
-                with socket.socket() as listener:
-                    listener.bind(("127.0.0.1", 0))
-                    port = listener.getsockname()[1]
-                assignments = ["--port", str(port)]
+                if operation == "update":
+                    assignments = ["--selection-approval", cast("str", plan["selectionApproval"])]
+                elif context is not None:
+                    port = cast("int", await asyncio.to_thread(context.call, root, "port"))
+                    assignments = ["--port", str(port)]
+                else:
+                    with socket.socket() as listener:
+                        listener.bind(("127.0.0.1", 0))
+                        port = listener.getsockname()[1]
+                    assignments = ["--port", str(port)]
+                arguments = [
+                    operation,
+                    "--channel",
+                    cast("str", plan["channel"]),
+                    "--variant",
+                    cast("str", plan["variant"]),
+                    "--engine-release",
+                    cast("str", plan["engineRelease"]),
+                    "--base-id",
+                    cast("str", plan["baseId"]),
+                    *(("--pack-estimate-identity", pack_identity) if pack_identity else ()),
+                    *assignments,
+                    *(
+                        argument
+                        for gpu in cast("list[str]", plan["gpus"])
+                        for argument in ("--gpu", gpu)
+                    ),
+                ]
             result = await environment_command(
                 root,
-                operation,
-                "--channel",
-                cast("str", plan["channel"]),
-                "--variant",
-                cast("str", plan["variant"]),
-                "--engine-release",
-                cast("str", plan["engineRelease"]),
-                "--base-id",
-                cast("str", plan["baseId"]),
-                *(("--pack-estimate-identity", pack_identity) if pack_identity else ()),
-                *assignments,
+                *arguments,
                 "--progress",
                 str(progress),
-                *(
-                    argument
-                    for gpu in cast("list[str]", plan["gpus"])
-                    for argument in ("--gpu", gpu)
-                ),
                 "--yes",
             )
             if result["status"] == "cancelled":
@@ -538,7 +600,7 @@ class SetupJobs:
                     else:
                         progress.unlink(missing_ok=True)
                         progress.with_name(progress.name + ".cancel").unlink(missing_ok=True)
-                if job["operation"] == "update" and self._updated is not None:
+                if job["operation"] in {"update", "restore"} and self._updated is not None:
                     await self._updated(root)
             except (OSError, ValueError, RuntimeError) as exc:
                 outcome = {
@@ -634,7 +696,10 @@ async def handle_start(request: web.Request) -> web.Response:
         body = cast("dict[str, object]", raw)
         if set(body) != {"planId"} or not isinstance(body["planId"], str):
             raise ValueError("Supply only a reviewed planId.")
-        operation = "update" if request.path == "/supervisor/installations/update" else "setup"
+        operation = {
+            "/supervisor/installations/update": "update",
+            "/supervisor/installations/restore": "restore",
+        }.get(request.path, "setup")
         job = await request.app[SETUP_KEY].start(body["planId"], operation=operation)
         return web.json_response(job, status=202)
     except KeyError:
