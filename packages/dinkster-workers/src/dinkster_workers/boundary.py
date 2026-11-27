@@ -504,6 +504,8 @@ class ValueCodec:
         if reused:
             encoded = cast(EncodedPayload, payload)
             check_secret_data(encoded.storing)
+            if secret_output_protection_active() and encoded.decoder is not None:
+                check_secret_data(encoded.load())
             if self._use_shm and self._shm_threshold <= encoded.size:
                 codec_ms = (time.perf_counter() - started) * 1000.0
                 with encoded.borrow_data() as data:

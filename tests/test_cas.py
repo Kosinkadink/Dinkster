@@ -90,7 +90,9 @@ def test_shm_payload_survives_sender_ack_without_eager_copy() -> None:
 
 
 @pytest.mark.parametrize("transport", ["inline", "shm", "cas", "persistentCas"])
-@pytest.mark.parametrize("source", ["payload", "encoded", "buffer", "meta", "child", "identity"])
+@pytest.mark.parametrize(
+    "source", ["payload", "encoded", "encoded-text", "buffer", "meta", "child", "identity"]
+)
 def test_secret_output_refused_before_transport_retains_bytes(
     tmp_path: Path, transport: str, source: str
 ) -> None:
@@ -131,6 +133,13 @@ def test_secret_output_refused_before_transport_retains_bytes(
     value = registry.wrap("test.private", 1 if source in ("payload", "buffer") else 2)
     if source == "encoded":
         value = replace(value, payload=EncodedPayload("test.private", raw_secret, None))
+    elif source == "encoded-text":
+        spec = registry.spec("STRING")
+        data = spec.encode(secret)
+        assert raw_secret not in data
+        value = replace(
+            registry.wrap("STRING", "public"), payload=EncodedPayload("STRING", data, spec.decode)
+        )
     elif source == "meta":
         value = replace(value, meta=ValueMeta({"nested": [{secret: "metadata"}]}))
     elif source == "child":
