@@ -628,6 +628,11 @@ def _check_input_value(
             return  # unresolvable producer type; its own error is reported
         if accepts_list and out_type.kind == "list" and expected.kind != "list":
             expected = TypeExpr.list_of(expected)
+        if problem := expected.record_connection_problem(out_type):
+            diags.append(Diagnostic("error", "record-field-mismatch", problem, where, input_id))
+            return
+        if expected.kind == "record" and out_type.kind == "record":
+            return
         # When the producer's runtime type is asset-shaped and the destination's
         # declared type matches a registered coercion plan (decode / lift /
         # merge), the engine coerces at input resolution - so both the

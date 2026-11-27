@@ -43,6 +43,7 @@ from .model import (
     OutputKnownValue,
     OutputProbeSpec,
     OutputRepresents,
+    RecordField,
     SaveTargetWidget,
     SearchVisibility,
     SelectorSpec,
@@ -826,6 +827,16 @@ def _widget_from_wire(widget_wire: object, wire_version: int) -> Widget:
 
 def type_expr_to_wire(expr: TypeExpr, wire_version: int = SCHEMA_WIRE_VERSION) -> dict[str, object]:
     wire: dict[str, object] = {"kind": expr.kind}
+    if expr.kind == "record":
+        wire["fields"] = [
+            {
+                "id": item.id,
+                "name": item.name,
+                "type": type_expr_to_wire(item.type, wire_version),
+                "optional": item.optional,
+            }
+            for item in expr.fields
+        ]
     if expr.kind == "tuple":
         wire["elements"] = [type_expr_to_wire(item, wire_version) for item in expr.elements]
     if expr.kind == "variable":
@@ -1147,6 +1158,9 @@ def schema_signature(schema: NodeSchema) -> str:
     def strip_presentation(entry: dict[str, object]) -> None:
         entry.pop("doc", None)
         entry.pop("tooltip", None)
+        type_wire = entry.get("type")
+        if isinstance(type_wire, dict):
+            strip_record_presentation(cast("dict[str, object]", type_wire))
         if "onAbsent" in entry and entry["onAbsent"] == (
             "skip" if entry.get("required", True) else "omit"
         ):
@@ -1182,6 +1196,19 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("preview", None)
         entry.pop("represents", None)
         entry.pop("knownValue", None)
+
+    def strip_record_presentation(type_wire: dict[str, object]) -> None:
+        if type_wire.get("kind") == "record":
+            fields = cast("list[dict[str, object]]", type_wire["fields"])
+            fields.sort(key=lambda item: str(item["id"]))
+            for item in fields:
+                item.pop("name", None)
+                strip_record_presentation(cast("dict[str, object]", item["type"]))
+        element = type_wire.get("element")
+        if isinstance(element, dict):
+            strip_record_presentation(cast("dict[str, object]", element))
+        for item in cast("list[dict[str, object]]", type_wire.get("elements", [])):
+            strip_record_presentation(item)
 
     def dynamic_prompts_identity(widget: object) -> object | None:
         if not isinstance(widget, dict):
@@ -1465,6 +1492,23 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
         type_expr_from_wire(_expect_object(item, "type.elements position"), wire_version)
         for item in cast(list[object], elements_wire)
     )
+    fields_wire = wire.get("fields", [])
+    if not isinstance(fields_wire, list):
+        raise ValueError("type.fields must be an array")
+    fields: list[RecordField] = []
+    for raw in cast(list[object], fields_wire):
+        entry = _expect_object(raw, "record field")
+        _reject_unknown_fields(entry, frozenset({"id", "name", "type", "optional"}), "record field")
+        fields.append(
+            RecordField(
+                id=_expect_str(entry.get("id"), "record field.id"),
+                name=_expect_str(entry.get("name"), "record field.name"),
+                type=type_expr_from_wire(
+                    _expect_object(entry.get("type"), "record field.type"), wire_version
+                ),
+                optional=_expect_bool(entry.get("optional", False), "record field.optional"),
+            )
+        )
     return TypeExpr(
         kind=cast("Any", kind),
         types=types,
@@ -1473,6 +1517,7 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
         elements=elements,
         input_id=_expect_str(wire.get("input", ""), "type.input"),
         index=wire.get("index"),
+        fields=tuple(fields),
     )
 
 

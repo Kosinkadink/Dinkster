@@ -5,7 +5,7 @@ all consume these objects. There is no INPUT_TYPES-style dict anywhere.
 
 The type-expression model is deliberately small and closed (one canonical
 representation, mirroring Dinkster-Frontend's TypeExpr):
-concrete | union | wildcard | variable | list | asset | stream | tuple.
+concrete | union | wildcard | variable | list | asset | stream | tuple | record.
 
 Structured kinds use a recursive ``element`` expression instead of flat
 type ids. Lists (DESIGN 3.13): at runtime a list value's
@@ -80,6 +80,7 @@ TypeExprKind = Literal[
     "stream",
     "tuple",
     "tuple_element",
+    "record",
 ]
 
 Cardinality = Literal["scalar", "list", "unknown"]
@@ -140,6 +141,24 @@ def combo_choices_json_bytes(values: Sequence[object], *, subject: str) -> bytes
 
 
 @dataclass(frozen=True)
+class RecordField:
+    """A stable field identity, independent of its current name and position."""
+
+    id: str
+    name: str
+    type: TypeExpr
+    optional: bool = False
+
+    def __post_init__(self) -> None:
+        _validate_structural_id(self.id, "record field id")
+        _validate_structural_id(self.name, "record field name")
+        if self.type.runtime_type_id() is None or self.type.requires_elaboration:
+            raise ValueError(f"record field '{self.name}' requires a declared concrete type")
+        if type(self.optional) is not bool:
+            raise ValueError("record field optional must be a boolean")
+
+
+@dataclass(frozen=True)
 class TypeExpr:
     kind: TypeExprKind
     types: tuple[str, ...] = ()
@@ -148,6 +167,7 @@ class TypeExpr:
     elements: tuple[TypeExpr, ...] = ()
     input_id: str = ""
     index: int | str | None = None
+    fields: tuple[RecordField, ...] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in (
@@ -160,8 +180,24 @@ class TypeExpr:
             "stream",
             "tuple",
             "tuple_element",
+            "record",
         ):
             raise ValueError(f"unknown TypeExpr kind: {self.kind!r}")
+        if self.kind == "record":
+            if len(self.types) != 1 or validate_name(self.types[0]) is not None:
+                raise ValueError("record TypeExpr requires one namespaced record identity")
+            if self.template_id or not isinstance(cast(object, self.fields), tuple):
+                raise ValueError("record TypeExpr requires an immutable fields tuple")
+            if any(
+                not isinstance(item, RecordField) for item in cast(tuple[object, ...], self.fields)
+            ):
+                raise ValueError("record fields must be RecordFields")
+            if len({item.id for item in self.fields}) != len(self.fields):
+                raise ValueError("record field identities must be unique")
+            if len({item.name for item in self.fields}) != len(self.fields):
+                raise ValueError("record field names must be unique")
+        elif self.fields:
+            raise ValueError(f"{self.kind} TypeExpr carries no record fields")
         if self.kind == "concrete":
             if len(self.types) != 1:
                 raise ValueError("concrete TypeExpr requires exactly one type id")
@@ -255,6 +291,44 @@ class TypeExpr:
         return TypeExpr(kind="tuple", elements=elements)
 
     @staticmethod
+    def record_of(type_id: str, *fields: RecordField) -> TypeExpr:
+        return TypeExpr(kind="record", types=(type_id,), fields=fields)
+
+    def record_connection_problem(self, source: TypeExpr) -> str | None:
+        """Check declared record fields without consulting or loading a value."""
+        if source.kind == "record" and self.kind not in ("record", "wildcard", "variable", "union"):
+            return f"Expected {self.runtime_type_id() or self.kind}, got record {source.types[0]}."
+        if self.kind == "record":
+            if source.kind != "record":
+                return (
+                    f"Expected record {self.types[0]}, "
+                    f"got {source.runtime_type_id() or source.kind}."
+                )
+            same_record = self.types == source.types
+            supplied = {(item.id if same_record else item.name): item for item in source.fields}
+            for wanted in self.fields:
+                found = supplied.get(wanted.id if same_record else wanted.name)
+                if found is None:
+                    return f"Missing record field: {wanted.name}."
+                nested = wanted.type.record_connection_problem(found.type)
+                if nested is not None:
+                    return f"Record field '{wanted.name}': {nested}"
+                if wanted.type.kind != "record" and wanted.type != found.type:
+                    return (
+                        f"Record field '{wanted.name}' expects {wanted.type.runtime_type_id()}, "
+                        f"got {found.type.runtime_type_id()}."
+                    )
+            return None
+        if self.kind == source.kind:
+            if self.element is not None and source.element is not None:
+                return self.element.record_connection_problem(source.element)
+            if self.kind == "tuple" and len(self.elements) == len(source.elements):
+                for wanted, found in zip(self.elements, source.elements, strict=True):
+                    if (problem := wanted.record_connection_problem(found)) is not None:
+                        return problem
+        return None
+
+    @staticmethod
     def tuple_element(tuple_input: str, index_input: str) -> TypeExpr:
         """An output position selected by a document-stored integer input."""
         return TypeExpr(kind="tuple_element", input_id=tuple_input, index=index_input)
@@ -317,7 +391,7 @@ class TypeExpr:
         fully concrete, else None. This is what workers wrap outputs with and
         what the engine wraps literals with - the single bridge between the
         expression level and runtime value type ids."""
-        if self.kind == "concrete":
+        if self.kind in ("concrete", "record"):
             return self.types[0]
         if self.kind == "tuple":
             positions = tuple(item.runtime_type_id() for item in self.elements)
@@ -369,7 +443,7 @@ class TypeExpr:
         value (scalar) regardless of what it decodes to."""
         if self.kind == "list":
             return "list"
-        if self.kind in ("concrete", "union", "asset", "stream", "tuple"):
+        if self.kind in ("concrete", "union", "asset", "stream", "tuple", "record"):
             return "scalar"
         return "unknown"
 

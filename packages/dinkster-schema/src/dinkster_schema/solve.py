@@ -90,7 +90,7 @@ def resolved_type_id(expr: TypeExpr, bindings: Mapping[str, str]) -> str | None:
 
 def resolved_type_expr(expr: TypeExpr, bindings: Mapping[str, str]) -> TypeExpr | None:
     """A fully concrete expression under bindings, else None."""
-    if expr.kind == "concrete":
+    if expr.kind in ("concrete", "record"):
         return expr
     if expr.kind == "variable":
         type_id = bindings.get(expr.template_id)
