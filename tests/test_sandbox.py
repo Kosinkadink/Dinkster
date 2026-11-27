@@ -1384,7 +1384,7 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
             pack.mkdir()
             manifest = pack / "dinkster-pack.toml"
             manifest.write_text(
-                '[pack]\nname="network-pack"\nnamespaces=["networkprobe"]\n'
+                '[pack]\nname="networkprobe"\nnamespaces=["networkprobe"]\n'
                 '[pack.entry]\nnodes="network_probe:NODES"\n'
                 "[pack.sandbox]\n"
                 + (
@@ -1425,7 +1425,7 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
             composer = ServingComposer(
                 sandbox_policy=SandboxPolicy(ro_binds=(str(REPO_ROOT),)),
                 sandbox_network_grants={
-                    "network-pack": (f"https://operator.example.test:{port}",),
+                    "networkprobe": (f"https://operator.example.test:{port}",),
                     "different-pack": (f"https://other.example.test:{port}",),
                 },
             )
