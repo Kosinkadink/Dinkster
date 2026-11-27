@@ -12,6 +12,8 @@ from .egress import EGRESS_PROXY_ENV, MAX_PROXY_CLIENTS, relay_streams
 
 
 async def _run(command: list[str]) -> int:
+    if sys.platform != "linux":
+        raise RuntimeError("the namespace proxy bridge requires Linux")
     endpoint = os.environ[EGRESS_PROXY_ENV]
     clients: set[asyncio.Task[None]] = set()
 
@@ -56,7 +58,7 @@ async def _run(command: list[str]) -> int:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and sys.platform == "linux":
     status = asyncio.run(_run(sys.argv[1:]))
     if status < 0:
         if -status != signal.SIGKILL:
