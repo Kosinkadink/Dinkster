@@ -50,6 +50,7 @@ if TYPE_CHECKING:
 
 PROTOCOL_VERSION = 1
 DOCUMENT_KINDS = ("workflow", "image", "board")
+MAX_SESSION_TITLE = 200
 
 SESSION_ROLES = ("banned", "viewer", "editor", "owner")
 DEFAULT_SESSION_ROLE = "editor"
@@ -57,6 +58,14 @@ _ROLE_RANK = {role: rank for rank, role in enumerate(SESSION_ROLES)}
 
 _PATCH_OPS = frozenset({"add", "remove", "replace"})
 _NEEDS_VALUE = frozenset({"add", "replace"})
+
+
+def validate_title(title: object) -> str:
+    if not isinstance(title, str) or not title.strip() or len(title) > MAX_SESSION_TITLE:
+        raise ValueError(
+            f"'title' must be a non-blank string of at most {MAX_SESSION_TITLE} characters"
+        )
+    return title
 
 
 def _normalize_json(value: object, where: str = "value") -> object:
@@ -252,6 +261,7 @@ class DocumentSession:
     acl: dict[str, str] = field(default_factory=lambda: {})
     default_role: str = DEFAULT_SESSION_ROLE
     document_kind: str = "workflow"
+    title: str | None = None
 
     @property
     def revision(self) -> int:
@@ -301,6 +311,7 @@ class SessionService:
         snapshot: object,
         document_kind: str = "workflow",
         principal_id: str = "local",
+        title: str | None = None,
     ) -> DocumentSession:
         if document_kind not in DOCUMENT_KINDS:
             raise ValueError(f"document_kind must be one of {list(DOCUMENT_KINDS)}")
@@ -311,6 +322,7 @@ class SessionService:
             snapshot=self._validated_snapshot(document_kind, document_id, snapshot),
             document_kind=document_kind,
             acl={principal_id: "owner"},
+            title=validate_title(title) if title is not None else None,
         )
         self._sessions[session.session_id] = session
         if self._store is not None:
@@ -339,6 +351,17 @@ class SessionService:
 
     def sessions(self, scope: str) -> list[DocumentSession]:
         return [deepcopy(s) for s in self._sessions.values() if s.scope == scope]
+
+    def rename(
+        self, session_id: str, title: str, *, principal_id: str = "local"
+    ) -> DocumentSession:
+        session = self._get_authoritative(session_id)
+        self.require_role(session_id, principal_id, "editor")
+        title = validate_title(title)
+        if self._store is not None:
+            self._store.rename(session_id, title)
+        session.title = title
+        return deepcopy(session)
 
     def role_for(self, session_id: str, principal_id: str) -> str:
         session = self._get_authoritative(session_id)

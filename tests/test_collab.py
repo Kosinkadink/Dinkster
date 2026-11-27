@@ -164,6 +164,91 @@ def test_session_lifecycle_over_http() -> None:
     run_scenario(scenario())
 
 
+def test_session_titles_reach_peers_and_reconnect_without_changing_content(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        store = SessionStore(tmp_path / "sessions.sqlite")
+        service = SessionService(store=store)
+        client = await make_authenticated_client(service)
+        owner = {"X-Principal": "alice"}
+        editor = {"X-Principal": "bob"}
+        viewer = {"X-Principal": "carol"}
+        document = board_snapshot()
+        try:
+            response = await client.post(
+                "/api/sessions",
+                headers=owner,
+                json={
+                    "scope": "team",
+                    "documentId": "board-one",
+                    "documentKind": "board",
+                    "snapshot": document,
+                    "title": "Film A",
+                },
+            )
+            assert response.status == 201
+            original = await response.json()
+            sid = original["sessionId"]
+            assert original["title"] == "Film A"
+            service.replace_acl(
+                sid,
+                principal_id="alice",
+                default_role="viewer",
+                entries={"alice": "owner", "bob": "editor"},
+            )
+            sockets = [
+                await client.ws_connect(f"/api/sessions/{sid}/events", headers=headers)
+                for headers in (owner, editor)
+            ]
+            for socket in sockets:
+                assert (await socket.receive_json())["title"] == "Film A"
+            before = service.get(sid)
+            refusal = await client.put(
+                f"/api/sessions/{sid}/title", headers=viewer, json={"title": "Not permitted"}
+            )
+            assert refusal.status == 403
+            for invalid in (None, 23, "", " \n", "x" * 201):
+                refusal = await client.put(
+                    f"/api/sessions/{sid}/title", headers=editor, json={"title": invalid}
+                )
+                assert refusal.status == 400
+            assert service.get(sid) == before
+
+            title = "Edited by Bob " + "b" * 186
+            response = await client.put(
+                f"/api/sessions/{sid}/title", headers=editor, json={"title": title}
+            )
+            assert response.status == 200
+            assert await response.json() == {**original, "title": title}
+            for socket in sockets:
+                assert await socket.receive_json() == {"type": "session_title", "title": title}
+                await socket.close()
+            listed = await (await client.get("/api/sessions?scope=team", headers=viewer)).json()
+            assert listed["sessions"] == [{**original, "title": title}]
+            reconnected = await client.ws_connect(f"/api/sessions/{sid}/events", headers=viewer)
+            assert (await reconnected.receive_json())["title"] == title
+            await reconnected.close()
+            assert await (
+                await client.get(f"/api/sessions/{sid}/snapshot", headers=viewer)
+            ).json() == {
+                "revision": 0,
+                "document": document,
+            }
+            assert service.ops_after(sid, 0) == []
+        finally:
+            await client.close()
+            store.close()
+
+        reopened = SessionStore(tmp_path / "sessions.sqlite")
+        try:
+            restored = SessionService(store=reopened).get(sid)
+            assert restored.title == title
+            assert restored.revision == 0 and restored.snapshot == document
+        finally:
+            reopened.close()
+
+    run_scenario(scenario())
+
+
 def test_image_session_kind_and_snapshot_validation_over_http() -> None:
     def validator(document_kind: str, document_id: str, snapshot: object) -> str | None:
         if document_kind == "image" and snapshot != {"lineage": document_id}:

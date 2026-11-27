@@ -7,10 +7,13 @@ Surface (all JSON; scope discipline mirrors /api/history - explicit
 non-empty scope, single-user mode is the reserved scope "local"):
 
 - POST   /api/sessions                    open a session:
-                                          {scope, documentId, documentKind?, snapshot}
+                                          {scope, documentId, documentKind?, snapshot, title?}
                                           -> 201 session descriptor
 - GET    /api/sessions?scope=             list one scope's sessions
 - GET    /api/sessions/{sessionId}        session descriptor; 404 gone
+- PUT    /api/sessions/{sessionId}/title  replace {title}, editor required;
+                                          descriptor response, session_title
+                                          event to all subscribers
 - DELETE /api/sessions/{sessionId}        close (session_closed to
                                           subscribers, sockets closed;
                                           owner role required)
@@ -303,6 +306,7 @@ def _session_wire(session: DocumentSession) -> dict[str, object]:
         "revision": session.revision,
         "snapshotRevision": session.snapshot_revision,
         "createdAt": session.created_at,
+        **({"title": session.title} if session.title is not None else {}),
     }
 
 
@@ -432,6 +436,8 @@ async def handle_create_session(request: web.Request) -> web.Response:
         raise _bad_request(f"'documentKind' must be one of {list(DOCUMENT_KINDS)}")
     if "snapshot" not in body:
         raise _bad_request("'snapshot' is required (the document at revision 0)")
+    if "title" in body and not isinstance(body["title"], str):
+        raise _bad_request("'title' must be a string")
     try:
         session = service.create(
             scope=scope,
@@ -439,6 +445,7 @@ async def handle_create_session(request: web.Request) -> web.Response:
             document_kind=document_kind,
             snapshot=body["snapshot"],
             principal_id=_principal(request).principal_id,
+            title=body.get("title"),
         )
     except ValueError as exc:
         raise _bad_request(str(exc)) from exc
@@ -473,6 +480,23 @@ async def handle_list_sessions(request: web.Request) -> web.Response:
 async def handle_get_session(request: web.Request) -> web.Response:
     session = _get_session(request.app[SESSIONS_KEY], request, "sessions:read", "viewer")
     return web.json_response(_session_wire(session))
+
+
+async def handle_put_title(request: web.Request) -> web.Response:
+    service = request.app[SESSIONS_KEY]
+    body = await _json_body(request)
+    session = _get_session(service, request, "sessions:write", "editor")
+    title = body.get("title")
+    if not isinstance(title, str):
+        raise _bad_request("'title' must be a string")
+    try:
+        updated = service.rename(
+            session.session_id, title, principal_id=_principal(request).principal_id
+        )
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
+    await _broadcast(request, session.session_id, {"type": "session_title", "title": updated.title})
+    return web.json_response(_session_wire(updated))
 
 
 async def handle_close_session(request: web.Request) -> web.Response:
@@ -878,6 +902,7 @@ def add_session_routes(
     app.router.add_get("/api/sessions", handle_list_sessions)
     app.router.add_get("/api/sessions/{session_id}", handle_get_session)
     app.router.add_delete("/api/sessions/{session_id}", handle_close_session)
+    app.router.add_put("/api/sessions/{session_id}/title", handle_put_title)
     app.router.add_get("/api/sessions/{session_id}/acl", handle_get_acl)
     app.router.add_put("/api/sessions/{session_id}/acl", handle_put_acl)
     app.router.add_post("/api/sessions/{session_id}/actors", handle_bind_actor)
