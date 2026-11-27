@@ -60,6 +60,9 @@ current snapshot without starting an engine. ``available: false`` with
 list, an unreadable manifest retains its locked identity with
 ``networkOrigins: null``; an empty list means known empty requests, not
 unknown requests. Origins include execution parts, not operator grants.
+``GET /supervisor/installations/history`` takes an absolute registered ``root``
+and returns ``root``, ``current`` and the recorded ``history``, including entries
+whose build trees were collected. Unreadable history answers 503, not an empty list.
 
 ``POST /supervisor/engine/stop`` stops the open engine and keeps its
 installation open. ``GET /supervisor/engine/log`` reads the last 64 KiB of
@@ -997,6 +1000,40 @@ async def _handle_installations(request: web.Request) -> web.Response:
     return web.json_response({"installations": rows})
 
 
+async def _handle_installation_history(request: web.Request) -> web.Response:
+    from .environment_history import history
+    from .environment_state import read_current
+
+    root = Path(request.query.get("root", ""))
+    if (
+        set(request.query) != {"root"}
+        or len(request.query.getall("root")) != 1
+        or not root.is_absolute()
+    ):
+        return web.json_response(
+            {"error": "invalid-request", "message": "provide one absolute root"}, status=400
+        )
+    try:
+        roots = await request.app[HOME_KEY].installations()
+    except ValueError as error:
+        return web.json_response(
+            {"error": "installations-unavailable", "message": str(error)}, status=503
+        )
+    root = root.resolve()
+    if root not in roots:
+        return web.json_response({"error": "unknown-installation"}, status=404)
+    try:
+        if not await asyncio.to_thread(root.is_dir):
+            raise FileNotFoundError("the installation folder is missing")
+        entries = await asyncio.to_thread(history, root)
+        current = await asyncio.to_thread(read_current, root)
+    except (OSError, ValueError) as error:
+        return web.json_response(
+            {"error": "history-unavailable", "message": str(error)}, status=503
+        )
+    return web.json_response({"root": str(root), "current": current, "history": entries})
+
+
 async def _handle_installation_packs(request: web.Request) -> web.Response:
     from .environment_runtime import installation_pack_metadata
 
@@ -1220,6 +1257,7 @@ def create_home_app(
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_get("/supervisor/installations", _handle_installations)
+    app.router.add_get("/supervisor/installations/history", _handle_installation_history)
     app.router.add_get("/supervisor/installations/packs", _handle_installation_packs)
     app.router.add_post("/supervisor/engine", _handle_open)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
