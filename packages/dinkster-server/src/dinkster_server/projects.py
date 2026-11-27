@@ -171,6 +171,7 @@ async def workflow_record_wire(
 
 async def project_needs(request: web.Request, identifier: str) -> dict[str, object]:
     from .app import STATE_KEY
+    from .auth import principal_for
     from .library import LIBRARY_KEY
     from .workflow_facts import workflow_facts
 
@@ -180,6 +181,7 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
     state = request.app[STATE_KEY]
     library = request.app[LIBRARY_KEY]
     schemas, node_packs = state.schemas, state.node_packs
+    can_write = principal_for(request).allows("assets:write")
     installed = [
         {"pack": pack, "version": info.version or None}
         for pack, info in sorted(state.packs.items())
@@ -220,6 +222,8 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
             ),
             "unknown": unknown,
             "installed": installed,
+            "hasInstalledNodes": bool(schemas),
+            "canWrite": can_write,
         }
 
     return await asyncio.to_thread(compute)
