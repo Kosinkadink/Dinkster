@@ -1489,7 +1489,7 @@ class Engine:
         return validator is None or validator(hit)
 
     def _cached_output_origins(
-        self, label: str, schema: NodeSchema, outputs: Mapping[str, Value]
+        self, label: str, schema: NodeSchema, outputs: Mapping[str, Value], pack: str | None
     ) -> CachedResult:
         # Content-identical producers share cache entries, not diagnostic
         # identities. Selectors forward an input's provenance unchanged.
@@ -1505,6 +1505,10 @@ class Engine:
                 )
                 rebound[output_id] = replace(
                     current, meta=ValueMeta({**value.meta.entries, **current.meta.entries})
+                )
+            elif pack is not None and not is_absent(value):
+                rebound[output_id] = replace(
+                    value, meta=ValueMeta({**value.meta.entries, "producer.pack": pack})
                 )
         return CachedResult(
             rebound,
@@ -1868,7 +1872,9 @@ class Engine:
                 if inflight.cancelled():
                     continue  # owner's run died; try to take ownership
                 raise
-            outputs = self._cached_output_origins(label, schema, outputs)
+            outputs = self._cached_output_origins(
+                label, schema, outputs, selection.pack if selection is not None else None
+            )
             if not self._cache_hit_valid(schema, outputs):
                 break
             # Dead-owner check FIRST: a known-unresolvable result must not
@@ -1939,7 +1945,9 @@ class Engine:
                 entry_problem = "stale-resource"
                 hit = None
             if hit is not None:
-                hit = self._cached_output_origins(label, schema, hit)
+                hit = self._cached_output_origins(
+                    label, schema, hit, selection.pack if selection is not None else None
+                )
                 self._run_artifacts[run_id].extend(hit.artifacts)
                 produced[node_id] = (
                     await resolve_expansion(node_id, hit)
@@ -2231,7 +2239,15 @@ class Engine:
                 self._run_artifacts[run_id].extend(saved_artifacts)
             self._run_artifacts[run_id].extend(result.artifacts)
             entry = CachedResult(
-                result.outputs,
+                {
+                    name: replace(
+                        value,
+                        meta=ValueMeta({**value.meta.entries, "producer.pack": selection.pack}),
+                    )
+                    if selection is not None and selection.pack is not None and not is_absent(value)
+                    else value
+                    for name, value in result.outputs.items()
+                },
                 result.expansion,
                 (*document_artifacts, *saved_artifacts),
                 tuple(warnings),
@@ -2249,7 +2265,7 @@ class Engine:
                     )
                 produced[node_id] = await resolve_expansion(node_id, entry)
             else:
-                produced[node_id] = result.outputs
+                produced[node_id] = entry
             executed.append(label)
             if publisher := self._runtime().publish_outputs:
                 await publisher(run_id, label, produced[node_id])

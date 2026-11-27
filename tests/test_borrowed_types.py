@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from dinkster_engine import ExecutionError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_registry import Lockfile
 from dinkster_workers.doctor import diagnose
@@ -185,6 +186,89 @@ def test_owner_storing_carries_the_borrowers_value_when_the_owner_is_installed(
     difference, storing = run_scenario(produce_and_read([borrower, owner], "borrower", "borrower"))
 
     assert (difference, storing) == (18, "owner")
+
+
+@pytest.mark.parametrize("validation", ["decode", "encoded", "input-convert"])
+@pytest.mark.parametrize("container", [False, True], ids=["atom", "list"])
+def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    validation: str,
+    container: bool,
+) -> None:
+    registration = {
+        "decode": "decode=decode_thing",
+        "encoded": 'decode=lambda data: json.loads(data.removeprefix(b"OWNER:")),\n'
+        "        validate_encoded=lambda data, _meta: decode_thing(data)",
+        "input-convert": 'decode=lambda data: json.loads(data.removeprefix(b"OWNER:")),\n'
+        "        input_convert=check_thing",
+    }[validation]
+    owner = write_pack(
+        tmp_path,
+        "owner",
+        OWNER_SOURCE.replace(
+            'decode=lambda data: {**json.loads(data.removeprefix(b"OWNER:")), "storing": "owner"}',
+            registration,
+        ).replace(
+            "def register_types(registry):",
+            "def decode_thing(data):\n"
+            '    return check_thing(json.loads(data.removeprefix(b"OWNER:")))\n\n'
+            "def check_thing(thing):\n"
+            '    if "height" not in thing:\n'
+            '        raise ValueError("height is required")\n'
+            '    return {**thing, "storing": "owner"}\n\n'
+            "def register_types(registry):",
+        ),
+    )
+    source = BORROWER_SOURCE
+    if container:
+        source = (
+            source.replace(
+                'TypeExpr.concrete("owner.thing")',
+                'TypeExpr.list_of(TypeExpr.concrete("owner.thing"))',
+            )
+            .replace(
+                'thing={{"width": 11, "height": 29}}',
+                'thing=[{{"width": 11, "height": 29}}]',
+            )
+            .replace("        if marker :=", "        thing = thing[0]\n        if marker :=")
+        )
+    borrower = write_pack(
+        tmp_path,
+        "borrower",
+        source.format(name="borrower", tag="borrower"),
+        'uses-types = ["owner.thing"]\n',
+    )
+    maker = write_pack(
+        tmp_path,
+        "maker",
+        source.format(name="maker", tag="maker").replace(
+            '{"width": 11, "height": 29}', '{"width": 11}'
+        ),
+        'uses-types = ["owner.thing"]\n',
+    )
+    marker = tmp_path / "read-ran"
+    in_process = validation == "input-convert"
+    entries: list[Path | PackSpec] = [
+        PackSpec(path, in_process=in_process) for path in (maker, borrower, owner)
+    ]
+
+    assert run_scenario(produce_and_read(entries, "borrower", "borrower"))[0] == 18
+    monkeypatch.setenv("BORROWED_TYPES_MARKER", str(marker))
+    with pytest.raises(ExecutionError) as failed:
+        run_scenario(
+            produce_and_read(
+                entries,
+                "maker",
+                "borrower",
+                worker_env={"BORROWED_TYPES_MARKER": str(marker)},
+            )
+        )
+
+    assert failed.value.error.node_id == "read"
+    assert "maker made a owner.thing value that owner cannot read" in failed.value.error.message
+    assert "input 'thing'" in failed.value.error.message
+    assert not marker.exists()
 
 
 def test_value_stored_by_another_pack_fails_at_the_wire_naming_both_packs(

@@ -38,6 +38,7 @@ from .model import (
     EncodedPayload,
     PyObjPayload,
     TypeId,
+    UnresolvablePayload,
     Value,
     ValueMeta,
     stable_hash,
@@ -668,6 +669,16 @@ class TypeRegistry:
         """The pack whose storing this registry uses for a type."""
         return self._used_storing.get(type_id) or self.owner_of(type_id)
 
+    def unreadable_value_message(self, type_id: TypeId, producer: object) -> str | None:
+        storing = self.storing_pack(type_id)
+        if not isinstance(producer, str) or storing in (None, "core"):
+            return None
+        assert storing is not None
+        return (
+            f"{producer.partition('~')[0]} made a {type_id} value that "
+            f"{storing.partition('~')[0]} cannot read"
+        )
+
     def storing_mismatch(self, type_id: TypeId, storing: str | None) -> str | None:
         """Explain why bytes written by ``storing``'s codec cannot be read here.
 
@@ -1109,7 +1120,7 @@ class TypeRegistry:
         except KeyError:
             raise KeyError(f"unregistered value type: {type_id}") from None
 
-    def input_object(self, type_id: TypeId, obj: object) -> object:
+    def input_object(self, type_id: TypeId, obj: object, *, producer: object = None) -> object:
         """Convert a resolved typed input, recursively through list storage.
 
         Asset references stay references until worker-side decoding supplies
@@ -1118,11 +1129,22 @@ class TypeRegistry:
         if isinstance(obj, Value):
             if obj.type_id != type_id:
                 raise TypeError(f"{type_id} rejects envelope of type {obj.type_id}")
+            producer = obj.meta.get("producer.pack", producer)
             children = value_children(obj)
             if children is not None:
-                converted = [self.input_object(child.type_id, child) for child in children]
+                converted = [
+                    self.input_object(child.type_id, child, producer=producer) for child in children
+                ]
                 return tuple(converted) if parse_tuple_type_id(type_id) is not None else converted
-            obj = obj.resolve()
+            try:
+                obj = obj.resolve()
+            except UnresolvablePayload:
+                raise
+            except Exception as exc:
+                message = self.unreadable_value_message(type_id, producer)
+                if message is None:
+                    raise
+                raise UnresolvablePayload(f"{message}: {exc}") from exc
         positions = parse_tuple_type_id(type_id)
         if positions is not None:
             return tuple(
@@ -1133,9 +1155,17 @@ class TypeRegistry:
         if element is not None:
             return [self.input_object(element, item) for item in cast(Sequence[object], obj)]
         spec = self._types.get(type_id)
-        return (
-            spec.input_convert(obj) if spec is not None and spec.input_convert is not None else obj
-        )
+        try:
+            return (
+                spec.input_convert(obj)
+                if spec is not None and spec.input_convert is not None
+                else obj
+            )
+        except Exception as exc:
+            message = self.unreadable_value_message(type_id, producer)
+            if message is None:
+                raise
+            raise UnresolvablePayload(f"{message}: {exc}") from exc
 
     def wrap(self, type_id: TypeId, obj: object) -> Value:
         """Build an envelope for a raw object. Worker shims call this; node
