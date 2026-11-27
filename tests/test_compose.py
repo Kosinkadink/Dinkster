@@ -28,7 +28,7 @@ from dinkster_assets import AssetError, AssetRef
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
 from dinkster_engine import EngineEvent, ExecutionError, GraphValidationError
-from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_to_wire
+from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_from_wire, graph_to_wire
 from dinkster_memory import (
     GovernorReservationService,
     MeasuredMemory,
@@ -759,7 +759,9 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
 
 
 def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> None:
-    def manifest(version: str, name: str, *, collision: bool = False) -> Path:
+    def manifest(
+        version: str, name: str, *, collision: bool = False, added_default: int | None = None
+    ) -> Path:
         root = tmp_path / version
         root.mkdir()
         module = f"record_maker_{version}"
@@ -770,7 +772,13 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             "INNER_FIELDS = ["
             f"RecordField('1-seed', '{name}', INT), "
             "RecordField('optional', 'guidance', INT, optional=True)]\n"
-            "INNER = TypeExpr.record_of('recordtest.inner', "
+            + (
+                f"INNER_FIELDS.append(RecordField('added', 'iterations', INT, "
+                f"default={added_default!r}))\n"
+                if version in ("defaults", "updated_defaults", "required")
+                else ""
+            )
+            + "INNER = TypeExpr.record_of('recordtest.inner', "
             + ("*reversed(INNER_FIELDS))\n" if version == "second" else "*INNER_FIELDS)\n")
             + "OUTER = TypeExpr.record_of('recordtest.outer', "
             "RecordField('settings', 'settings', INNER), RecordField('label', 'prompt', TEXT))\n"
@@ -811,6 +819,9 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
     first_manifest = manifest("first", "seed")
     second_manifest = manifest("second", "noise")
     collision_manifest = manifest("collision", "seed", collision=True)
+    defaults_manifest = manifest("defaults", "noise", added_default=0)
+    updated_defaults_manifest = manifest("updated_defaults", "noise", added_default=13)
+    required_manifest = manifest("required", "noise")
 
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
@@ -986,6 +997,41 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
                 "prompt": "seven",
             }
             assert {"nested_change", "text_change"}.issubset(renamed.cached)
+            saved_make = Graph(
+                nodes={key: graph.nodes[key] for key in ("inner", "outer", "whole", "consume")}
+            )
+            saved_make = graph_from_wire(json.loads(json.dumps(graph_to_wire(saved_make))))
+            await composer.reload_pack("record-test", PackSpec(defaults_manifest))
+            added = await engine.run(saved_make, ["inner", "consume"])
+            assert added.outputs["inner"]["record"].resolve() == {
+                "noise": 97,
+                "guidance": 11,
+                "iterations": 0,
+            }
+            assert added.outputs["consume"]["text"].resolve() == "194|seven"
+            await composer.reload_pack("record-test", PackSpec(updated_defaults_manifest))
+            updated_default = await engine.run(saved_make, ["inner", "consume"])
+            assert updated_default.outputs["inner"]["record"].resolve() == {
+                "noise": 97,
+                "guidance": 11,
+                "iterations": 13,
+            }
+            assert "inner" in updated_default.executed
+            explicit = Graph(
+                nodes={
+                    "inner": GraphNode(
+                        "recordtest.inner.make",
+                        {"field_312d73656564": 29, "field_6164646564": 7},
+                    )
+                }
+            )
+            supplied = await engine.run(explicit, ["inner"])
+            assert supplied.outputs["inner"]["record"].resolve() == {"noise": 29, "iterations": 7}
+            await composer.reload_pack("record-test", PackSpec(required_manifest))
+            with pytest.raises(GraphValidationError, match=r"Missing required input: iterations\."):
+                await engine.run(saved_make, ["inner"])
+            supplied = await engine.run(explicit, ["inner"])
+            assert supplied.outputs["inner"]["record"].resolve() == {"noise": 29, "iterations": 7}
             removed = await composer.remove_pack("record-test")
             assert "recordtest.inner.make" in removed.removed_types
             with pytest.raises(KeyError, match="recordtest.inner.make"):

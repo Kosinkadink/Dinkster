@@ -834,6 +834,7 @@ def type_expr_to_wire(expr: TypeExpr, wire_version: int = SCHEMA_WIRE_VERSION) -
                 "name": item.name,
                 "type": type_expr_to_wire(item.type, wire_version),
                 "optional": item.optional,
+                **({"default": item.default} if item.default is not None else {}),
             }
             for item in expr.fields
         ]
@@ -1205,6 +1206,8 @@ def schema_signature(schema: NodeSchema) -> str:
             fields.sort(key=lambda item: str(item["id"]))
             for item in fields:
                 item.pop("name", None)
+                # Only the generated Make input consumes this default.
+                item.pop("default", None)
                 strip_record_presentation(cast("dict[str, object]", item["type"]))
         element = type_wire.get("element")
         if isinstance(element, dict):
@@ -1500,7 +1503,9 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
     fields: list[RecordField] = []
     for raw in cast(list[object], fields_wire):
         entry = _expect_object(raw, "record field")
-        _reject_unknown_fields(entry, frozenset({"id", "name", "type", "optional"}), "record field")
+        _reject_unknown_fields(
+            entry, frozenset({"id", "name", "type", "optional", "default"}), "record field"
+        )
         fields.append(
             RecordField(
                 id=_expect_str(entry.get("id"), "record field.id"),
@@ -1509,6 +1514,7 @@ def type_expr_from_wire(wire: dict[str, Any], wire_version: int = SCHEMA_WIRE_VE
                     _expect_object(entry.get("type"), "record field.type"), wire_version
                 ),
                 optional=_expect_bool(entry.get("optional", False), "record field.optional"),
+                default=entry.get("default"),
             )
         )
     return TypeExpr(

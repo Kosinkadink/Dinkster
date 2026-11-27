@@ -143,12 +143,17 @@ def combo_choices_json_bytes(values: Sequence[object], *, subject: str) -> bytes
 
 @dataclass(frozen=True)
 class RecordField:
-    """A stable field identity, independent of its current name and position."""
+    """A stable field identity, independent of its current name and position.
+
+    ``default`` seeds Make inputs only; it never fills absent record fields
+    or changes connection compatibility. None means no declared default.
+    """
 
     id: str
     name: str
     type: TypeExpr
     optional: bool = False
+    default: object = field(default=None, hash=False)
 
     def __post_init__(self) -> None:
         _validate_structural_id(self.id, "record field id")

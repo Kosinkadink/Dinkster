@@ -197,9 +197,11 @@ def test_record_runtime_reads_cross_pack_fields_and_reuses_renamed_cache(
         def engine(field_name: str, destination_id: str) -> Engine:
             record = TypeExpr.record_of(
                 "source.settings",
-                RecordField("count", field_name, INTEGER),
+                RecordField(
+                    "count", field_name, INTEGER, default=5 if field_name == "seed" else 31
+                ),
                 RecordField("label", "prompt", TEXT),
-                RecordField("optional", "guidance", INTEGER, optional=True),
+                RecordField("optional", "guidance", INTEGER, optional=True, default=19),
             )
             if field_name != "seed":
                 record = replace(record, fields=tuple(reversed(record.fields)))

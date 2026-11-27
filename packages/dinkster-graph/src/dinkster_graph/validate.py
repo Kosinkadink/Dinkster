@@ -1434,12 +1434,15 @@ def _validate_graph_node(
         )
 
     for spec in schema.inputs:
+        label = spec.label if isinstance(spec.label, str) else ""
         if spec.required and spec.default is None and spec.id not in node.inputs:
             diags.append(
                 Diagnostic(
                     "error",
                     "missing-input",
-                    f"{node.node_type} requires input '{spec.id}'",
+                    f"Missing required input: {label}."
+                    if label
+                    else f"{node.node_type} requires input '{spec.id}'",
                     where,
                     spec.id,
                 )

@@ -28,7 +28,8 @@ def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
             known = {field.id: field for field in previous.fields}
             if any(
                 field.id in known
-                and (field.name, field.optional) != (known[field.id].name, known[field.id].optional)
+                and (field.name, field.optional, field.default)
+                != (known[field.id].name, known[field.id].optional, known[field.id].default)
                 for field in expression.fields
             ):
                 raise ValueError(f"Record {identity!r} has conflicting declarations")
@@ -72,6 +73,7 @@ def _maker(expression: TypeExpr) -> type[Node]:
                             inputs[field.id],
                             field.type,
                             required=not field.optional,
+                            default=field.default,
                             label=field.name,
                         )
                         for field in expression.fields
