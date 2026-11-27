@@ -607,6 +607,8 @@ class LocalAssetLibrary:
         """Publish valid writer-sidecar rows into the live catalog."""
         for relative, row in load_write_records(self._root).items():
             path = self._root / relative
+            if self._ignore.matches(relative, path.name):
+                continue
             try:
                 stat = path.stat()
             except OSError:
@@ -680,7 +682,11 @@ class LocalAssetLibrary:
             return {}
         if not isinstance(loaded, dict):
             return {}
-        return {str(key): val for key, val in cast("dict[object, object]", loaded).items()}
+        return {
+            str(key): val
+            for key, val in cast("dict[object, object]", loaded).items()
+            if not self._ignore.matches(str(key), Path(str(key)).name)
+        }
 
     def _save_index(
         self, index: dict[str, dict[str, object]], *, only_if_missing: bool = False

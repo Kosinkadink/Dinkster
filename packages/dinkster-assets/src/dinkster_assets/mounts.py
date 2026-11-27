@@ -1175,6 +1175,8 @@ class MountTable:
         return None
 
     def _bind_file(self, row: _MountRow, path: Path, name: str) -> AssetRef | LocalAssetRef | None:
+        if path.name.endswith(":Zone.Identifier"):
+            return None
         try:
             root = row.mount.path.resolve()
             if not path.is_file() or not path.resolve(strict=True).is_relative_to(root):

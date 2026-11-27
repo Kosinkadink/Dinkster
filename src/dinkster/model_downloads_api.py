@@ -18,6 +18,7 @@ from dinkster_assets import AssetError, AssetRef, MountDef, open_verified
 from dinkster_assets.civitai import CivitaiFile, select_civitai_file
 from dinkster_assets.fetch import FetchAborted, ModelAccessDenied, open_model_response
 from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.kind import is_asset_kind
 from dinkster_assets.model import hidden_model_identities, hidden_model_ref_identities
 from dinkster_assets.mounts import MountsError
 from dinkster_server.auth import principal_for, resolve_scope
@@ -25,7 +26,7 @@ from dinkster_server.lookups import announce_asset_kinds
 from dinkster_values.asset_folders import use_asset_folders
 
 from .model_downloads import ModelDownloads
-from .model_settings import MODEL_FOLDERS, filesystem_space
+from .model_settings import filesystem_space
 from .project_folders import ProjectFolders
 from .provider_credentials import ProviderCredentialsError, ProviderCredentialsExpired
 from .provider_sign_in import add_provider_sign_in_routes
@@ -385,7 +386,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                     or not name
                     or len(name) > 4096
                     or not isinstance(kind, str)
-                    or kind not in MODEL_FOLDERS
+                    or not kind.startswith("model/")
+                    or not is_asset_kind(kind)
                 ):
                     raise ValueError("expected a model name and supported kind")
                 wanted.append((name, kind))
@@ -442,7 +444,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 not isinstance(name, str)
                 or not plannable(name)
                 or not isinstance(kind, str)
-                or kind not in MODEL_FOLDERS
+                or not kind.startswith("model/")
+                or not is_asset_kind(kind)
                 or not isinstance(project, str)
             ):
                 raise ValueError("expected a bare model name, supported kind and project")
