@@ -5076,6 +5076,54 @@ def create_app(
                 execution,
                 publish_preview_artifacts=publish_previews if publisher is not None else None,
             )
+        if library is not None:
+            assert job.execution is not None
+            execution = job.execution
+            validate_saved = execution.validate_saved_artifacts
+            publish_saved_previews = execution.publish_saved_file_previews
+
+            async def grant_saved(
+                artifacts: tuple[SavedArtifact, ...],
+            ) -> tuple[SavedArtifact, ...]:
+                assert library is not None
+
+                def persist() -> None:
+                    assert library is not None
+                    for artifact in artifacts:
+                        for ref in (artifact, artifact.preview):
+                            if ref is None:
+                                continue
+                            path = library.locate(ref.digest)
+                            if path is None:
+                                raise AssetError("published saved artifact bytes are unavailable")
+                            library.store.grant_asset(job.scope, ref.digest, path)
+
+                await run_media_publication(library, persist)
+                return artifacts
+
+            async def validate_saved_artifacts(
+                node_id: str, claims: Sequence[Mapping[str, object]], started_at_ns: int
+            ) -> tuple[SavedArtifact, ...]:
+                assert validate_saved is not None
+                return await grant_saved(await validate_saved(node_id, claims, started_at_ns))
+
+            async def publish_saved_file_previews(
+                artifacts: Sequence[SavedArtifact], claims: Sequence[Mapping[str, object]]
+            ) -> tuple[SavedArtifact, ...]:
+                assert publish_saved_previews is not None
+                return await grant_saved(await publish_saved_previews(artifacts, claims))
+
+            # Only fresh, host-validated publications reach these callbacks. Grant
+            # them before inflight/cache reuse, not after the whole job completes.
+            job.execution = replace(
+                execution,
+                validate_saved_artifacts=(
+                    validate_saved_artifacts if validate_saved is not None else None
+                ),
+                publish_saved_file_previews=(
+                    publish_saved_file_previews if publish_saved_previews is not None else None
+                ),
+            )
         project = await project_for_run(app, job.project)
         if prepare_project_run is not None:
             await prepare_project_run(job.project)

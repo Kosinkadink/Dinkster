@@ -497,6 +497,140 @@ def test_composed_hosts_publish_encoded_preview_to_result_and_asset_route(
     run_scenario(scenario())
 
 
+def test_saved_files_and_previews_are_granted_before_job_completion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mp4: bytes
+) -> None:
+    import json
+
+    manifest = _write_preview_pack(tmp_path, mp4)
+    output = tmp_path / "output"
+    output.mkdir()
+    snapshot = tmp_path / "mounts.json"
+    snapshot.write_text(
+        json.dumps({"mounts": [{"id": "renders", "root": str(output), "mode": "readwrite"}]}),
+        "ascii",
+    )
+    mounts = MountTable()
+    mounts.add(MountDef("renders", output, "readwrite"))
+    mounts.scan("renders")
+    vault = AssetVault(tmp_path / "vault")
+    scratch = tmp_path / "scratch" / "packs" / "preview-fixture"
+    scratch.mkdir(parents=True)
+    monkeypatch.setenv("DINKSTER_ASSET_VAULT", str(vault.root))
+    monkeypatch.setenv("DINKSTER_MOUNTS_SNAPSHOT", str(snapshot))
+    monkeypatch.setenv("DINKSTER_PACK_SCRATCH", str(scratch))
+    monkeypatch.syspath_prepend(str(tmp_path))
+    release = threading.Event()
+
+    async def scenario() -> None:
+        completing = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        library = ServerLibrary(
+            vault,
+            LibraryStore(tmp_path / "library.sqlite"),
+            resolver=mounts,
+            local_resolver=mounts,
+            upload_writer=AssetWriter(mounts),
+            preview_vaults=(AssetVault(tmp_path / "saved-previews"),),
+            project_folders_for=lambda _project: AssetFolderContext(("renders",)),
+        )
+        record = ServerLibrary.record_saved_outputs
+
+        def complete(self: ServerLibrary, job: Job, result: RunResult) -> RunResult:
+            loop.call_soon_threadsafe(completing.set)
+            assert release.wait(10), "test did not release job completion"
+            return record(self, job, result)
+
+        monkeypatch.setattr(ServerLibrary, "record_saved_outputs", complete)
+        auth = StaticBearerAuthenticator(
+            {
+                scope: Principal(
+                    scope, {scope: frozenset({"jobs:submit", "jobs:read", "assets:read"})}
+                )
+                for scope in ("a", "b")
+            }
+        )
+        composer = ServingComposer(
+            saved_file_previews_enabled=True,
+            saved_preview_vault=library.preview_vaults[0],
+            pack_scratch_root=scratch.parent.parent,
+        )
+        await composer.add_pack(PackSpec(manifest, in_process=True))
+        client = TestClient(
+            TestServer(
+                create_app(
+                    composer.composition.make_engine,
+                    composer.composition.schemas,
+                    library=library,
+                    authenticator=auth,
+                    max_running_jobs=2,
+                )
+            )
+        )
+        await client.start_server()
+
+        async def submit(job_id: str) -> None:
+            response = await client.post(
+                "/api/jobs",
+                headers={"Authorization": "Bearer a"},
+                json={
+                    "clientId": "saved",
+                    "jobId": job_id,
+                    "graph": {
+                        "nodes": {
+                            "save": {
+                                "nodeType": "preview-fixture.emit",
+                                "inputs": {"mode": "mounted"},
+                            }
+                        }
+                    },
+                    "targets": ["save"],
+                },
+            )
+            assert response.status == 202, await response.text()
+
+        try:
+            await submit("first")
+            await asyncio.wait_for(completing.wait(), 10)
+            for data in (b"duplicate saved bytes", mp4):
+                digest = digest_bytes(data)
+                for scope in ("a", "b"):
+                    response = await client.get(
+                        f"/api/assets/{digest}", headers={"Authorization": f"Bearer {scope}"}
+                    )
+                    assert response.status == (200 if scope == "a" else 404)
+                    if scope == "a":
+                        assert await response.read() == data
+            await submit("second")
+            release.set()
+            async with asyncio.timeout(10):
+                while True:
+                    response = await client.get(
+                        "/api/jobs/saved/second", headers={"Authorization": "Bearer a"}
+                    )
+                    result = await response.json()
+                    if result["state"] in {"completed", "failed", "cancelled"}:
+                        assert result["state"] == "completed", result
+                        assert result["cached"] == ["save"]
+                        assert len(list(output.glob("*.exr"))) == 2
+                        break
+                    await asyncio.sleep(0)
+        finally:
+            release.set()
+            async with asyncio.timeout(10):
+                while True:
+                    response = await client.get(
+                        "/api/jobs/saved/first", headers={"Authorization": "Bearer a"}
+                    )
+                    if (await response.json())["state"] in {"completed", "failed", "cancelled"}:
+                        break
+                    await asyncio.sleep(0)
+            await client.close()
+            await composer.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("in_process", [True, False])
 @pytest.mark.parametrize("enabled", [True, False])
 def test_optional_previews_associate_only_with_authorized_files_and_survive_cache(
