@@ -4255,7 +4255,7 @@ def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
         "            validate=(\n"
         "                Rule(Formula('steps <= 50'), 'steps must be 50 or fewer'),\n"
         "                Rule(Formula('frames <= 32'), 'frames above 32 run slowly',\n"
-        "                     fix=(Set('frames', 32),)),\n"
+        "                     fix=(Set('frames', 32),), fix_label='Use 32 frames'),\n"
         "            ))\n"
         "    @classmethod\n"
         "    def execute(cls, *, steps, frames):\n"

@@ -701,6 +701,44 @@ def looks_with_context(context: CallContext, folder: str) -> list[str]:
     return [folder]
 
 
+def test_rule_fixes_keep_their_declared_button_label_and_refuse_unlabeled_fixes() -> None:
+    from dinkster_schema.body import Formula, Rule, Set
+    from dinkster_schema.model import Input, NodeSchema, TypeExpr
+    from dinkster_schema.wire import schema_from_wire, schema_to_wire
+
+    def schema(rule: Rule) -> NodeSchema:
+        return NodeSchema(
+            "test.count",
+            body=(Input("count", TypeExpr.concrete("INT"), default=0),),
+            validate=(rule,),
+        )
+
+    fix = (Set("count", 3),)
+    rule = Rule(Formula("count > 0"), "Needs a count", fix=fix, fix_label="Use three")
+    labeled = schema(rule)
+    wire = schema_to_wire(labeled)
+    wire_rule = cast("list[dict[str, Any]]", wire["validate"])[0]
+    assert wire_rule["fixLabel"] == "Use three"
+    assert schema_from_wire(wire) == labeled
+
+    with pytest.raises(ValueError, match="label"):
+        Rule(Formula("count > 0"), "Needs a count", fix=fix)
+    for label in ("", " ", None, 7):
+        with pytest.raises(ValueError, match="label"):
+            Rule(Formula("count > 0"), "Needs a count", fix=fix, fix_label=cast("Any", label))
+        wire_rule["fixLabel"] = label
+        with pytest.raises(ValueError, match="label|fixLabel"):
+            schema_from_wire(wire)
+    del wire_rule["fixLabel"]
+    with pytest.raises(ValueError, match="label|fixLabel"):
+        schema_from_wire(wire)
+
+    no_fix = schema(Rule(Formula("count > 0"), "Needs a count"))
+    no_fix_wire = schema_to_wire(no_fix)
+    assert "fixLabel" not in cast("list[dict[str, Any]]", no_fix_wire["validate"])[0]
+    assert schema_from_wire(no_fix_wire) == no_fix
+
+
 def test_button_steps_are_checked_where_they_run() -> None:
     from dinkster_schema.body import (
         AddNode,
@@ -768,7 +806,12 @@ def test_button_steps_are_checked_where_they_run() -> None:
     with pytest.raises(ValueError, match="field 'image' does not fit parameter image"):
         node(Call(takes_asset, args=("image",), writes=("note",)))
     with pytest.raises(ValueError, match="a Rule's fix cannot Call"):
-        Rule(Formula("count > 0"), "Needs a count", fix=(Call(bake_note, ("count",), ("note",)),))
+        Rule(
+            Formula("count > 0"),
+            "Needs a count",
+            fix=(Call(bake_note, ("count",), ("note",)),),
+            fix_label="Bake note",
+        )
     with pytest.raises(ValueError, match="input 'seen' has no pin"):
         NodeSchema(
             "test.hidden",
