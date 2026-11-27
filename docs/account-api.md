@@ -1,6 +1,6 @@
 # Native account API
 
-These routes control the native install's `AccountSession`, not collaboration sessions or engine access credentials. They require the engine's normal API authentication and a nondelegated human operator with settings authority. Host/origin checks still apply. All responses use `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
+These routes control the native install's `AccountSession` and bind its verified account identity to the browser that starts sign-in, as described in [inbound authentication](auth.md#native-browser-accounts). They do not control collaboration sessions. They require the engine's normal API authentication and a nondelegated human operator with settings authority. Host/origin checks still apply. All responses use `Cache-Control: no-store` and `Referrer-Policy: no-referrer`.
 
 ## Status
 
@@ -12,6 +12,7 @@ These routes control the native install's `AccountSession`, not collaboration se
   "canStartSignIn": true,
   "signInUnavailableReason": null,
   "signedIn": true,
+  "principalRevision": "non-secret-browser-binding-revision",
   "profile": {
     "displayName": "Example Person",
     "email": "person@example.test"
@@ -20,7 +21,9 @@ These routes control the native install's `AccountSession`, not collaboration se
 }
 ```
 
-`available` is false when hosted account services are not configured. `canStartSignIn` describes this request's ability to start local sign-in; the app must not infer it from its own URL. When false, `signInUnavailableReason` is `account-unavailable` or `account-sign-in-requires-engine-machine`; otherwise the reason is null. `signedIn` describes the native account session, not whether a remote-node project is selected or usable. `profile` is null when signed out or when an existing session predates profile consent. The only profile fields are `displayName` and `email`: trimmed text or null, with blank/nontext values becoming null. Neither field is synthesized from the other. No picture URL is returned and no third-party avatar request is needed. No identity response is passed through: tokens, refresh tokens, ID tokens, secret state, PKCE verifiers, session paths and session file contents are never returned.
+`available` is false when hosted account services are not configured. `canStartSignIn` describes this request's ability to start local sign-in; the app must not infer it from its own URL. When false, `signInUnavailableReason` is `account-unavailable` or `account-sign-in-requires-engine-machine`; otherwise the reason is null. `signedIn` describes the requesting browser's verified account binding, not a native session left on disk or whether a remote-node project is usable. An unbound browser reports false and a null `profile`, including after restart or an unsuccessful replacement attempt. `profile` is also null when the bound session lacks profile consent. The only profile fields are `displayName` and `email`: trimmed text or null, with blank/nontext values becoming null. Neither field is synthesized from the other. No picture URL is returned and no third-party avatar request is needed. No identity response is passed through: tokens, refresh tokens, ID tokens, secret state, PKCE verifiers, session paths and session file contents are never returned.
+
+`principalRevision` identifies this request's browser-bound identity without conferring authority; it is `local` when unbound. Account-bound caches and pending operations must be invalidated when it changes. A different browser polling status does not acquire the install's account principal.
 
 `signIn.state` is `idle`, `pending` or `failed`. A failed attempt includes the stable `error` code `account-sign-in-failed`, without provider errors or callback contents. Pending status does not block behind the native callback listener. A status refresh failure returns503 `{"error":"account-status-unavailable"}` rather than claiming the user is signed out.
 
@@ -76,7 +79,7 @@ selection validation.
 
 Only same-machine loopback requests may start this flow. Other hosts/peers return409 `{"error":"account-sign-in-requires-engine-machine"}`. A browser running on a different machine must start sign-in on the engine machine until the paired browser authentication bridge is available. Proxy headers do not grant loopback status.
 
-There is one active attempt per install API. Repeating start as the same engine principal returns the same pending authorization URL. Another principal cannot replace or cancel that attempt and receives403 `account-sign-in-owner-required`. The attempt expires after180 seconds; no automatic token-exchange retry occurs. Missing service configuration returns409 `account-unavailable`.
+There is one active attempt per install API. Repeating start with the initiating browser cookie and operator authority returns the same pending authorization URL. An explicitly authenticated non-local initiator can also control its attempt with the same credentials. An unbound browser sharing the implicit local principal cannot retrieve or cancel another browser's attempt. Another principal cannot replace or cancel that attempt and receives403 `account-sign-in-owner-required`. The attempt expires after180 seconds; no automatic token-exchange retry occurs. Missing service configuration returns409 `account-unavailable`.
 
 `DELETE /api/account/sign-in` cancels the caller's pending attempt and returns status. It closes the native listener and fences a late exchange from writing a session. Cancellation does not remove an older signed-in session. If completion won the race, status reports the completed session; use sign-out to clear it. An authenticated remote browser sees the same pending state and can cancel as the same principal; another principal cannot cancel it. The account belongs to the engine serving these routes, not a tab's selected execution backend.
 
