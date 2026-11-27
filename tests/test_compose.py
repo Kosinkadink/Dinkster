@@ -27,7 +27,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
-from dinkster_engine import EngineEvent
+from dinkster_engine import EngineEvent, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_to_wire
 from dinkster_memory import (
     GovernorReservationService,
@@ -39,7 +39,14 @@ from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
 from dinkster_schema import build_schemas
 from dinkster_server import PackInfo, create_app
-from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
+from dinkster_values import (
+    EncodedPayload,
+    TypeRegistry,
+    Value,
+    ValueMeta,
+    default_encode,
+    is_absent,
+)
 from dinkster_workers import ManifestError
 from dinkster_workers.doctor import prepare_catalog
 
@@ -751,7 +758,7 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
     run_scenario(scenario())
 
 
-def test_host_record_make_executes_and_survives_pack_reload(tmp_path: Path) -> None:
+def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> None:
     def manifest(version: str, name: str, *, collision: bool = False) -> Path:
         root = tmp_path / version
         root.mkdir()
@@ -772,6 +779,9 @@ def test_host_record_make_executes_and_survives_pack_reload(tmp_path: Path) -> N
             "    def define_schema(cls):\n"
             "        return NodeSchema('recordtest.consume', body=(Input('value', OUTER), "
             "Input('seed_only', TypeExpr.record_of('recordtest.inner', INNER_FIELDS[0])), "
+            "Input('foreign', TypeExpr.record_of('recordtest.foreign', "
+            f"RecordField('other-seed', '{name}', INT), "
+            "RecordField('other-guidance', 'guidance', INT, optional=True)), required=False), "
             "Output('text', TEXT)))\n"
             "    @classmethod\n"
             "    def execute(cls, value, seed_only):\n"
@@ -819,15 +829,65 @@ def test_host_record_make_executes_and_survives_pack_reload(tmp_path: Path) -> N
                     ),
                     "consume": GraphNode(
                         "recordtest.consume",
-                        {"value": Link("outer", "record"), "seed_only": Link("inner", "record")},
+                        {"value": Link("outer", "record"), "seed_only": Link("whole", "value")},
+                    ),
+                    "whole": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings"]'},
+                    ),
+                    "nested": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings", "1-seed"]'},
+                    ),
+                    "chained": GraphNode(
+                        "recordtest.inner.read",
+                        {"record": Link("whole", "value"), "field": '["1-seed"]'},
+                    ),
+                    "foreign": GraphNode(
+                        "recordtest.foreign.make", {"field_6f746865722d73656564": 53}
+                    ),
+                    "foreign_read": GraphNode(
+                        "recordtest.inner.read",
+                        {"record": Link("foreign", "record"), "field": '["1-seed"]'},
+                    ),
+                    "optional": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings", "optional"]'},
                     ),
                 }
             )
             assert delta.schema_owners["recordtest.inner.make"] == "record-test"
             engine = composer.composition.make_engine(lambda _event: None)
-            result = await engine.run(graph, ["inner", "outer", "consume"])
+            result = await engine.run(graph, list(graph.nodes))
             assert result.outputs["consume"]["text"].resolve() == "58|seven"
             assert result.outputs["inner"]["record"].resolve() == {"seed": 29}
+            assert result.outputs["whole"]["value"].resolve() == {"seed": 29}
+            assert result.outputs["nested"]["value"].resolve() == 29
+            assert result.outputs["chained"]["value"].resolve() == 29
+            assert result.outputs["foreign_read"]["value"].resolve() == 53
+            assert is_absent(result.outputs["optional"]["value"])
+            text_selection = Graph(
+                nodes={
+                    **graph.nodes,
+                    "nested": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["label"]'},
+                    ),
+                }
+            )
+            selected = await engine.run(text_selection, ["nested"])
+            assert selected.outputs["nested"]["value"].resolve() == "seven"
+            unknown_identity = Graph(
+                nodes={
+                    **graph.nodes,
+                    "nested": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings", "seed"]'},
+                    ),
+                }
+            )
+            with pytest.raises(GraphValidationError, match="record field 'seed' is not declared"):
+                await engine.run(unknown_identity, ["nested"])
             graph = Graph(
                 nodes={
                     **graph.nodes,
@@ -837,16 +897,24 @@ def test_host_record_make_executes_and_survives_pack_reload(tmp_path: Path) -> N
                     ),
                 }
             )
-            changed = await engine.run(graph, ["inner", "outer", "consume"])
+            changed = await engine.run(graph, list(graph.nodes))
             assert changed.outputs["consume"]["text"].resolve() == "194|seven"
             assert changed.outputs["inner"]["record"].resolve() == {"seed": 97, "guidance": 11}
+            assert changed.outputs["nested"]["value"].resolve() == 97
+            assert changed.outputs["chained"]["value"].resolve() == 97
+            assert changed.outputs["optional"]["value"].resolve() == 11
             reload = await composer.reload_pack("record-test", PackSpec(second_manifest))
             assert "recordtest.inner.make" in reload.delta.schemas
-            renamed = await engine.run(graph, ["inner", "outer", "consume"])
+            renamed = await engine.run(graph, list(graph.nodes))
             assert renamed.outputs["consume"]["text"].resolve() == "194|seven"
             assert renamed.outputs["inner"]["record"].resolve() == {"noise": 97, "guidance": 11}
             assert "inner" in renamed.cached
             assert "outer" in renamed.cached
+            assert renamed.outputs["nested"]["value"].resolve() == 97
+            assert renamed.outputs["chained"]["value"].resolve() == 97
+            assert renamed.outputs["foreign_read"]["value"].resolve() == 53
+            assert renamed.outputs["whole"]["value"].resolve() == {"noise": 97, "guidance": 11}
+            assert {"whole", "nested", "chained", "optional"}.issubset(renamed.cached)
             removed = await composer.remove_pack("record-test")
             assert "recordtest.inner.make" in removed.removed_types
             with pytest.raises(KeyError, match="recordtest.inner.make"):

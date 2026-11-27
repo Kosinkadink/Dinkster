@@ -81,6 +81,7 @@ TypeExprKind = Literal[
     "tuple",
     "tuple_element",
     "record",
+    "record_field",
 ]
 
 Cardinality = Literal["scalar", "list", "unknown"]
@@ -181,6 +182,7 @@ class TypeExpr:
             "tuple",
             "tuple_element",
             "record",
+            "record_field",
         ):
             raise ValueError(f"unknown TypeExpr kind: {self.kind!r}")
         if self.kind == "record":
@@ -263,6 +265,11 @@ class TypeExpr:
                 raise ValueError("tuple element requires an integer index or named literal input")
             if self.index == "":
                 raise ValueError("tuple element index input must be nonempty")
+        elif self.kind == "record_field":
+            if not self.input_id or not isinstance(self.index, str) or not self.index:
+                raise ValueError("record field requires record and selector input references")
+            if self.types or self.template_id:
+                raise ValueError("record field carries only input references")
         elif self.input_id or self.index is not None:
             raise ValueError(f"{self.kind} TypeExpr carries no input or index reference")
 
@@ -345,6 +352,11 @@ class TypeExpr:
     def tuple_element(tuple_input: str, index_input: str) -> TypeExpr:
         """An output position selected by a document-stored integer input."""
         return TypeExpr(kind="tuple_element", input_id=tuple_input, index=index_input)
+
+    @staticmethod
+    def record_field(record_input: str, field_input: str) -> TypeExpr:
+        """An output field selected by a stored JSON array of stable field IDs."""
+        return TypeExpr(kind="record_field", input_id=record_input, index=field_input)
 
     @property
     def requires_elaboration(self) -> bool:
@@ -2564,6 +2576,16 @@ class NodeSchema:
         inputs_by_id = {spec.id: spec for spec in self.inputs}
 
         def validate_output_type(expr: TypeExpr) -> None:
+            if expr.kind == "record_field":
+                source = inputs_by_id.get(expr.input_id)
+                selector = inputs_by_id.get(str(expr.index))
+                if source is None or source.type.kind != "record":
+                    raise ValueError("record field references an unknown record input")
+                if selector is None or selector.type not in (
+                    TypeExpr.concrete(CORE_STRING),
+                    TypeExpr.concrete(CORE_COMBO),
+                ):
+                    raise ValueError("record field selector must reference a STRING or COMBO input")
             if expr.kind == "tuple_element":
                 if expr.input_id and expr.input_id not in inputs_by_id:
                     raise ValueError("tuple element references an unknown tuple input")

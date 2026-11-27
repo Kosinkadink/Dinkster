@@ -278,7 +278,7 @@ from dinkster_workers.session import WorkerDied
 from dinkster_workers.windows_sandbox import WindowsProcessLauncher
 from packaging.requirements import Requirement
 
-from dinkster.record_nodes import record_makers
+from dinkster.record_nodes import record_helpers
 
 from .composition_error import CompositionError
 from .extension_assets import read_module, resolve_frontend_modules
@@ -4860,14 +4860,14 @@ class ServingComposer:
         replacing: Collection[str] = (),
     ) -> dict[str, type[Node]]:
         try:
-            makers = record_makers(schemas.values())
+            makers = record_helpers(schemas.values())
         except ValueError as exc:
             raise CompositionError(f"{manifest.name}: {exc}") from exc
         makers = {
             node_type: node
             for node_type, node in makers.items()
             if any(
-                claim_covers(claim, node_type.removesuffix(".make"))
+                claim_covers(claim, node_type.rsplit(".", 1)[0])
                 for claim in (*manifest.namespaces, *manifest.type_namespaces)
             )
         }

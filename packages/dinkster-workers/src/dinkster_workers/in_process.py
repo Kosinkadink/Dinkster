@@ -864,12 +864,12 @@ class InProcessWorker:
             spec.id: None for spec in invocation.effective_schema.inputs if spec.id in supplied
         }
         stored.update((name, None) for name in supplied if name not in stored)
-        # A tuple selector's stored index decides its output's type.
+        # Stored tuple and record selectors decide their output types.
         selectors: set[str] = set()
         types = [row.type for row in all_rows(base_schema.body) if isinstance(row, Output)]
         while types:
             expr = types.pop()
-            if expr.kind == "tuple_element" and isinstance(expr.index, str):
+            if expr.kind in ("tuple_element", "record_field") and isinstance(expr.index, str):
                 selectors.add(expr.index)
             if expr.element is not None:
                 types.append(expr.element)

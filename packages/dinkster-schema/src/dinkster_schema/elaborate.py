@@ -12,6 +12,7 @@ state raises ElaborationError; elaboration never repairs it.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import cast
@@ -235,7 +236,7 @@ def _elaborate_body(
     _validate_projected_namespace(schema, flat.inputs)
     values = stored if isinstance(stored, Mapping) else None
     outputs = [
-        replace(output, type=_project_tuple_output(output.type, flat.inputs, values))
+        replace(output, type=_project_output_type(output.type, flat.inputs, values))
         if output.type.requires_elaboration
         else output
         for output in flat.outputs
@@ -265,11 +266,33 @@ def _elaborate_body(
     )
 
 
-def _project_tuple_output(
+def _project_output_type(
     expr: TypeExpr,
     inputs: Sequence[Input],
     stored: Mapping[str, object] | None,
 ) -> TypeExpr:
+    if expr.kind == "record_field":
+        source = next(spec.type for spec in inputs if spec.id == expr.input_id)
+        selector = next(spec for spec in inputs if spec.id == expr.index)
+        value = selector.default if stored is None else stored.get(selector.id, selector.default)
+        if not isinstance(value, str):
+            raise ElaborationError("record field selector must be a stored literal field path")
+        try:
+            path = json.loads(value)
+        except ValueError as exc:
+            raise ElaborationError("record field selector must be a JSON field path") from exc
+        if (
+            not isinstance(path, list)
+            or not path
+            or any(not isinstance(key, str) for key in cast("list[object]", path))
+        ):
+            raise ElaborationError("record field selector requires a nonempty array of field IDs")
+        for key in cast("list[str]", path):
+            field = next((field for field in source.fields if field.id == key), None)
+            if source.kind != "record" or field is None:
+                raise ElaborationError(f"record field {key!r} is not declared")
+            source = field.type
+        return source
     if expr.kind == "tuple_element":
         element = (
             next(spec.type for spec in inputs if spec.id == expr.input_id)
@@ -293,8 +316,8 @@ def _project_tuple_output(
         expr,
         element=None
         if expr.element is None
-        else _project_tuple_output(expr.element, inputs, stored),
-        elements=tuple(_project_tuple_output(item, inputs, stored) for item in expr.elements),
+        else _project_output_type(expr.element, inputs, stored),
+        elements=tuple(_project_output_type(item, inputs, stored) for item in expr.elements),
     )
 
 

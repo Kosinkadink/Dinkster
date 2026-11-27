@@ -1,13 +1,23 @@
 """Host-owned implementations of helpers for declared record types."""
 
+import json
 from collections.abc import Iterable, Mapping
 
-from dinkster_schema import Input, Node, NodeSchema, Output, TypeExpr
+from dinkster_schema import (
+    ABSENT,
+    ComboOption,
+    ComboWidget,
+    Input,
+    Node,
+    NodeSchema,
+    Output,
+    TypeExpr,
+)
 from dinkster_schema.body import all_rows
-from dinkster_values import Value, is_absent, make_record_value
+from dinkster_values import RecordPayload, Value, is_absent, make_record_value
 
 
-def record_makers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
+def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
     records: dict[str, TypeExpr] = {}
 
     def visit(expression: TypeExpr) -> None:
@@ -36,7 +46,10 @@ def record_makers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
         for row in (*schema.inputs, *schema.outputs, *all_rows(schema.body)):
             if isinstance(row, (Input, Output)):
                 visit(row.type)
-    return {f"{identity}.make": _maker(expression) for identity, expression in records.items()}
+    return {
+        **{f"{identity}.make": _maker(expression) for identity, expression in records.items()},
+        **{f"{identity}.read": _reader(expression) for identity, expression in records.items()},
+    }
 
 
 def _maker(expression: TypeExpr) -> type[Node]:
@@ -81,3 +94,73 @@ def _maker(expression: TypeExpr) -> type[Node]:
             )
 
     return MakeRecord
+
+
+def _reader(expression: TypeExpr) -> type[Node]:
+    options: list[ComboOption] = []
+
+    def visit(record: TypeExpr, path: tuple[str, ...], names: tuple[str, ...]) -> None:
+        for field in record.fields:
+            field_path = (*path, field.id)
+            field_names = (*names, field.name)
+            options.append(ComboOption(json.dumps(field_path), label=" / ".join(field_names)))
+            if field.type.kind == "record":
+                visit(field.type, field_path, field_names)
+
+    visit(expression, (), ())
+    default = (
+        json.dumps([min(expression.fields, key=lambda field: field.id).id])
+        if expression.fields
+        else "[]"
+    )
+
+    class ReadRecord(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type=f"{expression.types[0]}.read",
+                display_name=f"Read {expression.types[0]}",
+                category="Records",
+                editor_role="record-read",
+                body=(
+                    Input("record", expression),
+                    Input(
+                        "field",
+                        TypeExpr.concrete("COMBO"),
+                        default=default,
+                        widget=ComboWidget(options=tuple(options)),
+                        pin=False,
+                    ),
+                    Output("value", TypeExpr.record_field("record", "field"), optional=True),
+                ),
+                input_values=True,
+            )
+
+        @classmethod
+        def execute(cls, *, field: str, input_values: Mapping[str, Value]) -> Mapping[str, object]:
+            current = input_values["record"]
+            declaration = expression
+            for identity in json.loads(field):
+                selected = next(item for item in declaration.fields if item.id == identity)
+                payload = current.payload
+                if not isinstance(payload, RecordPayload):
+                    raise ValueError("record input does not contain field envelopes")
+                child = next(
+                    (
+                        child
+                        for (key, name), child in zip(payload.fields, payload.children, strict=True)
+                        if (
+                            key == identity
+                            if current.type_id == declaration.types[0]
+                            else name == selected.name
+                        )
+                    ),
+                    None,
+                )
+                if child is None or is_absent(child):
+                    return cls.outputs(value=ABSENT)
+                current = child
+                declaration = selected.type
+            return cls.outputs(value=current)
+
+    return ReadRecord
