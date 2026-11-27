@@ -2297,6 +2297,10 @@ def test_project_input_choices_route_uploads_and_survive_restart(tmp_path: Path)
                                 )
                             ).json()
                             assert locations["importMount"] == f"{project}-input"
+                            settings = await (
+                                await client.get("/api/mounts", params={"project": project})
+                            ).json()
+                            assert settings["importMount"] == f"{project}-input"
                         response = await client.put(
                             "/api/mounts/projects/portrait",
                             json={

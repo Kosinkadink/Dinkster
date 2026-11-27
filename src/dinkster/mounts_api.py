@@ -616,6 +616,9 @@ async def handle_mounts_list(request: web.Request) -> web.Response:
     await validate_project(request, project)
     try:
         body = service.project_response(project)
+        library = request.app.get(LIBRARY_KEY)
+        if library is not None and library.upload_writer is not None:
+            body["importMount"] = library.import_mount_for(project)
         for mount_id in service.table.pending():
             source = service.table.source(mount_id)
             if source == "shared-models" or (service.library is not None and source == "config"):
