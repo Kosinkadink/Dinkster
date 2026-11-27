@@ -1482,7 +1482,9 @@ def _merge_pack_entry(
     existing = packs.get(pack_id)
     if existing is not None:
         storage = dict(existing.type_storage)
-        if replace(existing, type_storage=()) != replace(info, type_storage=()) or any(
+        if replace(existing, type_storage=(), type_storage_choices=()) != replace(
+            info, type_storage=(), type_storage_choices=()
+        ) or any(
             type_id in storage and storage[type_id] != provider
             for type_id, provider in info.type_storage
         ):
@@ -1490,7 +1492,13 @@ def _merge_pack_entry(
                 f"{source}: pack id {pack_id!r} already declared with different info"
             )
         storage.update(info.type_storage)
-        info = replace(info, type_storage=tuple(sorted(storage.items())))
+        info = replace(
+            info,
+            type_storage=tuple(sorted(storage.items())),
+            type_storage_choices=tuple(
+                sorted(set(existing.type_storage_choices) | set(info.type_storage_choices))
+            ),
+        )
     packs[pack_id] = info
 
 
@@ -2640,7 +2648,28 @@ class ServingComposer:
                     else info,
                     record.manifest.execution_id,
                 )
-        return infos
+        borrowers: dict[str, set[str]] = {}
+        claims = tuple(
+            claim for record in records.values() for claim in record.manifest.type_namespaces
+        )
+        for record in records.values():
+            for type_id in record.manifest.uses_types:
+                borrowers.setdefault(type_id, set()).add(record.manifest.name)
+        contested = {
+            type_id
+            for type_id, names in borrowers.items()
+            if len(names) > 1
+            and not any(type_id == claim or claim_covers(claim, type_id) for claim in claims)
+        }
+        return {
+            pack_id: replace(
+                info,
+                type_storage_choices=tuple(
+                    type_id for type_id, _ in info.type_storage if type_id in contested
+                ),
+            )
+            for pack_id, info in infos.items()
+        }
 
     def _type_providers(self, manifests: Sequence[PackManifest]) -> dict[str, PackManifest]:
         """Choose the pack that stores each type these packs use.
@@ -7928,11 +7957,10 @@ class ServingComposer:
         host_packs = self._pack_storage_infos(self._records, composition._registry)
         for name, record in self._records.items():
             delta = record.delta
-            if record.spec.in_process:
-                delta = replace(
-                    delta,
-                    packs={pack_id: host_packs[pack_id] for pack_id in delta.packs},
-                )
+            delta = replace(
+                delta,
+                packs={pack_id: host_packs[pack_id] for pack_id in delta.packs},
+            )
             self._merge_delta_registrations(name, record.canonical, delta)
             for claim in record.claims:
                 self._claim_owners.setdefault(claim, name)
