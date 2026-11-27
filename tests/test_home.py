@@ -1425,6 +1425,116 @@ def test_installation_packs_read_stopped_snapshot_requests(
     run_scenario(scenario())
 
 
+def test_installation_facts_read_selected_records_without_starting_or_migrating(
+    tmp_path: Path,
+) -> None:
+    from test_environment_state import _generation
+
+    nightly, stable, empty = (tmp_path / name for name in ("nightly", "stable", "empty"))
+    empty.mkdir()
+    _generation(nightly, 1)
+    selected = _generation(nightly, 2)
+    document = json.loads(selected.read_text())
+    document["engine"]["version"] = "0.4.2"
+    document["variant"] = "linux-cuda128"
+    document["source"] = "source"
+    selected.write_text(json.dumps(document))
+    (nightly / "current").write_text("2\n")
+    _generation(stable, 1)
+    (stable / "current").write_text("1\n")
+    runtime = nightly / "runtime" / "2"
+    runtime.mkdir(parents=True)
+    (runtime / "main.json").write_text(
+        json.dumps(
+            {
+                "name": "main",
+                "generation": 2,
+                "port": 12345,
+                "pid": 0,
+                "instance": "stopped-facts",
+                "shutdownToken": "unused",
+                "url": "http://127.0.0.1:12345",
+                "state": "stopped",
+                "gpus": [],
+            }
+        )
+    )
+    before = {
+        str(path.relative_to(tmp_path)): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({nightly, stable, empty}))
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/facts"
+            for query, expected in (
+                ({}, 400),
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unknown")}, 404),
+                ({"root": str(nightly), "generation": "1"}, 400),
+                ([("root", str(nightly)), ("root", str(stable))], 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected
+            response = await client.get(endpoint, params={"root": str(nightly)})
+            assert response.status == 200
+            facts = await response.json()
+            assert facts == {
+                "root": str(nightly),
+                "current": 2,
+                "build": {
+                    "version": "0.4.2",
+                    "release": "sha256:" + "b" * 64,
+                    "variant": "linux-cuda128",
+                    "baseId": "sha256:" + "a" * 64,
+                    "source": "source",
+                },
+                "engines": [
+                    {
+                        "name": "main",
+                        "generation": 2,
+                        "state": "stopped",
+                        "url": "http://127.0.0.1:12345",
+                        "gpus": [],
+                    }
+                ],
+            }
+            other = await (await client.get(endpoint, params={"root": str(stable)})).json()
+            assert other["current"] == 1 and other["build"]["version"] == "0.3.1"
+            assert other["build"]["variant"] == "linux-cpu" and other["engines"] == []
+            assert await (await client.get(endpoint, params={"root": str(empty)})).json() == {
+                "root": str(empty),
+                "current": None,
+                "build": None,
+                "engines": [],
+            }
+            assert {
+                str(path.relative_to(tmp_path)): path.read_bytes()
+                for path in tmp_path.rglob("*")
+                if path.is_file()
+            } == before
+            for invalid in ("broken metadata", json.dumps({**document, "generation": 1})):
+                selected.write_text(invalid)
+                refused = await client.get(endpoint, params={"root": str(nightly)})
+                assert refused.status == 503
+                assert (await refused.json())["error"] == "facts-unavailable"
+                assert selected.read_text() == invalid
+            selected.unlink()
+            assert (await client.get(endpoint, params={"root": str(nightly)})).status == 503
+            empty.rmdir()
+            assert (await client.get(endpoint, params={"root": str(empty)})).status == 503
+            assert not empty.exists()
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["state"] == "stopped" and "open" not in status
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_installation_history_reads_recorded_entries_without_retained_builds(
     tmp_path: Path,
 ) -> None:
