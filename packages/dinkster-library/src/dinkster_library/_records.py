@@ -786,10 +786,14 @@ class Records:
                             "invalid",
                             "packs patch requires an extra list and optional allInstalled boolean",
                         )
+                    previous_packs = object_value(document["packs"], "packs")
                     patch["packs"] = {
-                        **object_value(document["packs"], "packs"),
+                        **previous_packs,
                         **packs,
-                        "allInstalled": packs.get("allInstalled", False),
+                        "allInstalled": packs.get(
+                            "allInstalled",
+                            previous_packs.get("allInstalled", not previous_packs["extra"]),
+                        ),
                     }
                 for field, required in (
                     ("environment", {"id", "lastSnapshot", "lastRunAt"}),

@@ -1524,7 +1524,7 @@ def test_home_creates_empty_workflow_and_copied_projects_without_an_engine(tmp_p
             assert project["uid"] != source["uid"]
             assert project["name"] == "Copy" and project["packs"] == {
                 "extra": ["example.extra"],
-                "allInstalled": False,
+                "allInstalled": True,
             }
             assert project["filesFolder"] == str(tmp_path / "copy")
             assert project["folder"] == str(tmp_path / "copy" / "output")

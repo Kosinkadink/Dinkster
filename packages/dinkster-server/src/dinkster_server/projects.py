@@ -211,7 +211,10 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
         return {
             "packs": [packs[key] for key in sorted(packs)],
             "extra": (
-                [pack["pack"] for pack in installed]
+                sorted(
+                    set(cast("list[str]", selected["extra"]))
+                    | {cast("str", pack["pack"]) for pack in installed}
+                )
                 if selected["allInstalled"]
                 else selected["extra"]
             ),

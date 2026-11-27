@@ -1714,8 +1714,21 @@ def test_project_node_catalog_defaults_to_installed_packs_and_preserves_explicit
                 fresh = await (await client.get(f"/api/nodes?project={project}")).json()
                 assert set(fresh["nodes"]) == set(schemas)
                 assert set(fresh["packs"]) == {"core", "tools", "other"}
+            updated = await client.patch(
+                "/api/projects/default",
+                json={"revision": 1, "patch": {"packs": {"extra": ["wanted"]}}},
+            )
+            assert updated.status == 200, await updated.text()
+            assert (await updated.json())["project"]["packs"]["allInstalled"] is True
+            assert set(
+                (await (await client.get("/api/projects/default/needs")).json())["extra"]
+            ) == {"core", "tools", "other", "wanted"}
+            assert set(
+                (await (await client.get("/api/nodes?project=default")).json())["nodes"]
+            ) == set(schemas)
             narrowed = await client.patch(
-                "/api/projects/film", json={"revision": 1, "patch": {"packs": {"extra": []}}}
+                "/api/projects/film",
+                json={"revision": 1, "patch": {"packs": {"extra": [], "allInstalled": False}}},
             )
             assert narrowed.status == 200, await narrowed.text()
             document = {
