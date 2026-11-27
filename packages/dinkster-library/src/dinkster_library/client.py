@@ -67,6 +67,7 @@ CAPABILITIES = (
     "sources.resolvers",
     "sources.resolvers.transactions",
     "projects.needs.workflows",
+    "projects.pack-selection",
     "projects.environment-selection",
 )
 COMMAND_ENV = "DINKSTER_LIBRARY_COMMAND"
