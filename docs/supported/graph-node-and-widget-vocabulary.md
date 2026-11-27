@@ -28,7 +28,8 @@
   rows, groups, choices, type choices, described rows, notes, buttons and
   editor rows, checked when the pack loads and flattened into the inputs and
   outputs a run uses. Every row may declare its visibility as a boolean or a
-  formula over stored values; the schema wire carries it, and frontend
+  formula over stored values; `keys(group)` reads a group's current member keys
+  in stored order, with an inactive group unknown rather than empty. The schema wire carries formulas, and frontend
   evaluation is not claimed here. An input may also declare itself read-only
   or disabled, with a reason, each a literal or a formula; these are layout
   only, so they never change a schema signature, a cache key or what a run

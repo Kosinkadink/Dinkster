@@ -134,6 +134,23 @@ def test_engine_gives_every_vector_answer() -> None:
     assert not mismatches, "\n".join(mismatches[:50])
 
 
+def test_group_keys_preserve_member_identity_order_and_unknown_state() -> None:
+    scope = FormulaScope(names={"layers": "group", "mode.layers": "group", "count": "int"})
+    formula = parse_formula('join(",", keys(layers))', scope)
+    assert (
+        formula.evaluate(FormulaValues(group_keys={"layers": ("layer9", "layer2")}))
+        == "layer9,layer2"
+    )
+    assert formula.evaluate(FormulaValues(group_keys={"layers": ()})) == ""
+    assert formula.evaluate(FormulaValues()) is UNKNOWN
+    assert parse_formula("keys(mode.layers)", scope).evaluate(
+        FormulaValues(group_keys={"mode.layers": ("blue", "red")})
+    ) == ("blue", "red")
+    for text in ("keys(count)", "keys(missing)", 'keys("layers")', "keys([])"):
+        with pytest.raises(FormulaRefused, match="keys\\(\\) takes the name of a group"):
+            parse_formula(text, scope)
+
+
 def test_a_refused_character_is_named_by_code_point_and_position() -> None:
     # A no-break space looks like a space to the author.
     with pytest.raises(FormulaRefused, match=r"U\+00A0 at position 4"):

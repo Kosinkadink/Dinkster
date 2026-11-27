@@ -137,6 +137,7 @@ class FormulaValues:
     member_key: str | None = None
     facts: Mapping[tuple[str, str], object] = field(default_factory=dict[tuple[str, str], object])
     previous: FormulaValues | None = None
+    group_keys: Mapping[str, Sequence[str]] = field(default_factory=dict[str, Sequence[str]])
 
 
 class _Stop(Exception):
@@ -317,6 +318,7 @@ _ARITY: Final[Mapping[str, tuple[int, int | None]]] = {
     "int": (1, 1),
     "float": (1, 1),
     "len": (1, 1),
+    "keys": (1, 1),
     "lower": (1, 1),
     "upper": (1, 1),
     "strip": (1, 1),
@@ -527,6 +529,12 @@ class _Checker:
             )
             if target is None or target not in allowed:
                 raise _refuse(f"{name}() takes the name of an input")
+            self.count()
+            return
+        if name == "keys":
+            target = _dotted(node.args[0])
+            if target is None or self.scope.names.get(target) != "group":
+                raise _refuse("keys() takes the name of a group")
             self.count()
             return
         if name == "len" and _dotted(node.args[0]) is not None:
@@ -1212,6 +1220,12 @@ class _Evaluator:
             except _Stop:
                 return False
             return True
+        if name == "keys":
+            target = cast(str, _dotted(node.args[0]))
+            keys = self.values.group_keys.get(target)
+            if keys is None:
+                raise _Stop(UNKNOWN)
+            return _check(tuple(keys))
         if name == "len":
             target = _dotted(node.args[0])
             if target is not None and self.scope.names.get(target) == "group":

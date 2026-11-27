@@ -440,6 +440,49 @@ def test_a_field_not_sent_is_kept_but_never_read_by_the_engine() -> None:
         )
 
 
+def test_group_key_formulas_use_current_member_order_and_inactive_scope() -> None:
+    from dinkster_schema.automatic import work_out_automatic
+    from dinkster_schema.body import Choice, Formula, Group, Named, Option
+    from dinkster_schema.model import ComboWidget, Input, NodeSchema, TypeExpr
+
+    string = TypeExpr.concrete("STRING")
+    group = Group(
+        "layers",
+        value=Input("name", string, default=""),
+        keys=Named(("red", "blue", "gold")),
+        grows="button",
+    )
+    schema = NodeSchema(
+        "test.group_keys",
+        body=(
+            group,
+            Input(
+                "pick",
+                TypeExpr.concrete("COMBO"),
+                widget=ComboWidget(options=Formula("keys(layers)")),
+            ),
+            Input("order", string, default="unknown", automatic=Formula('join(",", keys(layers))')),
+            Choice("mode", (Option("on", rows=(group,)), Option("off"))),
+            Input(
+                "branch",
+                string,
+                default="unknown",
+                automatic=Formula('join(",", keys(mode.layers))'),
+            ),
+        ),
+    )
+    members = {"layers": ("gold", "red"), "mode.layers": ("blue", "gold")}
+    active = work_out_automatic(schema.body, {}, members, {"mode": "on"})
+    assert (active["order"].value, active["branch"].value) == ("gold,red", "blue,gold")
+    inactive = work_out_automatic(schema.body, {}, members, {"mode": "off"})
+    assert inactive["order"].value == "gold,red"
+    assert (inactive["branch"].value, inactive["branch"].reason) == ("unknown", "unknown")
+    reordered = work_out_automatic(schema.body, {}, {"layers": ("red", "gold")}, {"mode": "off"})
+    assert reordered["order"].value == "red,gold"
+    empty = work_out_automatic(schema.body, {}, {"layers": ()}, {"mode": "off"})
+    assert (empty["order"].value, empty["order"].worked_out) == ("", True)
+
+
 def test_options_completions_and_limits_take_a_formula_or_a_lookup() -> None:
     from dinkster_schema.body import Formula, Lookup, State
     from dinkster_schema.model import (

@@ -541,6 +541,7 @@ class _Flattener:
         values: dict[str, Callable[[], object]] = {}
         wired: dict[str, bool] = {}
         sizes: dict[str, int] = {}
+        keys: dict[str, Sequence[str]] = {}
         for name, kind in names.items():
             flat_id = where[name]
             if name in unknown:
@@ -551,7 +552,8 @@ class _Flattener:
                 if name in inputs:
                     wired[name] = False
             elif kind == "group":
-                sizes[name] = len(self.discovered(flat_id))
+                keys[name] = tuple(self.discovered(flat_id))
+                sizes[name] = len(keys[name])
             elif kind.endswith("[]"):
                 group_path, row_id = flat_id.rsplit(".", 1)
                 values[name] = lambda group_path=group_path, row_id=row_id: tuple(
@@ -575,6 +577,7 @@ class _Flattener:
                 values=_LazyValues(values),
                 linked=wired,
                 group_sizes=sizes,
+                group_keys=keys,
                 member_index=None if member is None else member.index,
                 member_key=None if member is None else member.key,
             )
