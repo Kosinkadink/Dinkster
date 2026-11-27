@@ -1062,6 +1062,8 @@ def schema_to_wire(
         wire["executionContext"] = True
     if schema.input_values:
         wire["inputValues"] = True
+    if schema.input_types:
+        wire["inputTypes"] = True
     if schema.mirror is not None:
         mirror: dict[str, object] = {
             "kind": schema.mirror.kind,
@@ -1779,6 +1781,7 @@ def schema_from_wire(wire: dict[str, Any]) -> NodeSchema:
         ),
         execution_context=_expect_bool(wire.get("executionContext", False), "executionContext"),
         input_values=_expect_bool(wire.get("inputValues", False), "inputValues"),
+        input_types=_expect_bool(wire.get("inputTypes", False), "inputTypes"),
         mirror=_mirror_from_wire(wire.get("mirror"), wire_version),
         selector=selector,
         chunk_safe=chunk_safe,

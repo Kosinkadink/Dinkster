@@ -22,6 +22,24 @@ from dinkster_values import (
 from .model import TypeExpr
 
 
+def record_field_bindings(wanted: TypeExpr, source: TypeExpr) -> tuple[object, ...]:
+    """Identify declaration-selected fields, including absent optional children."""
+    if wanted.kind == source.kind == "record":
+        same_record = wanted.types == source.types
+        supplied = {(item.id if same_record else item.name): item for item in source.fields}
+        return tuple(
+            (field.id, found.id, record_field_bindings(field.type, found.type))
+            for field in sorted(wanted.fields, key=lambda item: item.id)
+            if (found := supplied.get(field.id if same_record else field.name)) is not None
+        )
+    if wanted.element is not None and source.element is not None:
+        return record_field_bindings(wanted.element, source.element)
+    return tuple(
+        record_field_bindings(item, supplied)
+        for item, supplied in zip(wanted.elements, source.elements, strict=False)
+    )
+
+
 def contains_records(expression: TypeExpr) -> bool:
     return (
         expression.kind == "record"

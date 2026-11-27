@@ -354,7 +354,7 @@ def _resolve_linked_output_types(
     conflicts: dict[str, Diagnostic] = {}
 
     def contains_variable(expr: TypeExpr) -> bool:
-        if expr.kind == "variable":
+        if expr.kind == "variable" or (expr.kind == "record" and expr.template_id):
             return True
         return (expr.element is not None and contains_variable(expr.element)) or any(
             contains_variable(position) for position in expr.elements

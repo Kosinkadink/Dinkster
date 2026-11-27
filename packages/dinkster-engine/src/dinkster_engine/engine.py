@@ -110,6 +110,7 @@ from dinkster_schema.media import media_diagnostics
 from dinkster_schema.records import (
     contains_records,
     project_record_value,
+    record_field_bindings,
     record_value_problem,
     refresh_record_names,
     wrap_declared_value,
@@ -1137,10 +1138,33 @@ class Engine:
         selection: ExecutionSelection | None = None,
         connected_undemanded_inputs: tuple[str, ...] | None = None,
         cache_scope: str | None = None,
+        input_types: Mapping[str, TypeExpr] | None = None,
     ) -> str:
         runtime = self._runtime()
         # Unpublished direct results must not satisfy a server's publication contract.
         parts: list[bytes] = [signature.encode("utf-8")]
+        if schema.input_types:
+            declarations = input_types or {}
+            parts.append(
+                schema_signature(
+                    replace(
+                        schema,
+                        inputs=tuple(
+                            replace(spec, type=declarations.get(spec.id, spec.type))
+                            for spec in schema.inputs
+                        ),
+                    )
+                ).encode("utf-8")
+            )
+            parts.append(
+                default_encode(
+                    {
+                        spec.id: record_field_bindings(spec.type, declarations[spec.id])
+                        for spec in schema.inputs
+                        if spec.id in declarations
+                    }
+                )
+            )
         if runtime.require_image_document_publication:
             parts.append(b"required-image-documents")
         if runtime.publish_image_documents is not None:
@@ -1891,6 +1915,7 @@ class Engine:
             selection,
             connected_undemanded_inputs,
             cache_scope,
+            input_types,
         )
         previous_components = (
             self._remember_key_components(

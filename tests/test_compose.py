@@ -27,7 +27,7 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
-from dinkster_engine import EngineEvent, GraphValidationError
+from dinkster_engine import EngineEvent, ExecutionError, GraphValidationError
 from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_to_wire
 from dinkster_memory import (
     GovernorReservationService,
@@ -781,7 +781,8 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             "Input('seed_only', TypeExpr.record_of('recordtest.inner', INNER_FIELDS[0])), "
             "Input('foreign', TypeExpr.record_of('recordtest.foreign', "
             f"RecordField('other-seed', '{name}', INT), "
-            "RecordField('other-guidance', 'guidance', INT, optional=True)), required=False), "
+            "RecordField('other-guidance', 'guidance', INT, optional=True), "
+            "RecordField('extra', 'extra', TEXT, optional=True)), required=False), "
             "Output('text', TEXT)))\n"
             "    @classmethod\n"
             "    def execute(cls, value, seed_only):\n"
@@ -844,7 +845,8 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
                         {"record": Link("whole", "value"), "field": '["1-seed"]'},
                     ),
                     "foreign": GraphNode(
-                        "recordtest.foreign.make", {"field_6f746865722d73656564": 53}
+                        "recordtest.foreign.make",
+                        {"field_6f746865722d73656564": 53, "field_6578747261": "keep me"},
                     ),
                     "foreign_read": GraphNode(
                         "recordtest.inner.read",
@@ -853,6 +855,30 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
                     "optional": GraphNode(
                         "recordtest.outer.read",
                         {"record": Link("outer", "record"), "field": '["settings", "optional"]'},
+                    ),
+                    "change": GraphNode(
+                        "recordtest.inner.change",
+                        {"record": Link("foreign", "record"), "field": '["optional"]', "value": 11},
+                    ),
+                    "change_again": GraphNode(
+                        "recordtest.inner.change",
+                        {"record": Link("change", "record"), "field": '["optional"]', "value": 17},
+                    ),
+                    "changed_read": GraphNode(
+                        "recordtest.foreign.read",
+                        {"record": Link("change_again", "record"), "field": '["other-guidance"]'},
+                    ),
+                    "nested_change": GraphNode(
+                        "recordtest.outer.change",
+                        {
+                            "record": Link("outer", "record"),
+                            "field": '["settings", "1-seed"]',
+                            "value": 41,
+                        },
+                    ),
+                    "text_change": GraphNode(
+                        "recordtest.outer.change",
+                        {"record": Link("outer", "record"), "field": '["label"]', "value": "eight"},
                     ),
                 }
             )
@@ -866,6 +892,40 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             assert result.outputs["chained"]["value"].resolve() == 29
             assert result.outputs["foreign_read"]["value"].resolve() == 53
             assert is_absent(result.outputs["optional"]["value"])
+            assert result.outputs["change"]["record"].type_id == "recordtest.foreign"
+            assert result.outputs["change"]["record"].resolve() == {
+                "seed": 53,
+                "guidance": 11,
+                "extra": "keep me",
+            }
+            assert result.outputs["changed_read"]["value"].resolve() == 17
+            assert result.outputs["nested_change"]["record"].resolve() == {
+                "settings": {"seed": 41},
+                "prompt": "seven",
+            }
+            assert result.outputs["text_change"]["record"].resolve() == {
+                "settings": {"seed": 29},
+                "prompt": "eight",
+            }
+            invalid_replacement = Graph(
+                nodes={
+                    **graph.nodes,
+                    "change": GraphNode(
+                        "recordtest.inner.change",
+                        {
+                            "record": Link("foreign", "record"),
+                            "field": '["optional"]',
+                            "value": Link("whole_text", "value"),
+                        },
+                    ),
+                    "whole_text": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["label"]'},
+                    ),
+                }
+            )
+            with pytest.raises(ExecutionError, match="guidance.*INT.*STRING"):
+                await engine.run(invalid_replacement, ["change"])
             text_selection = Graph(
                 nodes={
                     **graph.nodes,
@@ -915,6 +975,17 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             assert renamed.outputs["foreign_read"]["value"].resolve() == 53
             assert renamed.outputs["whole"]["value"].resolve() == {"noise": 97, "guidance": 11}
             assert {"whole", "nested", "chained", "optional"}.issubset(renamed.cached)
+            assert {"change", "change_again", "changed_read"}.issubset(renamed.cached)
+            assert renamed.outputs["change_again"]["record"].resolve() == {
+                "noise": 53,
+                "guidance": 17,
+                "extra": "keep me",
+            }
+            assert renamed.outputs["nested_change"]["record"].resolve() == {
+                "settings": {"noise": 41, "guidance": 11},
+                "prompt": "seven",
+            }
+            assert {"nested_change", "text_change"}.issubset(renamed.cached)
             removed = await composer.remove_pack("record-test")
             assert "recordtest.inner.make" in removed.removed_types
             with pytest.raises(KeyError, match="recordtest.inner.make"):

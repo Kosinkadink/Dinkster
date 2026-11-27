@@ -26,6 +26,7 @@ from dinkster_values import (
     ResourceHandle,
     TypeRegistry,
     Value,
+    is_absent,
     list_children,
     make_list_value,
     make_record_value,
@@ -863,3 +864,73 @@ def test_record_resource_children_remain_discoverable_and_cannot_enter_disk_cach
     assert isinstance(decoded.payload, RecordPayload)
     assert value_resource_ids(decoded) == ("record-resource",)
     assert encode_entry({"value": decoded}, registry) is None
+
+
+def test_change_rebinds_absent_foreign_fields_without_reusing_cached_assignment() -> None:
+    from dinkster.record_nodes import record_helpers
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        cache = MemoryLRUCache()
+        target = TypeExpr.record_of(
+            "target.settings", RecordField("target", "guidance", INTEGER, optional=True)
+        )
+
+        def engine(swapped: bool) -> Engine:
+            source = TypeExpr.record_of(
+                "source.settings",
+                RecordField("seed", "seed", INTEGER),
+                RecordField("a", "strength" if swapped else "guidance", INTEGER, optional=True),
+                RecordField("b", "guidance" if swapped else "strength", INTEGER, optional=True),
+            )
+
+            class Produce(Node):
+                @classmethod
+                def define_schema(cls) -> NodeSchema:
+                    return NodeSchema("test.source", body=(Output("record", source),))
+
+                @classmethod
+                def execute(cls) -> Mapping[str, object]:
+                    return cls.outputs(record={"seed": 53})
+
+            class Consumer(Node):
+                @classmethod
+                def define_schema(cls) -> NodeSchema:
+                    return NodeSchema("test.consumer", body=(Input("record", target),))
+
+            helpers = record_helpers(build_schemas((Produce, Consumer)).values())
+            nodes = (Produce, *helpers.values())
+            return Engine(
+                schemas={
+                    identity: schema_from_wire(schema_to_wire(schema))
+                    for identity, schema in build_schemas(nodes).items()
+                },
+                registry=registry,
+                worker=InProcessWorker(build_node_types(nodes), registry),
+                cache=cache,
+            )
+
+        graph = Graph(
+            nodes={
+                "make": GraphNode("test.source"),
+                "change": GraphNode(
+                    "target.settings.change",
+                    {"record": Link("make", "record"), "field": '["target"]', "value": 11},
+                ),
+                "read": GraphNode(
+                    "source.settings.read",
+                    {"record": Link("change", "record"), "field": '["b"]'},
+                ),
+            }
+        )
+        before = await engine(False).run(graph, ["change", "read"])
+        assert before.outputs["change"]["record"].resolve() == {"seed": 53, "guidance": 11}
+        assert is_absent(before.outputs["read"]["value"])
+        after = await engine(True).run(graph, ["change", "read"])
+        assert after.outputs["change"]["record"].resolve() == {"seed": 53, "guidance": 11}
+        assert after.outputs["read"]["value"].resolve() == 11
+        assert "make" in after.cached
+        assert "change" not in after.cached
+
+    run_scenario(scenario())

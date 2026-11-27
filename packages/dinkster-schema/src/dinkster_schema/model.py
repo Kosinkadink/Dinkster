@@ -188,7 +188,7 @@ class TypeExpr:
         if self.kind == "record":
             if len(self.types) != 1 or validate_name(self.types[0]) is not None:
                 raise ValueError("record TypeExpr requires one namespaced record identity")
-            if self.template_id or not isinstance(cast(object, self.fields), tuple):
+            if not isinstance(cast(object, self.fields), tuple):
                 raise ValueError("record TypeExpr requires an immutable fields tuple")
             if any(
                 not isinstance(item, RecordField) for item in cast(tuple[object, ...], self.fields)
@@ -1883,10 +1883,10 @@ class Output:
             raise ValueError(f"output {self.id}: known_value must be an OutputKnownValue")
 
 
-RESERVED_INPUT_IDS = frozenset({"execution_context", "input_values"})
+RESERVED_INPUT_IDS = frozenset({"execution_context", "input_values", "input_types"})
 """Framework-reserved execute() parameter names. ``execution_context`` carries
-live run control; ``input_values`` provides read-only input envelopes. These
-are not row ids."""
+live run control; ``input_values`` and ``input_types`` provide read-only
+envelopes and linked record declarations. These are not row ids."""
 
 SearchVisibility = Literal["normal", "deprecated", "hidden"]
 """How node search lists a type. Presentation/lifecycle metadata, never
@@ -1946,6 +1946,8 @@ exact-string identity - never trimmed, case-folded, or normalized."""
 def _type_variables(expr: TypeExpr) -> Iterable[TypeExpr]:
     if expr.kind == "variable":
         yield expr
+    elif expr.kind == "record" and expr.template_id:
+        yield TypeExpr.variable(expr.template_id)
     elif expr.kind in ("list", "asset", "stream"):
         assert expr.element is not None
         yield from _type_variables(expr.element)
@@ -2321,6 +2323,9 @@ class NodeSchema:
     """Inject read-only input envelopes without live run-control access.
     Execute may omit decoded input parameters to handle only their envelopes.
     Caching includes metadata throughout each input value tree."""
+    input_types: bool = False
+    """Inject read-only linked record declarations, including absent fields.
+    Declaration identity participates in invocation caching."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,
@@ -2490,6 +2495,8 @@ class NodeSchema:
             raise ValueError("execution_context must be a bool")
         if type(self.input_values) is not bool:
             raise ValueError("input_values must be a bool")
+        if type(self.input_types) is not bool:
+            raise ValueError("input_types must be a bool")
         if self.editor_role is not None and (
             not isinstance(cast("object", self.editor_role), str) or not self.editor_role
         ):
@@ -2600,7 +2607,9 @@ class NodeSchema:
 
         for spec in self.inputs:
             if spec.type.requires_elaboration:
-                raise ValueError("input types cannot reference another input")
+                if spec.type.kind != "record_field":
+                    raise ValueError("input types cannot reference another input")
+                validate_output_type(spec.type)
         for output in self.outputs:
             validate_output_type(output.type)
         self._check_options_inputs(inputs_by_id)
@@ -2719,6 +2728,7 @@ class NodeSchema:
     def is_static(self) -> bool:
         return (
             self.additional_inputs is None
+            and not any(spec.type.requires_elaboration for spec in self.inputs)
             and not any(output.type.requires_elaboration for output in self.outputs)
             and not _body_has_structure(self.body)
         )

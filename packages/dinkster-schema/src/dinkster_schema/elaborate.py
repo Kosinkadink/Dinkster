@@ -235,6 +235,12 @@ def _elaborate_body(
         )
     _validate_projected_namespace(schema, flat.inputs)
     values = stored if isinstance(stored, Mapping) else None
+    projected_inputs = [
+        replace(spec, type=_project_output_type(spec.type, flat.inputs, values))
+        if spec.type.requires_elaboration
+        else spec
+        for spec in flat.inputs
+    ]
     outputs = [
         replace(output, type=_project_output_type(output.type, flat.inputs, values))
         if output.type.requires_elaboration
@@ -242,7 +248,7 @@ def _elaborate_body(
         for output in flat.outputs
     ]
     inputs, outputs, scoped = _resolve_applies(
-        schema, list(flat.inputs), outputs, dict(flat.choices)
+        schema, projected_inputs, outputs, dict(flat.choices)
     )
     total = len(inputs) + len(outputs)
     if total > MAX_INTERFACE_ITEMS:

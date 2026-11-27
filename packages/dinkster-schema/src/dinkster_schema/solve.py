@@ -151,6 +151,12 @@ def _type_expr_from_runtime_id(type_id: str) -> TypeExpr:
 def _unify(
     input_id: str, expr: TypeExpr, received: TypeExpr, bindings: dict[str, TypeExpr]
 ) -> None:
+    if expr.kind == "record" and expr.template_id:
+        problem = expr.record_connection_problem(received)
+        if problem is not None:
+            raise TypeSolveError(f"input '{input_id}': {problem}")
+        _unify(input_id, TypeExpr.variable(expr.template_id), received, bindings)
+        return
     if expr.kind not in ("variable", "tuple", "stream", "list", "asset"):
         return
     type_id = received.runtime_type_id()

@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 
 from dinkster_schema import (
     ABSENT,
@@ -49,6 +50,7 @@ def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
     return {
         **{f"{identity}.make": _maker(expression) for identity, expression in records.items()},
         **{f"{identity}.read": _reader(expression) for identity, expression in records.items()},
+        **{f"{identity}.change": _changer(expression) for identity, expression in records.items()},
     }
 
 
@@ -164,3 +166,76 @@ def _reader(expression: TypeExpr) -> type[Node]:
             return cls.outputs(value=current)
 
     return ReadRecord
+
+
+def _changer(expression: TypeExpr) -> type[Node]:
+    reader = _reader(expression).define_schema()
+
+    class ChangeRecord(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type=f"{expression.types[0]}.change",
+                display_name=f"Change {expression.types[0]}",
+                category="Records",
+                editor_role="record-change",
+                body=(
+                    Input("record", replace(expression, template_id="Record")),
+                    reader.inputs[1],
+                    Input("value", TypeExpr.record_field("record", "field")),
+                    Output("record", TypeExpr.variable("Record")),
+                ),
+                input_values=True,
+                input_types=True,
+            )
+
+        @classmethod
+        def execute(
+            cls,
+            *,
+            field: str,
+            input_values: Mapping[str, Value],
+            input_types: Mapping[str, TypeExpr],
+        ) -> Mapping[str, object]:
+            def change(
+                current: Value, wanted: TypeExpr, source: TypeExpr, path: list[str]
+            ) -> Value:
+                selected = next(item for item in wanted.fields if item.id == path[0])
+                supplied = next(
+                    item
+                    for item in source.fields
+                    if (
+                        item.id == selected.id
+                        if wanted.types == source.types
+                        else item.name == selected.name
+                    )
+                )
+                payload = current.payload
+                if not isinstance(payload, RecordPayload):
+                    raise ValueError("record input does not contain field envelopes")
+                fields = {
+                    identity: (name, child)
+                    for (identity, name), child in zip(
+                        payload.fields, payload.children, strict=True
+                    )
+                }
+                if len(path) == 1:
+                    replacement = input_values["value"]
+                else:
+                    if supplied.id not in fields:
+                        raise ValueError(
+                            f"Cannot change a field inside absent record: {selected.name}."
+                        )
+                    replacement = change(
+                        fields[supplied.id][1], selected.type, supplied.type, path[1:]
+                    )
+                fields[supplied.id] = (supplied.name, replacement)
+                return replace(make_record_value(current.type_id, fields), meta=current.meta)
+
+            current = input_values["record"]
+            source = input_types.get("record")
+            if source is None:
+                raise ValueError("Change requires the linked record declaration")
+            return cls.outputs(record=change(current, expression, source, json.loads(field)))
+
+    return ChangeRecord

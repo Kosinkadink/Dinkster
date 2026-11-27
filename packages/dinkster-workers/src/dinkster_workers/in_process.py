@@ -85,7 +85,7 @@ from dinkster_schema import (
 from dinkster_schema.body import all_rows
 from dinkster_schema.flatten import described_ids, flatten_body
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.model import Output, TypeExpr
+from dinkster_schema.model import Input, Output, TypeExpr
 from dinkster_schema.nest import OutputShapeError, flatten_outputs, nest_inputs
 from dinkster_schema.records import (
     contains_records,
@@ -864,9 +864,9 @@ class InProcessWorker:
             spec.id: None for spec in invocation.effective_schema.inputs if spec.id in supplied
         }
         stored.update((name, None) for name in supplied if name not in stored)
-        # Stored tuple and record selectors decide their output types.
+        # Stored tuple and record selectors decide dependent interface types.
         selectors: set[str] = set()
-        types = [row.type for row in all_rows(base_schema.body) if isinstance(row, Output)]
+        types = [row.type for row in all_rows(base_schema.body) if isinstance(row, (Input, Output))]
         while types:
             expr = types.pop()
             if expr.kind in ("tuple_element", "record_field") and isinstance(expr.index, str):
@@ -945,6 +945,8 @@ class InProcessWorker:
             kwargs["execution_context"] = invocation.run_control
         if base_schema.input_values:
             kwargs["input_values"] = MappingProxyType(dict(invocation.inputs))
+        if base_schema.input_types:
+            kwargs["input_types"] = MappingProxyType(dict(invocation.input_types))
         return kwargs
 
     def _unwrap(

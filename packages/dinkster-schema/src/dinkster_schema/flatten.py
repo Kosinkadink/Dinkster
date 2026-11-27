@@ -211,7 +211,7 @@ class _LazyValues(Mapping[str, object]):
 
 
 def scope_member_type(expr: TypeExpr, member: str) -> TypeExpr:
-    if expr.kind == "variable":
+    if expr.kind == "variable" or (expr.kind == "record" and expr.template_id):
         return replace(expr, template_id=f"{member}:{expr.template_id}")
     return replace(
         expr,
