@@ -178,6 +178,18 @@ def test_saved_retired_node_executes_with_mapped_values_outputs_and_added_defaul
                         from_signature="fraction-v1",
                         cases=(case(1000),),
                     ),
+                    ReplacementRule(
+                        from_type="test.percent",
+                        from_signature="fraction-v1",
+                        note="This ordinary served type must not be replaced.",
+                        cases=(
+                            ReplacementCase.build(
+                                "test.percent",
+                                inputs={"percentage": MappingSource.constant(99.0)},
+                                outputs={"value": "value"},
+                            ),
+                        ),
+                    ),
                 ),
             )
 
@@ -225,6 +237,17 @@ def test_saved_retired_node_executes_with_mapped_values_outputs_and_added_defaul
         again = await engine.run(reopened, ["sink"])
         assert again.outputs["sink"]["value"].resolve() == 111.0
         assert graph_to_wire(original) == saved
+        served = Graph(
+            {
+                "current": GraphNode(
+                    "test.percent",
+                    {"percentage": 7.0, "gain": 2.0},
+                    schema_signature="fraction-v1",
+                )
+            }
+        )
+        current = await engine.run(served, ["current"])
+        assert current.outputs["current"]["value"].resolve() == 14.0
         for signature in ("", "different-interface"):
             mismatched = Graph(
                 {"old": GraphNode("test.fraction", {"fraction": 0.37}, schema_signature=signature)}

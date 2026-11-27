@@ -352,7 +352,10 @@ def _apply_case(
 
 
 def migrate_node_replacements(graph: Graph, schemas: Mapping[str, NodeSchema]) -> Graph:
-    """Replace absent ids, never reinterpret a currently served node id.
+    """Replace absent ids and explicitly versioned saved record Make nodes.
+
+    A served Make migrates only from an exact old signature, with the pack's
+    explanation and a same-type rule. Other served ids are never reinterpreted.
 
     The same pack rules drive frontend document opening and backend admission.
     Graph literals, links, predicates, transforms, families and helper nodes
@@ -407,7 +410,18 @@ def _migrate(
             continue
         node = original
         seen: set[str] = set()
-        while node.node_type not in schemas:
+        while True:
+            served = schemas.get(node.node_type)
+            if served is not None and (
+                not node.schema_signature
+                or node.schema_signature == schema_signature(served)
+                or not any(
+                    output.type.kind == "record"
+                    and node.node_type == f"{output.type.types[0]}.make"
+                    for output in served.outputs
+                )
+            ):
+                break
             if node.node_type in seen:
                 raise ValueError(f"replacement cycle for {node.node_type!r}")
             seen.add(node.node_type)
@@ -415,6 +429,12 @@ def _migrate(
                 rule
                 for rule in rules.get(node.node_type, ())
                 if not rule.from_signature or rule.from_signature == node.schema_signature
+                if served is None
+                or (
+                    rule.from_signature
+                    and rule.note.strip()
+                    and all(case.to == node.node_type for case in rule.cases)
+                )
             ]
             if not candidates:
                 break

@@ -4967,7 +4967,42 @@ class ServingComposer:
                 raise CompositionError(
                     f"{manifest.name}: generated record node {node_type!r} collides"
                 )
-        schemas.update(build_schemas(makers.values()))
+        generated = build_schemas(makers.values())
+        for node_type, schema in generated.items():
+            if not node_type.endswith(".make"):
+                continue
+            rules = [
+                rule
+                for carrier in schemas.values()
+                for rule in carrier.replacements
+                if rule.from_type == node_type and all(case.to == node_type for case in rule.cases)
+            ]
+            if any(not rule.from_signature or not rule.note.strip() for rule in rules):
+                raise CompositionError(
+                    f"{manifest.name}: {node_type} migration requires from_signature "
+                    "and a note explaining how saved Make nodes are updated"
+                )
+            previous = self.composition.schemas.get(node_type)
+            if previous is None:
+                continue
+            added_required = [
+                spec.label or spec.id
+                for spec in schema.inputs
+                if spec.required
+                and spec.default is None
+                and ((old := previous.input(spec.id)) is None or not old.required)
+            ]
+            if added_required and not any(
+                rule.from_signature == schema_signature(previous) and not rule.from_version
+                for rule in rules
+            ):
+                raise CompositionError(
+                    f"{manifest.name}: {node_type} adds required fields {added_required!r}; "
+                    "declare a same-type replacement with "
+                    f"from_signature={schema_signature(previous)!r} and a note explaining "
+                    "how saved Make nodes are updated"
+                )
+        schemas.update(generated)
         node_packs.update(dict.fromkeys(makers, manifest.name))
         return makers
 

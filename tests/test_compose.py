@@ -28,7 +28,15 @@ from dinkster_assets import AssetError, AssetRef
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
 from dinkster_engine import EngineEvent, ExecutionError, GraphValidationError
-from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_from_wire, graph_to_wire
+from dinkster_graph import (
+    Graph,
+    GraphNode,
+    Link,
+    TypedLiteral,
+    graph_from_wire,
+    graph_to_wire,
+    migrate_node_replacements,
+)
 from dinkster_memory import (
     GovernorReservationService,
     MeasuredMemory,
@@ -37,7 +45,7 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
-from dinkster_schema import build_schemas
+from dinkster_schema import build_schemas, schema_signature
 from dinkster_server import PackInfo, create_app
 from dinkster_values import (
     EncodedPayload,
@@ -760,13 +768,20 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
 
 def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> None:
     def manifest(
-        version: str, name: str, *, collision: bool = False, added_default: int | None = None
+        version: str,
+        name: str,
+        *,
+        collision: bool = False,
+        added_default: int | None = None,
+        migration_from: str | None = None,
+        migration_note: str = "Saved Make nodes gain iterations=23 and retain seed and guidance.",
     ) -> Path:
         root = tmp_path / version
         root.mkdir()
         module = f"record_maker_{version}"
         (root / f"{module}.py").write_text(
             "from dinkster_schema import Input, Node, NodeSchema, Output, RecordField, TypeExpr\n"
+            "from dinkster_schema import MappingSource, ReplacementCase, ReplacementRule\n"
             "INT = TypeExpr.concrete('INT')\n"
             "TEXT = TypeExpr.concrete('STRING')\n"
             "INNER_FIELDS = ["
@@ -776,6 +791,7 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
                 f"INNER_FIELDS.append(RecordField('added', 'iterations', INT, "
                 f"default={added_default!r}))\n"
                 if version in ("defaults", "updated_defaults", "required")
+                or migration_from is not None
                 else ""
             )
             + "INNER = TypeExpr.record_of('recordtest.inner', "
@@ -791,7 +807,20 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             f"RecordField('other-seed', '{name}', INT), "
             "RecordField('other-guidance', 'guidance', INT, optional=True), "
             "RecordField('extra', 'extra', TEXT, optional=True)), required=False), "
-            "Output('text', TEXT)))\n"
+            "Output('text', TEXT)), replacements=("
+            + (
+                "ReplacementRule(from_type='recordtest.inner.make', "
+                f"from_signature={migration_from!r}, "
+                f"note={migration_note!r}, "
+                "cases=(ReplacementCase.build('recordtest.inner.make', inputs={"
+                "'field_312d73656564': MappingSource.copy('field_312d73656564'), "
+                "'field_6f7074696f6e616c': MappingSource.copy('field_6f7074696f6e616c'), "
+                "'field_6164646564': MappingSource.constant(23)}, "
+                "outputs={'record': 'record'}),)),"
+                if migration_from is not None
+                else ""
+            )
+            + "))\n"
             "    @classmethod\n"
             "    def execute(cls, value, seed_only):\n"
             f"        count = value['settings']['{name}']\n"
@@ -1000,7 +1029,48 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             saved_make = Graph(
                 nodes={key: graph.nodes[key] for key in ("inner", "outer", "whole", "consume")}
             )
+            old_signature = schema_signature(composer.composition.schemas["recordtest.inner.make"])
+            saved_make = Graph(
+                nodes={
+                    **saved_make.nodes,
+                    "seed_source": GraphNode(
+                        "recordtest.foreign.make", {"field_6f746865722d73656564": 97}
+                    ),
+                    "seed_value": GraphNode(
+                        "recordtest.foreign.read",
+                        {"record": Link("seed_source", "record"), "field": '["other-seed"]'},
+                    ),
+                    "inner": replace(
+                        saved_make.nodes["inner"],
+                        inputs={
+                            **saved_make.nodes["inner"].inputs,
+                            "field_312d73656564": Link("seed_value", "value"),
+                        },
+                        schema_signature=old_signature,
+                    ),
+                }
+            )
             saved_make = graph_from_wire(json.loads(json.dumps(graph_to_wire(saved_make))))
+            with pytest.raises(CompositionError, match="adds required fields.*iterations"):
+                await composer.reload_pack("record-test", PackSpec(required_manifest))
+            for version, signature, note in (
+                ("unexplained", old_signature, ""),
+                ("unsigned", "", "Set iterations on saved Make nodes."),
+                ("unrelated", "other-interface", "Set iterations on saved Make nodes."),
+            ):
+                invalid = manifest(version, "noise", migration_from=signature, migration_note=note)
+                with pytest.raises(CompositionError, match="migration|adds required fields"):
+                    await composer.reload_pack("record-test", PackSpec(invalid))
+            unchanged = await engine.run(saved_make, ["consume"])
+            assert unchanged.outputs["consume"]["text"].resolve() == "194|seven"
+            migrated_manifest = manifest("migrated", "noise", migration_from=old_signature)
+            await composer.reload_pack("record-test", PackSpec(migrated_manifest))
+            migrated_live = await engine.run(saved_make, ["inner"])
+            assert migrated_live.outputs["inner"]["record"].resolve() == {
+                "noise": 97,
+                "guidance": 11,
+                "iterations": 23,
+            }
             await composer.reload_pack("record-test", PackSpec(defaults_manifest))
             added = await engine.run(saved_make, ["inner", "consume"])
             assert added.outputs["inner"]["record"].resolve() == {
@@ -1032,6 +1102,38 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
                 await engine.run(saved_make, ["inner"])
             supplied = await engine.run(explicit, ["inner"])
             assert supplied.outputs["inner"]["record"].resolve() == {"noise": 29, "iterations": 7}
+            cold = ServingComposer(worker_env=WORKER_ENV)
+            try:
+                await cold.add_pack(PackSpec(migrated_manifest))
+                cold_engine = cold.composition.make_engine(lambda _event: None)
+                migrated = await cold_engine.run(saved_make, ["inner", "consume"])
+                assert migrated.outputs["inner"]["record"].resolve() == {
+                    "noise": 97,
+                    "guidance": 11,
+                    "iterations": 23,
+                }
+                assert migrated.outputs["consume"]["text"].resolve() == "194|seven"
+                reopened = migrate_node_replacements(saved_make, cold.composition.schemas)
+                reopened = graph_from_wire(json.loads(json.dumps(graph_to_wire(reopened))))
+                assert reopened.nodes["outer"].inputs == saved_make.nodes["outer"].inputs
+                assert migrate_node_replacements(reopened, cold.composition.schemas) == reopened
+                again = await cold_engine.run(reopened, ["inner"])
+                assert again.outputs["inner"]["record"].resolve() == {
+                    "noise": 97,
+                    "guidance": 11,
+                    "iterations": 23,
+                }
+                for signature in ("", "unrelated-interface"):
+                    unsigned = Graph(
+                        nodes={
+                            **saved_make.nodes,
+                            "inner": replace(saved_make.nodes["inner"], schema_signature=signature),
+                        }
+                    )
+                    with pytest.raises(GraphValidationError, match="Missing required input"):
+                        await cold_engine.run(unsigned, ["inner"])
+            finally:
+                await cold.close()
             removed = await composer.remove_pack("record-test")
             assert "recordtest.inner.make" in removed.removed_types
             with pytest.raises(KeyError, match="recordtest.inner.make"):
