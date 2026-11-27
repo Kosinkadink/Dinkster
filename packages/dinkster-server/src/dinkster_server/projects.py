@@ -210,7 +210,11 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
                     packs[json.dumps(pack, sort_keys=True)] = pack
         return {
             "packs": [packs[key] for key in sorted(packs)],
-            "extra": selected["extra"],
+            "extra": (
+                [pack["pack"] for pack in installed]
+                if selected["allInstalled"]
+                else selected["extra"]
+            ),
             "unknown": unknown,
             "installed": installed,
         }
