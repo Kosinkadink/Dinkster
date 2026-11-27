@@ -92,7 +92,6 @@ class _BrowserAccount:
 @dataclass
 class _SignIn:
     owner: str
-    baseline: dict[str, object]
     attempt: AccountSignIn = field(default_factory=AccountSignIn)
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
@@ -163,11 +162,18 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
             return {
                 "available": True,
                 **availability,
-                **pending.baseline,
+                "signedIn": False,
+                "profile": None,
                 "signIn": {"state": "pending"},
             }
         try:
-            result = await asyncio.to_thread(account.status)
+            result = (
+                await asyncio.to_thread(account.status)
+                if browser is not None
+                and principal.browser_session_id == browser.revision
+                and browser.principal is not None
+                else {"signedIn": False, "profile": None}
+            )
         except (AccountError, OSError):
             raise web.HTTPServiceUnavailable(
                 text='{"error":"account-status-unavailable"}',
@@ -224,11 +230,10 @@ def add_account_routes(app: web.Application, account: AccountSession | None) -> 
                 if pending.owner != owner:
                     return reply({"error": "account-sign-in-owner-required"}, 403)
                 return reply({**await snapshot(request), "authorizationUrl": pending.url}, 202)
-            current = await snapshot(request)
             assert browser is not None
             browser.begin(principal_for(request))
             owner = browser.revision
-            flow = _SignIn(owner, {"signedIn": current["signedIn"], "profile": current["profile"]})
+            flow = _SignIn(owner)
             pending = flow
             loop = asyncio.get_running_loop()
 

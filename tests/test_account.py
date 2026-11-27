@@ -716,8 +716,12 @@ def test_engine_migrates_only_a_known_project_without_refreshing_legacy_authorit
         assert not list(session.run_token_directory.iterdir())
         with urlopen(f"http://127.0.0.1:{port}/api/account", timeout=5) as response:
             status = json.load(response)
-        assert status["signedIn"] is True
-        assert status["profile"] == {"displayName": "Test Person", "email": "person@example.test"}
+        assert status["signedIn"] is False
+        assert status["profile"] is None
+        assert session.status() == {
+            "signedIn": True,
+            "profile": {"displayName": "Test Person", "email": "person@example.test"},
+        }
         request = Request(
             f"http://127.0.0.1:{port}/api/account/sign-out",
             data=b"{}",
@@ -983,7 +987,7 @@ async def _browser_account_native_flow(identity, tmp_path):
         for _ in range(100):
             response = await client.get("/api/account")
             document = await response.json()
-            if document.get("signedIn"):
+            if document["signIn"]["state"] != "pending":
                 break
             await asyncio.sleep(0.01)
         revision = document.pop("principalRevision")
@@ -993,7 +997,10 @@ async def _browser_account_native_flow(identity, tmp_path):
         )
         async with ClientSession() as other:
             unbound = await other.get(client.make_url("/api/account"))
-            assert (await unbound.json())["principalRevision"] == "local"
+            unbound_status = await unbound.json()
+            assert unbound_status["principalRevision"] == "local"
+            assert unbound_status["signedIn"] is False
+            assert unbound_status["profile"] is None
             assert (await (await other.get(client.make_url("/who"))).json())["principal"] == "local"
             if not legacy:
                 browser_ticket = (await (await client.post("/api/auth/ws-ticket")).json())["ticket"]
@@ -1017,7 +1024,7 @@ async def _browser_account_native_flow(identity, tmp_path):
             "available": True,
             "canStartSignIn": True,
             "signInUnavailableReason": None,
-            "signedIn": True,
+            "signedIn": not legacy,
             "profile": None
             if identity.get("scope")
             else {"displayName": "Test Person", "email": "person@example.test"},
@@ -1116,6 +1123,8 @@ async def _browser_account_native_flow(identity, tmp_path):
                     session.state_path.write_text(json.dumps(state))
                     status = await (await client.get("/api/account")).json()
                     assert status["principalRevision"] == "local"
+                    assert status["signedIn"] is False
+                    assert status["profile"] is None
                     assert (await (await client.get("/who")).json())["principal"] == "local"
                 await client.post("/api/account/sign-out", json={})
 
