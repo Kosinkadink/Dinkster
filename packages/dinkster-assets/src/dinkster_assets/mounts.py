@@ -785,6 +785,58 @@ class MountTable:
         with self._lock:
             return tuple(row.mount for row in self._rows.values() if row.source == "config")
 
+    def folder_sizes(self, mount_ids: Sequence[str]) -> dict[str, dict[str, object]]:
+        """Observe finished grants off-loop, sharing a one-second read budget.
+
+        Canonical-root identities let clients count alias grants once. Pending,
+        failed, replaced or incompletely observed grants have no byte count.
+        """
+        deadline = time.monotonic() + 1.0
+        with self._lock:
+            rows = {mount_id: self._rows.get(mount_id) for mount_id in mount_ids}
+        observations: dict[tuple[int, int], dict[str, object]] = {}
+        result: dict[str, dict[str, object]] = {}
+        for mount_id, row in rows.items():
+            observation: dict[str, object] = {"status": "unavailable"}
+            if row is not None and row.state == "ready" and row.library is not None:
+                try:
+                    if time.monotonic() >= deadline:
+                        result[mount_id] = observation
+                        continue
+                    root = row.mount.path.resolve(strict=True)
+                    original = root.stat()
+                    identity = original.st_dev, original.st_ino
+                    if not original.st_ino:
+                        result[mount_id] = observation
+                        continue
+                    if identity not in observations:
+                        size = row.library.folder_size(deadline=deadline)
+                        current = row.mount.path.stat()
+                        if row.mount.path.resolve(strict=True) != root or (
+                            original.st_dev,
+                            original.st_ino,
+                        ) != (current.st_dev, current.st_ino):
+                            size = None
+                        observations[identity] = (
+                            {
+                                "status": "available",
+                                "bytes": size,
+                                "folder": hashlib.sha256(
+                                    f"{original.st_dev}:{original.st_ino}".encode("ascii")
+                                ).hexdigest(),
+                            }
+                            if size is not None
+                            else {"status": "unavailable"}
+                        )
+                    observation = observations[identity]
+                except (OSError, RuntimeError):
+                    pass
+                with self._lock:
+                    if self._rows.get(mount_id) is not row or row.state != "ready":
+                        observation = {"status": "unavailable"}
+            result[mount_id] = observation
+        return result
+
     def descriptors(self) -> list[dict[str, object]]:
         """Wire rows for GET /api/mounts, sorted by id.
 
