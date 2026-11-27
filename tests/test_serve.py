@@ -4232,7 +4232,7 @@ def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
     (pack / "rules_nodes.py").write_text(
         "import os\n"
         "from dinkster_api.v1 import CORE_INT, Input, Node, NodeSchema, Output, TypeExpr\n"
-        "from dinkster_schema import Formula, Rule\n"
+        "from dinkster_schema import Formula, NumberWidget, Rule\n"
         "from dinkster_schema.body import Set\n"
         "INT = TypeExpr.concrete(CORE_INT)\n"
         "def mark(name):\n"
@@ -4251,7 +4251,9 @@ def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema('rules.sampler', display_name='Sampler', output_node=True,\n"
-        "            body=(Input('steps', INT, default=20), Input('frames', INT, default=16)),\n"
+        "            body=(Input('steps', INT, default=20,\n"
+        "                        widget=NumberWidget(min=8, max=50, step=4)),\n"
+        "                  Input('frames', INT, default=16)),\n"
         "            validate=(\n"
         "                Rule(Formula('steps <= 50'), 'steps must be 50 or fewer'),\n"
         "                Rule(Formula('frames <= 32'), 'frames above 32 run slowly',\n"
@@ -4357,6 +4359,17 @@ def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
             assert wired["state"] == "completed", wired
             assert await warnings(wired) == []
             assert ran.read_text().splitlines()[1:] == ["source", "sampler 12000 16"]
+
+            off_step = await run(
+                "wired-off-step",
+                {
+                    "src": GraphNode("rules.source", {"value": 12001}),
+                    "s": GraphNode("rules.sampler", {"steps": Link("src", "value")}),
+                },
+            )
+            assert off_step["state"] == "completed", off_step
+            assert await warnings(off_step) == []
+            assert ran.read_text().splitlines()[3:] == ["source", "sampler 12001 16"]
 
     pending_error: BaseException | None = None
     try:

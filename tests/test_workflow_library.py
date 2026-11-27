@@ -1689,6 +1689,7 @@ def test_project_node_catalog_defaults_to_installed_packs_and_preserves_explicit
     tmp_path: Path,
 ) -> None:
     from dinkster_server import PackInfo
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
     from dinkster_server.projects import add_project_routes
 
     async def scenario() -> None:
@@ -1706,10 +1707,30 @@ def test_project_node_catalog_defaults_to_installed_packs_and_preserves_explicit
             library=library,
             packs={"tools": PackInfo("Tools"), "other": PackInfo("Other", version="8.0")},
             node_packs={"test.echo": "tools", "other.tool": "other"},
+            authenticator=StaticBearerAuthenticator(
+                {
+                    "writer": Principal(
+                        "writer",
+                        {"local": frozenset({"assets:read", "assets:write", "schemas:read"})},
+                    ),
+                    "reader": Principal("reader", {"local": frozenset({"assets:read"})}),
+                }
+            ),
         )
         add_project_routes(app, tmp_path, engine_version="0.0.15")
-        async with TestClient(TestServer(app)) as client:
+        async with TestClient(
+            TestServer(app), headers={"Authorization": "Bearer writer"}
+        ) as client:
             await client.post("/api/projects", json={"id": "film"})
+            writable = await (await client.get("/api/projects/film/needs")).json()
+            assert writable["canWrite"] is True
+            readonly = await (
+                await client.get(
+                    "/api/projects/film/needs", headers={"Authorization": "Bearer reader"}
+                )
+            ).json()
+            assert readonly["canWrite"] is False
+            assert readonly["hasInstalledNodes"] is True
             for project in ("default", "film"):
                 fresh = await (await client.get(f"/api/nodes?project={project}")).json()
                 assert set(fresh["nodes"]) == set(schemas)
@@ -1846,6 +1867,17 @@ def test_project_node_catalog_defaults_to_installed_packs_and_preserves_explicit
             deleted = await client.delete("/api/projects/film", json={"revision": 5})
             assert deleted.status == 200, await deleted.text()
             assert (await client.get("/api/nodes?project=film")).status == 404
+        empty_library = ServerLibrary(
+            AssetVault(tmp_path / "empty-vault"), LibraryStore(tmp_path / "empty.sqlite")
+        )
+        empty_app = create_app(
+            make_engine, {}, library=empty_library, packs={"metadata": PackInfo("Metadata")}
+        )
+        add_project_routes(empty_app, tmp_path / "empty", engine_version="0.0.15")
+        async with TestClient(TestServer(empty_app)) as client:
+            empty = await (await client.get("/api/projects/default/needs")).json()
+            assert empty["hasInstalledNodes"] is False
+            assert empty["canWrite"] is True
         library.store.close()
 
     run_scenario(scenario())
@@ -2575,6 +2607,8 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                 "extra": ["core"],
                 "unknown": [],
                 "installed": [{"pack": "core", "version": None}],
+                "hasInstalledNodes": True,
+                "canWrite": True,
             }
             registered = await client.post("/api/projects", json={"id": "film"})
             assert registered.status == 200
@@ -2666,6 +2700,8 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                 "extra": ["core"],
                 "unknown": [{"scope": "local", "id": record["id"]}],
                 "installed": [{"pack": "core", "version": None}],
+                "hasInstalledNodes": True,
+                "canWrite": True,
             }
             deleted = await client.delete("/api/projects/film", json={"revision": 1})
             assert deleted.status == 200
