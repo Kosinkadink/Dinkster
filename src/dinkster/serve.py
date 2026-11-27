@@ -2506,8 +2506,6 @@ def _serve(
                         else import_mount
                     )
                 ),
-                acquire_model=model_downloads.acquire if model_downloads else None,
-                model_destination=model_downloads.destination if model_downloads else None,
                 model_sources_for_name=TemplateModelSources().for_name,
                 disabled_model_name_locations=(
                     model_downloads.disabled_name_locations if model_downloads else None

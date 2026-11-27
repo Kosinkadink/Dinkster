@@ -196,6 +196,11 @@ def _manifest_payload(manifest: PackManifest, release: dict[str, object]) -> dic
             "gpu": manifest.sandbox.gpu,
             "network": manifest.sandbox.network,
             "writableMounts": manifest.sandbox.writable_mounts,
+            **(
+                {"networkOrigins": list(manifest.sandbox.network_origins)}
+                if manifest.sandbox.network_origins
+                else {}
+            ),
         },
         "parts": {
             selected.part: _manifest_payload(selected, release) for selected in manifest.parts

@@ -126,8 +126,11 @@ def test_held_values_survive_checkpoint_and_restart(tmp_path: Path) -> None:
 
     store = SessionStore(path)
     first = SessionService(store=store, write_check=AtMost(10))
-    session_id = first.create(scope="local", document_id="d", snapshot={"value": 50}).session_id
+    session_id = first.create(
+        scope="local", document_id="d", snapshot={"value": 50}, title="Initial name"
+    ).session_id
     write(first, session_id, 8)
+    first.rename(session_id, "Renamed session")
     store.close()
 
     store = SessionStore(path)
@@ -138,6 +141,7 @@ def test_held_values_survive_checkpoint_and_restart(tmp_path: Path) -> None:
     store = SessionStore(path)
     third = SessionService(store=store, write_check=AtMost(5))
     try:
+        assert third.get(session_id).title == "Renamed session"
         write(third, session_id, 8)
         write(third, session_id, 50)
         with pytest.raises(WriteRefusedError):

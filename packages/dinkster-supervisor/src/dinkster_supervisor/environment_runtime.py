@@ -29,7 +29,12 @@ from urllib.request import (
 )
 
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
-from .environment_process import cancel_pending_process, prepare_process, process_state
+from .environment_process import (
+    cancel_pending_process,
+    prepare_process,
+    process_document,
+    process_state,
+)
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -740,7 +745,7 @@ def generation_runtime_reason(
             state_path = lifecycle / "state.json"
             if state_path.is_symlink():
                 raise EnvironmentError("collection refuses linked lifecycle state")
-            instance = read_document(state_path).get("instance")
+            instance = process_document(lifecycle).get("instance")
             if (
                 not isinstance(instance, str)
                 or not instance
@@ -752,7 +757,7 @@ def generation_runtime_reason(
                 return "managed supervisor is live or its child cleanup is unproven"
             if (
                 state == "stopped"
-                and read_document(state_path).get("descendantsStopped") is not True
+                and process_document(lifecycle).get("descendantsStopped") is not True
             ):
                 if sys.platform == "darwin":
                     from .macos_process_family import RESTART_REQUIRED, supersede_stopped_receipt
@@ -844,6 +849,57 @@ def validate_assignment(generation: int, name: str, port: int, gpus: tuple[str, 
 def _validate_name(name: str) -> None:
     if type(name) is not str or _ENGINE_NAME.fullmatch(name) is None:
         raise EnvironmentError("engine name must be a portable engine id")
+
+
+def installation_pack_metadata(root: Path, name: str) -> dict[str, object]:
+    """Ask the selected snapshot for installed requests without starting an engine."""
+    _validate_name(name)
+    answer: dict[str, object] = {
+        "root": str(root),
+        "engine": name,
+        "snapshot": None,
+        "available": False,
+        "packs": None,
+    }
+    try:
+        current = read_current(root)
+        if current is None:
+            raise EnvironmentError("no installed snapshot")
+        answer["snapshot"] = str(current)
+        generation = root / "builds" / str(current)
+        result = subprocess.run(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster.manager",
+                "--root",
+                "",
+                "pack-metadata",
+                "--generation",
+                str(generation),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode:
+            raise EnvironmentError(
+                "installed pack metadata is unavailable; update or repair this installation"
+            )
+        metadata = json.loads(result.stdout)
+        if not isinstance(metadata, dict):
+            raise EnvironmentError("invalid installed pack metadata")
+        packs = cast("dict[str, object]", metadata).get("packs")
+        if not isinstance(packs, list):
+            raise EnvironmentError("invalid installed pack metadata")
+        if read_current(root) != current:
+            raise EnvironmentError("installation changed; read its packs again")
+        answer.update(available=True, packs=cast("list[object]", packs))
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        answer["message"] = str(exc)
+    return answer
 
 
 def engine_log_tail(root: Path, name: str) -> dict[str, str | bool]:

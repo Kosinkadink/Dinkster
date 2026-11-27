@@ -188,9 +188,11 @@ def needs(
             continue
         for pack in cast("list[dict[str, object]]", facts["packs"]):
             packs[json.dumps(pack, sort_keys=True)] = pack
+    selection = object_value(project["packs"], "packs")
     return {
         "packs": [packs[key] for key in sorted(packs)],
-        "extra": object_value(project["packs"], "packs")["extra"],
+        "extra": selection["extra"],
+        "allInstalled": selection.get("allInstalled", not selection["extra"]),
         "unknown": unknown,
         **({"workflows": workflows} if include_workflows else {}),
     }

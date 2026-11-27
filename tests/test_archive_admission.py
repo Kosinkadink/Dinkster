@@ -246,7 +246,9 @@ def test_default_admission_prepares_newest_pack_for_target_generation(
             prepare_output=output,
         )
         selected = Lockfile.from_record_json((output / "catalog.lock").read_text())
-        assert [(pack.pack, pack.version) for pack in selected.packs] == [("color-tools", "1.2.3")]
+        assert [(pack.pack, pack.version) for pack in selected.packs] == [
+            ("color-tools", "2.0.0" if conflict == "base" else "1.2.3")
+        ]
         locks = {path.stem: PackLock.read(path) for path in (output / "pack-locks").glob("*.json")}
         assert set(locks) == ({"color-tools", "color-tools~face"} if multipart else {"color-tools"})
         assert locks["color-tools"].requirements == ("dinkster-inference>=0.1.2",)
@@ -460,6 +462,7 @@ def test_manifest_admission_retains_part_metadata_and_checks_sibling_requirement
         'requires = ["torch>=2"]\nnamespaces = ["color.face"]\n'
         '[pack.parts.entry]\nnodes = "color_tools.face:PACK_NODES"\n'
         "[pack.parts.sandbox]\ngpu = true\nnetwork = false\nwritable-mounts = false\n"
+        'network-origins = ["https://api.example.test", "https://mirror.example.test:8443"]\n'
     )
     result = run_manifest_admission(root, "color-tools", "1.2.3", publisher="dinkster")
     assert not result.blocked and result.data is not None
@@ -468,7 +471,12 @@ def test_manifest_admission_retains_part_metadata_and_checks_sibling_requirement
     sibling = result.data["parts"]["face"]
     assert sibling["pythonRequirements"] == ["torch>=2"]
     assert sibling["namespaces"] == ["color.face"]
-    assert sibling["sandbox"] == {"gpu": True, "network": False, "writableMounts": False}
+    assert sibling["sandbox"] == {
+        "gpu": True,
+        "network": True,
+        "writableMounts": False,
+        "networkOrigins": ["https://api.example.test", "https://mirror.example.test:8443"],
+    }
     assert not run_doctor_static(root).blocked
     manifest.write_text(manifest.read_text().replace('"torch>=2"', '"color-tools>=1"'))
     refused = run_doctor_static(root)

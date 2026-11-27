@@ -681,6 +681,93 @@ def test_the_engine_and_the_process_answer_a_projects_outputs_alike(tmp_path: Pa
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("previous", [False, True])
+@pytest.mark.parametrize("action", ["engine/stop", "shutdown"])
+def test_stopping_home_cannot_leave_an_owned_start_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous: bool, action: str
+) -> None:
+    from dinkster_supervisor.environment_collection import generation_maintenance_directory
+    from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
+    from dinkster_supervisor.environment_state import writer_lock
+    from test_environment_runtime import free_port, make_generation
+
+    root = tmp_path / "installation"
+    make_generation(root, fake_serve=False)
+    (root / "builds/1/dinkster.lock").write_text('{"format":"dinkster.lock/1","packs":[]}\n')
+    (root / "environment.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "channel": "nightly",
+                "variant": "linux-cpu",
+                "port": free_port(),
+                "mirrors": [],
+                "libraryRoot": str(root / "library"),
+            }
+        )
+    )
+    home_folder = tmp_path / "home"
+    home_folder.mkdir()
+    (home_folder / "model-settings.json").write_text('{"version":1,"locations":[]}')
+    monkeypatch.setenv("DINKSTER_HOME", str(home_folder))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    async def scenario() -> None:
+        spawned = asyncio.Event()
+        children: list[asyncio.subprocess.Process] = []
+        spawn = asyncio.create_subprocess_exec
+
+        async def observe_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+            child = await spawn(*args, **kwargs)
+            if "dinkster_supervisor.environment" in args:
+                children.append(child)
+                spawned.set()
+            return child
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", observe_spawn)
+        if previous:
+            await asyncio.to_thread(start_engine, root, 1, "main", free_port())
+            await asyncio.to_thread(stop_engine, root, "main")
+        home = Home(installations=lambda: frozenset({root}), watch_interval=0.05)
+        try:
+            async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+                # The real CLI cannot write a new runtime record until maintenance ends.
+                with writer_lock(generation_maintenance_directory(root), operation="maintenance"):
+                    response = await client.post("/supervisor/engine", json={"root": str(root)})
+                    assert response.status == 200, await response.text()
+                    await asyncio.wait_for(spawned.wait(), timeout=30)
+                    before = await asyncio.to_thread(engine_status, root)
+                    assert [row["state"] for row in before] == (["stopped"] if previous else [])
+                    response = await client.post(f"/supervisor/{action}")
+                    assert response.status == 200, await response.text()
+                    answer = await response.json()
+                    assert answer["state" if action == "engine/stop" else "status"] == "stopped"
+                await asyncio.wait_for(children[0].wait(), timeout=120)
+                after = await asyncio.to_thread(engine_status, root)
+                assert [row["state"] for row in after] == (["stopped"] if previous else [])
+
+                # A deliberate stop must not prevent a later start of the same installation.
+                spawned.clear()
+                response = await client.post("/supervisor/engine/restart")
+                assert response.status == 200, await response.text()
+                # CLI completion, not startup speed, establishes when Home can be ready.
+                await spawned.wait()
+                await children[-1].wait()
+                await wait_for(client, lambda status: status["state"] == "ready")
+                assert (await client.post("/supervisor/shutdown")).status == 200
+                assert [row["state"] for row in await asyncio.to_thread(engine_status, root)] == [
+                    "stopped"
+                ]
+        finally:
+            for child in children:
+                if child.returncode is None:
+                    child.terminate()
+                    await child.wait()
+            await asyncio.to_thread(stop_engine, root, "main")
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("assigned", [False, True])
 def test_open_starts_a_managed_snapshot_registered_in_the_store(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assigned: bool
@@ -1522,7 +1609,10 @@ def test_home_creates_empty_workflow_and_copied_projects_without_an_engine(tmp_p
             assert copied.status == 200
             project = (await copied.json())["project"]
             assert project["uid"] != source["uid"]
-            assert project["name"] == "Copy" and project["packs"] == {"extra": ["example.extra"]}
+            assert project["name"] == "Copy" and project["packs"] == {
+                "extra": ["example.extra"],
+                "allInstalled": True,
+            }
             assert project["filesFolder"] == str(tmp_path / "copy")
             assert project["folder"] == str(tmp_path / "copy" / "output")
             assert project["lastOpenedAt"] is None and project["accountProject"] is None
@@ -1841,6 +1931,77 @@ def test_installations_report_their_wire_version_and_own_frontend(tmp_path: Path
             manifest["sources"] = {"frontend": {"url": "https://github.com/x/y"}}
             (same / "builds/1/engine-manifest.json").write_text(json.dumps(manifest))
             assert (await facts())["same"]["selected"] == "git"
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_installation_packs_read_stopped_snapshot_requests(tmp_path: Path) -> None:
+    from dinkster_registry import LockedPack, Lockfile
+    from test_environment_runtime import make_generation
+
+    root = tmp_path / "installed"
+    make_generation(root, fake_serve=False)
+    generation = root / "builds/1"
+    names = ("declared", "offline", "missing")
+    (generation / "dinkster.lock").write_text(
+        Lockfile.of(
+            [LockedPack(name, "1.2", "blake3:" + "a" * 64, "", (name,)) for name in names]
+        ).record_json()
+    )
+    for name in names[:2]:
+        source = generation / "pack-sources" / name
+        source.mkdir(parents=True)
+        (source / "nodes.py").write_text('raise AssertionError("must not import pack code")\n')
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\nnamespaces=["{name}"]\n'
+            '[pack.entry]\nnodes="nodes:NODES"\n'
+            + (
+                '[pack.sandbox]\nnetwork-origins=["https://API.example.test:443/"]\n'
+                '[[pack.parts]]\nname="extra"\n[pack.parts.entry]\nnodes="nodes:NODES"\n'
+                '[pack.parts.sandbox]\nnetwork-origins=["https://mirror.example.test:8443", '
+                '"https://api.example.test"]\n'
+                if name == "declared"
+                else "[pack.sandbox]\nnetwork=true\n"
+            )
+        )
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({root.resolve()}))
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/packs"
+            for query, expected in (
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unknown")}, 404),
+                ({"root": str(root), "engine": "../other"}, 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected
+            response = await client.get(endpoint, params={"root": str(root)})
+            assert response.status == 200
+            body = await response.json()
+            assert body["available"] is True and body["snapshot"] == "1"
+            packs = {row["pack"]: row for row in body["packs"]}
+            assert packs["declared"] == {
+                "pack": "declared",
+                "version": "1.2",
+                "displayName": "declared",
+                "available": True,
+                "networkOrigins": ["https://api.example.test", "https://mirror.example.test:8443"],
+            }
+            assert packs["offline"]["networkOrigins"] == []
+            assert packs["missing"]["version"] == "1.2"
+            assert packs["missing"]["available"] is False
+            assert packs["missing"]["networkOrigins"] is None
+            assert packs["missing"]["message"]
+            (generation / "dinkster.lock").unlink()
+            unavailable = await (await client.get(endpoint, params={"root": str(root)})).json()
+            assert unavailable["available"] is False and unavailable["packs"] is None
+            assert unavailable["message"]
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["state"] == "stopped" and "open" not in status
         finally:
             await client.close()
 

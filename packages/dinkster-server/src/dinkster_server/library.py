@@ -133,8 +133,6 @@ from .lookups import announce_asset_kinds, recorded_asset_kinds
 from .paging import decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
-    from dinkster_engine import RunResult
-
     from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
@@ -228,10 +226,6 @@ class ServerLibrary:
     receipts: PublicAcquisitionReceiptStore | None = None
     #: Current trusted declarations, kept separate from advisory provenance.
     public_sources_for: Callable[[str], Sequence[PublicAcquisitionSourceV1]] | None = None
-    acquire_model: (
-        Callable[[AssetNeed, str, Callable[[AssetRef, str], None]], AcquisitionResult] | None
-    ) = None
-    model_destination: Callable[[AssetNeed, str], str | None] | None = None
     model_sources_for_name: Callable[[str, str], Sequence[str]] | None = None
     disabled_model_name_locations: Callable[[str, str], tuple[str, ...]] | None = None
     disabled_model_locations: Callable[[str, str], tuple[str, ...]] | None = None
@@ -361,7 +355,9 @@ class ServerLibrary:
 
         return await publish_original_documents(self, node_id, claims)
 
-    def record_saved_outputs(self, job: Job, result: RunResult) -> RunResult:
+    def record_saved_artifacts(
+        self, job: Job, saved: Sequence[SavedArtifact]
+    ) -> tuple[SavedArtifact, ...]:
         """Retain required encoded attachments and catalog saves before completion."""
 
         def prepare(ref: AssetRef, node_id: str, journal: Path) -> None:
@@ -380,7 +376,7 @@ class ServerLibrary:
             )
 
         artifacts: list[SavedArtifact] = []
-        for artifact in result.artifacts:
+        for artifact in saved:
             journal = self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
             ref = AssetRef(
                 artifact.digest,
@@ -478,7 +474,7 @@ class ServerLibrary:
                     with contextlib.suppress(OSError):
                         preview_journal.unlink(missing_ok=True)
             artifacts.append(artifact)
-        return replace(result, artifacts=tuple(artifacts))
+        return tuple(artifacts)
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
@@ -1258,7 +1254,6 @@ def acquire_library_asset(
             },
         )
 
-    model_acquire = library.acquire_model
     result = acquire_need(
         need,
         library.vault,
@@ -1272,13 +1267,6 @@ def acquire_library_asset(
         ),
         receipts=library.receipts,
         before_publish=prepare,
-        remote_acquire=(
-            lambda remote_need: model_acquire(
-                remote_need, project, lambda ref, url: prepare(RemoteSource(url), ref.size, ref)
-            )
-        )
-        if model_acquire is not None and need.kind.startswith("model/")
-        else None,
     )
     if result.ok and journal.exists():
         recover_asset_observations(library, journals=(journal,))

@@ -229,9 +229,13 @@ class MountService:
             return ()
         with self._model_lock:
             settings = ModelSettings.load(self.library)
-            if settings == self._model_settings:
-                return ()
             desired = {mount.id: mount for mount in settings.mounts()}
+            if settings == self._model_settings and desired == {
+                str(row["id"]): self.settings_table.get(str(row["id"]))
+                for row in self.settings_table.descriptors()
+                if row["source"] == "shared-models"
+            }:
+                return ()
             candidate = self.copy_settings()
             for mount_id in desired:
                 if (

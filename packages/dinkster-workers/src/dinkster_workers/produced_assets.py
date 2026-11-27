@@ -49,7 +49,7 @@ def rendition_values(registry: TypeRegistry, rendition: Rendition) -> dict[str, 
     value = registry.wrap(IMAGE_DOCUMENT_TYPE, spec.decode(rendition.data))
     if spec.encode(value.resolve()) != rendition.data:
         raise AssetError("document rendition does not match its declared envelope")
-    spec.validate_encoded(rendition.data, value.meta.entries)
+    spec.validate_encoded(rendition.data, value.meta.codec_entries)
     return {"document": value}
 
 
