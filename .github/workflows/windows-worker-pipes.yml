@@ -15,6 +15,9 @@ on:
       - src/dinkster/compose.py
       - packages/dinkster-workers/src/dinkster_workers/host.py
       - packages/dinkster-assets/src/dinkster_assets/scratch.py
+      - packages/dinkster-supervisor/src/dinkster_supervisor/environment_process.py
+      - packages/dinkster-supervisor/src/dinkster_supervisor/environment_runtime.py
+      - tests/test_environment_runtime.py
       - uv.lock
 
 permissions:
@@ -67,5 +70,7 @@ jobs:
       - name: Exercise worker pipes and the contained produced-vault lease
         shell: bash
         run: |
+          python scripts/develop.py run -- python -m pytest -n0 -q \
+            tests/test_environment_runtime.py::test_status_reader_does_not_abort_supervisor_state_publication
           python scripts/develop.py run -- python -m pytest -n0 -q -rs \
             tests/test_sandbox.py tests/test_transport.py -k 'windows or pipe'
