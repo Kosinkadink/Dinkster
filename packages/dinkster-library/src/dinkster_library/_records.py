@@ -773,8 +773,10 @@ class Records:
                 if "packs" in patch:
                     packs = object_value(patch["packs"], "packs patch")
                     extra = packs.get("extra")
+                    all_installed = packs.get("allInstalled", False)
                     if (
-                        set(packs) != {"extra"}
+                        set(packs) - {"extra", "allInstalled"}
+                        or type(all_installed) is not bool
                         or not isinstance(extra, list)
                         or any(
                             not isinstance(pack, str) or not pack
@@ -782,7 +784,7 @@ class Records:
                         )
                     ):
                         raise LibraryError("invalid", "packs patch must contain an extra list")
-                    patch["packs"] = {**object_value(document["packs"], "packs"), **packs}
+                    patch["packs"] = {"extra": extra, "allInstalled": all_installed}
                 for field, required in (
                     ("environment", {"id", "lastSnapshot", "lastRunAt"}),
                     ("accountProject", {"issuer", "id"}),

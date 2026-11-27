@@ -185,6 +185,10 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
         for pack, info in sorted(state.packs.items())
     ]
 
+    extra = cast("list[str]", selected["extra"])
+    if selected["allInstalled"]:
+        extra = sorted({*extra, *(state.packs.keys() - {"core"})})
+
     def compute() -> dict[str, object]:
         packs: dict[str, dict[str, object]] = {}
         unknown: list[dict[str, object]] = []
@@ -210,7 +214,8 @@ async def project_needs(request: web.Request, identifier: str) -> dict[str, obje
                     packs[json.dumps(pack, sort_keys=True)] = pack
         return {
             "packs": [packs[key] for key in sorted(packs)],
-            "extra": selected["extra"],
+            "extra": extra,
+            "allInstalled": selected["allInstalled"],
             "unknown": unknown,
             "installed": installed,
         }
@@ -309,8 +314,10 @@ def add_project_routes(
         )
         relay: asyncio.Task[None] | None = None
         try:
-            if "changes.head" not in cast("list[str]", client.sync.hello["capabilities"]):
-                raise LibraryError("capability", "Library change relay requires updated tools.")
+            if not {"changes.head", "projects.pack-selection"}.issubset(
+                cast("list[str]", client.sync.hello["capabilities"])
+            ):
+                raise LibraryError("capability", "Project library requires updated tools.")
             identity = os.environ.get("DINKSTER_ENGINE_IDENTITY")
             if identity is not None:
                 value: object = json.loads(identity)
