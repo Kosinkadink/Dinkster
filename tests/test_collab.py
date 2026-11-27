@@ -586,6 +586,8 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
         document["items"]["first"]["controllers"] = {input_key: "increment"}
         document["items"]["saved"]["controllers"] = {input_key: "decrement"}
         document["items"]["pack"]["controllers"] = {input_key: "randomize"}
+        document["items"]["first"]["autoSize"] = True
+        document["items"]["saved"]["autoSize"] = True
         document["runs"] = {"native-run-one": {"card": "first", "items": ["picture", "video"]}}
         try:
             created = await client.post(
@@ -615,6 +617,11 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                             "path": ["items", "first", "controllers", input_key],
                             "value": "fixed",
                         },
+                        {
+                            "op": "replace",
+                            "path": ["items", "first", "autoSize"],
+                            "value": False,
+                        },
                         {"op": "remove", "path": ["items", "picture"]},
                         {
                             "op": "replace",
@@ -635,6 +642,7 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                 "variants": [2, 5],
             }
             document["items"]["first"]["controllers"][input_key] = "fixed"
+            document["items"]["first"]["autoSize"] = False
             del document["items"]["picture"]
             document["order"].remove("picture")
             document["runs"]["native-run-two"] = {"card": "removed-card", "items": []}
@@ -672,6 +680,11 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                 {"controllers": None},
                 {"controllers": {input_key: "after_run"}},
                 {"controllers": {input_key: {"mode": "fixed"}}},
+                {"autoSize": None},
+                {"autoSize": 0},
+                {"autoSize": 1},
+                {"autoSize": "true"},
+                {"autoSize": {}},
             ):
                 refused = await client.post(
                     f"/api/sessions/{sid}/ops",
