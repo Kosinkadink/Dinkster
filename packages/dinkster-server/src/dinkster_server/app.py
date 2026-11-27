@@ -369,6 +369,7 @@ from .preflight import (
     asset_preflight,
     bind_model_names,
     graph_asset_names,
+    graph_model_assets,
     graph_node_types,
     graph_provider_selections,
     parse_asset_consent,
@@ -3623,7 +3624,11 @@ async def handle_submit(request: web.Request) -> web.Response:
         # consent is TOCTOU-proof: verified ingest means a consented identity
         # can only ever land the exact bytes it names.
         if library is not None:
+            assert execution.schemas is not None
             referenced = graph_asset_names(preflight_graph)
+            model_assets = graph_model_assets(preflight_graph, execution.schemas)
+            for digest, (name, _kind) in model_assets.items():
+                referenced.setdefault(digest, name)
             # Node-declared requirements ([[pack.assets]] nodes = [...]): a
             # fixed internal model a node type needs joins the preflight set
             # the moment the graph instantiates that type - no widget, no
@@ -3655,6 +3660,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                     scope=scope,
                     project=project,
                     acquired_kinds=acquired_kinds,
+                    model_kinds={digest: kind for digest, (_name, kind) in model_assets.items()},
                 )
                 announce_asset_kinds(request.app, acquired_kinds)
         if (

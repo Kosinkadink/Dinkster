@@ -5,7 +5,6 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import replace
-from http.client import HTTPException
 from pathlib import Path
 
 from dinkster_assets import (
@@ -17,10 +16,9 @@ from dinkster_assets import (
     RemoteSource,
     SaveTarget,
 )
-from dinkster_assets.acquire import AcquisitionResult
 from dinkster_assets.civitai import CivitaiFile
 from dinkster_assets.fetch import FetchAborted
-from dinkster_assets.huggingface import HuggingFaceFile, select_huggingface_file
+from dinkster_assets.huggingface import HuggingFaceFile
 from dinkster_assets.model import model_is_hidden, model_ref_is_hidden
 from dinkster_assets.mounts import ModelFileSelection
 from dinkster_assets.provenance import ProvenanceRecord, ProvenanceStore
@@ -160,10 +158,6 @@ class ModelDownloads:
             default=None,
         )
 
-    def destination(self, need: AssetNeed, project: str) -> str | None:
-        target = self.target(need.kind, project)
-        return str(target.path) if target is not None else None
-
     def download_selected(
         self,
         selected: HuggingFaceFile | CivitaiFile,
@@ -297,31 +291,3 @@ class ModelDownloads:
                 token=token,
             )
         return ref
-
-    def acquire(
-        self,
-        need: AssetNeed,
-        project: str,
-        before_publish: Callable[[AssetRef, str], None],
-    ) -> AcquisitionResult:
-        table = self.mounts.table
-        target = self.target(need.kind, project)
-        if target is None:
-            return AcquisitionResult(need, "failed", detail="Select a writable model folder first")
-        for source in need.sources:
-            if not isinstance(source, RemoteSource):
-                continue
-            try:
-                selection = select_huggingface_file(source.url, token=self.credentials.token())
-                ref = self.download_selected(
-                    selection, target, project, before_publish, digest=need.digest
-                )
-            except (AssetError, OSError, HTTPException):
-                continue
-            table.refresh_publication(target.id)
-            return AcquisitionResult(need, "acquired", path=table.resolve(ref.digest))
-        return AcquisitionResult(
-            need,
-            "failed",
-            detail="No public Hugging Face source verified; existing model files were preserved",
-        )
