@@ -129,7 +129,16 @@
   subprocesses, shared memory, and granted GPU access remain available. Pack
   manifests request GPU, writable-mount, and network authority; each request
   takes effect only when the host grants it. Network grants name exact HTTPS
-  origins and never restore host or loopback network access.
+  origins and never restore host or loopback network access. Refused HTTPS
+  proxy requests name the pack and exact origin in node problems, including
+  requests from workers with no network grant. Retries produce one warning
+  per origin and affected node per run. A shared worker names every active
+  candidate node and pack rather than guessing which issued the request.
+  A direct connection that bypasses the proxy and returns a typed unreachable
+  network error, or a permission error from a socket operation, reports the
+  pack with destination unknown. Opaque native failures and swallowed errors
+  cannot supply that report; ordinary DNS errors do not establish a policy
+  refusal. No origin is inferred from an exception message.
 - macOS supports opt-in OS sandboxing for local isolated packs through
   `dinkster-serve --sandbox-packs`. Workers can access only granted folders
   and their private Unix sockets. Direct networking, including loopback,
@@ -139,7 +148,10 @@
   GPU-authorized Torch worker reports unavailable sandboxed MPS explicitly
   and can still run CPU operations. Sandboxed packs use separate Metal compile
   caches; when a private cache is unavailable, they compile operations at startup
-  without accessing the user's shared cache.
+  without accessing the user's shared cache. Origin reporting is available
+  for requests through the granted Unix HTTPS proxy, not direct native
+  connections or no-grant workers' DNS failures. Typed network refusals use
+  the unknown-destination report described above.
 - WSL2 Linux pack sandboxes support GPU grants through the WSL GPU device
   and read-only driver libraries. Windows drive mounts and WSL interop paths
   cannot be granted to pack workers; copy models and packs to the WSL disk.
@@ -171,6 +183,9 @@
   proxy; DNS lookups remain possible in that mode. Windows system paths and
   GPU drivers retain the platform's baseline app-container access; the native
   sandbox does not enforce Linux's GPU-denial or process/file-size limits.
+  Origin reporting requires the authenticated HTTPS proxy; native direct
+  connections and no-grant DNS failures cannot report an origin. Typed
+  network refusals use the unknown-destination report described above.
   Windows doctor import-probe jails remain unavailable; readiness reporting
   is separate from executing a pack probe.
 - In-process packs and remote worker daemons are outside the local serving

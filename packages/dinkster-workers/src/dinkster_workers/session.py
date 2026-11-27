@@ -22,7 +22,7 @@ import contextlib
 import os
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -1632,7 +1632,34 @@ class BoundarySession:
                 raise
             self._forget_invocation(invocation.invocation_id)
             self._emit(invocation, input_stats, {}, execute_ms, round_trip_ms)
-            return InvocationResult(error=error_from_wire(error_wire))
+            error = error_from_wire(error_wire)
+            if any(hint.code == "sandbox-network-destination-unknown" for hint in error.hints):
+                if on_event is not None:
+                    on_event(
+                        InvocationEvent(
+                            "sandbox-network-denied",
+                            {"pack": self.pack, "origin": None, "nodeIds": (invocation.node_id,)},
+                        )
+                    )
+                    error = replace(
+                        error,
+                        hints=tuple(
+                            hint
+                            for hint in error.hints
+                            if hint.code != "sandbox-network-destination-unknown"
+                        ),
+                    )
+                else:
+                    error = replace(
+                        error,
+                        hints=tuple(
+                            replace(hint, message=f"Pack {self.pack!r}: {hint.message}")
+                            if hint.code == "sandbox-network-destination-unknown"
+                            else hint
+                            for hint in error.hints
+                        ),
+                    )
+            return InvocationResult(error=error)
 
         consumed: list[str] = []
         try:

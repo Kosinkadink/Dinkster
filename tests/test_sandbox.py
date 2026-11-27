@@ -818,7 +818,7 @@ class TestLiveJail:
             encoding="ascii",
         )
         (pack / "network_probe.py").write_text(
-            "import asyncio, urllib.request\n"
+            "import asyncio, errno, socket, urllib.request\n"
             "from dinkster_schema.reporting import _emit\n"
             "from dinkster_api.v1 import (CORE_STRING, InputSpec, Node, NodeSchema, "
             "OutputSpec, TypeExpr)\n"
@@ -837,6 +837,19 @@ class TestLiveJail:
             "    async def execute(cls, mode):\n"
             "        _emit('sandbox-network-denied', {'pack': 'innocent',\n"
             "            'origin': 'https://forged.example.test'}, None)\n"
+            "        if mode == 'file-denied':\n"
+            "            raise PermissionError(errno.EACCES, 'denied', '/private/file')\n"
+            "        if mode == 'unknown':\n"
+            "            last = None\n"
+            "            for attempt in range(2):\n"
+            "                try:\n"
+            "                    connection = socket.create_connection(('203.0.113.9', 443), 1)\n"
+            "                    connection.close()\n"
+            "                except OSError as error:\n"
+            "                    last = error\n"
+            "                else:\n"
+            "                    raise RuntimeError('sandbox unexpectedly allowed direct TCP')\n"
+            "            raise last\n"
             "        if mode != 'single':\n"
             "            if Probe.ready is None:\n"
             "                Probe.ready, Probe.done = asyncio.Event(), asyncio.Event()\n"
@@ -903,6 +916,28 @@ class TestLiveJail:
                     diagnostics = [event for event in events if event.kind == "value_diagnostics"]
                     assert len(diagnostics) == 2
                     assert all("One of these nodes" not in hint.message for hint in reports)
+
+                for mode in ("unknown", "file-denied"):
+                    events.clear()
+                    with pytest.raises(ExecutionError) as refused:
+                        await engine.run(
+                            Graph(nodes={"probe": GraphNode("networkprobe.probe", {"mode": mode})}),
+                            ["probe"],
+                        )
+                    reports = [
+                        hint
+                        for hint in refused.value.error.hints
+                        if hint.code == "sandbox-network-denied"
+                    ]
+                    diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                    if mode == "unknown":
+                        assert len(reports) == len(diagnostics) == 1, refused.value.error
+                        assert "networkprobe" in reports[0].message
+                        assert "destination unknown" in reports[0].message
+                        assert "203.0.113.9" not in reports[0].message
+                        assert diagnostics[0].detail["diagnostics"][0]["origin"] is None
+                    else:
+                        assert reports == diagnostics == []
 
                 events.clear()
                 result = await asyncio.wait_for(

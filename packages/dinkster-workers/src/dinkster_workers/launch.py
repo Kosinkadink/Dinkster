@@ -25,8 +25,14 @@ from typing import Protocol
 
 from .interpreter import module_command
 
+SANDBOX_NETWORK_ENV = "DINKSTER_SANDBOX_NETWORK"
 HOST_OWNED_ENVIRONMENT: frozenset[str] = frozenset(
-    {"DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH", "DINKSTER_MXC_EXECUTABLE"}
+    {
+        "DINKSTER_EGRESS_PROXY",
+        "DINKSTER_PACK_SCRATCH",
+        "DINKSTER_MXC_EXECUTABLE",
+        SANDBOX_NETWORK_ENV,
+    }
 )
 
 

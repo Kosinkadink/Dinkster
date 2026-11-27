@@ -569,7 +569,9 @@ class Engine:
         self._run_prepared_types: dict[str, set[str]] = {}
         self._run_prepare_locks: dict[str, asyncio.Lock] = {}
         self._run_blocked_origins: dict[str, set[str]] = {}
-        self._run_network_problems: dict[str, dict[tuple[str, str], dict[str, ErrorHint]]] = {}
+        self._run_network_problems: dict[
+            str, dict[tuple[str, str | None], dict[str, ErrorHint]]
+        ] = {}
         self._run_expansion_origins: dict[str, dict[str, tuple[str, str]]] = {}
         self._compiling_run_ids: set[str] = set()
 
@@ -799,7 +801,11 @@ class Engine:
                 else (node_id,)
             )
             problems = self._run_network_problems.get(run_id)
-            if not isinstance(pack, str) or not isinstance(origin, str) or problems is None:
+            if (
+                not isinstance(pack, str)
+                or (origin is not None and not isinstance(origin, str))
+                or problems is None
+            ):
                 return
             reported = problems.setdefault((pack, origin), {})
             if node_id in reported:
@@ -818,7 +824,11 @@ class Engine:
                 pack_detail = f"sandboxed packs {', '.join(repr(name) for name in packs)}"
             hint = ErrorHint(
                 "sandbox-network-denied",
-                f"{attribution} in {pack_detail} was refused access to {origin}.",
+                f"{attribution} in {pack_detail} was refused access to {origin}."
+                if origin is not None
+                else (
+                    f"{attribution} in {pack_detail} was refused internet access; destination unknown."
+                ),
             )
             reported[node_id] = hint
             self._emit(

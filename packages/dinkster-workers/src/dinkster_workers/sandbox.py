@@ -45,7 +45,7 @@ from dinkster_values import GIBIBYTE, MEBIBYTE
 from ._seccomp import seccomp_filter
 from .accelerator import ACCELERATOR_ENV
 from .egress import EGRESS_PROXY_ENV, EgressProxy
-from .launch import HOST_OWNED_ENVIRONMENT, LaunchSpec
+from .launch import HOST_OWNED_ENVIRONMENT, SANDBOX_NETWORK_ENV, LaunchSpec
 
 
 class SandboxError(Exception):
@@ -459,6 +459,7 @@ def _launch_environment(spec: LaunchSpec, policy: SandboxPolicy) -> dict[str, st
     )
     if spec.temporary_directory is not None:
         environment.update(HOME="/tmp", TMPDIR="/tmp", TEMP="/tmp", TMP="/tmp")
+    environment[SANDBOX_NETWORK_ENV] = "1"
     return environment
 
 
