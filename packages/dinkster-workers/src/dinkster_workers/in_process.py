@@ -382,6 +382,9 @@ class InProcessWorker:
         """Invoke with the pack context active across all worker-side work."""
         started_at_ns = time.time_ns()
         with (
+            use_capture_budget(private=True)
+            if any(spec.secret for spec in invocation.effective_schema.inputs)
+            else contextlib.nullcontext(),
             self._pack_context(),
             use_produced_output_job(
                 invocation.job_ref or invocation.invocation_id, invocation.attempt_id

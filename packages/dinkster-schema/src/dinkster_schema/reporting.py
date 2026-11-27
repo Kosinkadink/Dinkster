@@ -328,6 +328,21 @@ _value_diagnostic_sink: ContextVar[Callable[[dict[str, object]], None] | None] =
 )
 
 _suppress_capture: ContextVar[bool] = ContextVar("dinkster_suppress_capture", default=False)
+_private_output: ContextVar[bool] = ContextVar("dinkster_private_output", default=False)
+
+
+@contextmanager
+def use_private_output(private: bool) -> Generator[None]:
+    """Keep node-controlled text and previews out of credential-bearing execution reports."""
+    token = _private_output.set(private or _private_output.get())
+    try:
+        yield
+    finally:
+        _private_output.reset(token)
+
+
+def private_output_active() -> bool:
+    return _private_output.get()
 
 
 @contextmanager
@@ -374,7 +389,7 @@ def report_value_diagnostic(code: str, data: Mapping[str, object] | None = None)
     except (TypeError, ValueError, RecursionError) as exc:
         raise ValueError("value diagnostic data must be JSON-representable") from exc
     sink = _value_diagnostic_sink.get()
-    if sink is not None:
+    if sink is not None and not private_output_active():
         sink(snapshot)
 
 
@@ -409,6 +424,11 @@ def use_reporter(reporter: Reporter) -> Generator[None]:
 
 
 def _emit(name: str, data: Mapping[str, object], blob: bytes | None) -> None:
+    if private_output_active():
+        if name != PROGRESS_EVENT:
+            return
+        data = {"step": data["step"], "total": data["total"]}
+        blob = None
     reporter = _reporter.get()
     if reporter is not None:
         with suppress_capture():
