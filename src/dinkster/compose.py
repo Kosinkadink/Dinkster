@@ -2589,6 +2589,58 @@ class ServingComposer:
             )
         return infos
 
+    @staticmethod
+    def _pack_storage_infos(
+        records: Mapping[str, _PackRecord], registry: TypeRegistry
+    ) -> dict[str, PackInfo]:
+        """Project the shared host's storing, including its cold type registrations.
+
+        Isolated workers retain their launch-time providers. Host workers
+        share one registry, and execution prepares every matching cold host
+        type registration before resolving values.
+        """
+        host_records = tuple(record for record in records.values() if record.spec.in_process)
+        candidates: dict[str, set[str]] = {}
+        owners: dict[str, str] = {}
+        for record in host_records:
+            for info in record.delta.packs.values():
+                for type_id, provider in info.type_storage:
+                    choices = candidates.setdefault(type_id, set())
+                    if getattr(record.worker, "cold", False):
+                        choices.add(provider)
+                    elif storing := registry.storing_pack(type_id):
+                        choices.add(storing.partition("~")[0])
+            for type_id in record.worker.registered_types:
+                owners[type_id] = record.manifest.name
+        providers: dict[str, str] = {}
+        for type_id, choices in candidates.items():
+            storing = registry.storing_pack(type_id) if type_id in registry else None
+            if storing is not None and storing == registry.owner_of(type_id):
+                providers[type_id] = storing.partition("~")[0]
+            elif type_id in owners:
+                providers[type_id] = owners[type_id]
+            else:
+                if storing is not None:
+                    choices.add(storing.partition("~")[0])
+                providers[type_id] = min(choices, key=lambda name: (canonical_name(name), name))
+        infos: dict[str, PackInfo] = {}
+        for record in records.values():
+            for pack_id, info in record.delta.packs.items():
+                _merge_pack_entry(
+                    infos,
+                    pack_id,
+                    replace(
+                        info,
+                        type_storage=tuple(
+                            (type_id, providers[type_id]) for type_id, _ in info.type_storage
+                        ),
+                    )
+                    if record.spec.in_process
+                    else info,
+                    record.manifest.execution_id,
+                )
+        return infos
+
     def _type_providers(self, manifests: Sequence[PackManifest]) -> dict[str, PackManifest]:
         """Choose the pack that stores each type these packs use.
 
@@ -4001,7 +4053,7 @@ class ServingComposer:
         remote_names = frozenset(self._remotes)
         runtime_schemas = MappingProxyType(dict(self.composition.schemas))
         host_type_workers = tuple(
-            record.worker
+            (record.worker, record.manifest.uses_types)
             for record in self._records.values()
             if record.spec.in_process
             and record.manifest.types_entry is not None
@@ -4015,8 +4067,8 @@ class ServingComposer:
         )
 
         async def prepare_host_types(atoms: set[str]) -> None:
-            for host_worker in host_type_workers:
-                if atoms.intersection(host_worker.catalog.types.atoms):
+            for host_worker, used_types in host_type_workers:
+                if atoms.intersection((*host_worker.catalog.types.atoms, *used_types)):
                     await host_worker.ensure_started()
 
         def resolve_providers(graph: Graph) -> Graph:
@@ -5373,8 +5425,8 @@ class ServingComposer:
         Validates against everything composed SO FAR - the same rules
         whether packs arrive all at once or one at a time - and returns
         the delta for a live server to announce. The delta's packs map may
-        repeat an existing entry only when identical (two compat workers
-        both contributing the shared "comfy" entry)."""
+        repeat an existing entry when identical or when the shared host's
+        selected type storage changes."""
         async with self._mutate:
             return await self._add_pack_locked(entry)
 
@@ -5799,6 +5851,13 @@ class ServingComposer:
                 self._register_worker_renditions(staged_registry, manifest.execution_id, worker)
             if spec.host_types is not None:
                 spec.host_types(staged_registry)
+            host_packs = self._pack_storage_infos(staged_records, staged_registry)
+            changed_host_packs = {
+                pack_id: info
+                for pack_id, info in host_packs.items()
+                if staged_packs.get(pack_id) != info
+            }
+            staged_packs.update(changed_host_packs)
         except BaseException:
             if snapshot is not None and topology is not None:
                 await self._rollback_unpublished_generation(snapshot, topology)
@@ -5867,6 +5926,7 @@ class ServingComposer:
         changed_derived_choices = self._changed_derived_choices(old_derived_choices)
         delta = replace(
             delta,
+            packs={**delta.packs, **changed_host_packs},
             schemas={node_type: composition.schemas[node_type] for node_type in published_types},
             node_packs={
                 node_type: composition.node_packs[node_type] for node_type in published_types
@@ -7427,6 +7487,7 @@ class ServingComposer:
             assert snapshot is not None
             old_derived_choices = self._current_derived_choices()
             old_choice_owners = dict(self._choice_owners)
+            old_packs = dict(composition.packs)
             staged_registry = composition._registry.copy()
             staged_registry.remove_pack_types(name)
             staged_registry.remove_relayed_renditions(name)
@@ -7451,7 +7512,11 @@ class ServingComposer:
             self._rebuild_registries()
             self._apply_derived_choices(derived_choices)
             changed_derived_choices = self._changed_derived_choices(old_derived_choices)
-            changed_packs: dict[str, PackInfo] = {}
+            changed_packs = {
+                pack_id: info
+                for pack_id, info in composition.packs.items()
+                if old_packs.get(pack_id) != info
+            }
             self._apply_inference_unavailable(inference_unavailable, changed_packs)
             self._publish_runtime(
                 topology,
@@ -7854,8 +7919,15 @@ class ServingComposer:
         self._choice_owners.clear()
         self._choice_owners.update(dict.fromkeys(self._core_choices, CORE_PACK_ID))
         self._compat_skip_owners = {}
+        host_packs = self._pack_storage_infos(self._records, composition._registry)
         for name, record in self._records.items():
-            self._merge_delta_registrations(name, record.canonical, record.delta)
+            delta = record.delta
+            if record.spec.in_process:
+                delta = replace(
+                    delta,
+                    packs={pack_id: host_packs[pack_id] for pack_id in delta.packs},
+                )
+            self._merge_delta_registrations(name, record.canonical, delta)
             for claim in record.claims:
                 self._claim_owners.setdefault(claim, name)
         for name, remote in self._remotes.items():

@@ -18,12 +18,13 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_engine import ExecutionError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_registry import Lockfile
-from dinkster_server import create_app
+from dinkster_server import STATE_KEY, create_app
 from dinkster_workers.doctor import diagnose, prepare_catalog
 
 from dinkster.compose import ServingComposer, compose_serving
 from dinkster.installer import Installer, lock_local_pack
 from dinkster.pack_spec import PackSpec
+from dinkster.reload_api import apply_remove
 from tests.async_scenarios import run_scenario
 
 
@@ -441,6 +442,92 @@ def test_pack_catalog_names_the_storing_used_by_its_borrowed_values(
                         ["read"],
                     )
                     assert result.outputs["read"]["storing"].resolve() == "cousin"
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize("provider", ["owner", "aardvark"])
+@pytest.mark.parametrize("hosting", ["in-process", "catalog", "isolated"])
+def test_live_catalog_tracks_shared_host_storing_but_not_isolated_workers(
+    tmp_path: Path, hosting: str, provider: str, warm: bool
+) -> None:
+    borrower = write_pack(
+        tmp_path,
+        "borrower",
+        BORROWER_SOURCE.format(name="borrower", tag="borrower").replace(
+            "encode=lambda",
+            'input_convert=lambda thing: {**thing, "storing": TAG},\n        encode=lambda',
+        ),
+        'uses-types = ["owner.thing"]\n',
+    )
+    storage_pack = write_pack(
+        tmp_path,
+        provider,
+        (
+            OWNER_SOURCE
+            if provider == "owner"
+            else BORROWER_SOURCE.format(name=provider, tag=provider)
+        ).replace(
+            "encode=lambda",
+            f'input_convert=lambda thing: {{**thing, "storing": "{provider}"}},\n'
+            "        encode=lambda",
+        ),
+        "" if provider == "owner" else 'uses-types = ["owner.thing"]\n',
+    )
+    if hosting == "catalog":
+        for manifest in (borrower, storage_pack):
+            assert prepare_catalog(manifest).ok
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        composition = composer.composition
+        try:
+            await composer.add_pack(
+                PackSpec(
+                    borrower, in_process=hosting != "isolated", require_catalog=hosting == "catalog"
+                )
+            )
+            app = create_app(
+                composition.make_engine,
+                composition.schemas,
+                packs=composition.packs,
+                node_packs=composition.node_packs,
+            )
+            async with TestClient(TestServer(app)) as client:
+                catalog = await (await client.get("/api/nodes")).json()
+                assert catalog["packs"]["borrower"]["typeStorage"] == {"owner.thing": "borrower"}
+                graph = Graph(
+                    nodes={
+                        "produce": GraphNode("borrower.produce"),
+                        "read": GraphNode("borrower.read", {"thing": Link("produce", "thing")}),
+                    }
+                )
+                if warm:
+                    result = await composition.make_engine(lambda _event: None).run(graph, ["read"])
+                    assert result.outputs["read"]["storing"].resolve() == "borrower"
+                delta = await composer.add_pack(
+                    PackSpec(
+                        storage_pack,
+                        in_process=hosting != "isolated",
+                        require_catalog=hosting == "catalog",
+                    )
+                )
+                app[STATE_KEY].announce(delta.schemas, delta.packs, delta.node_packs)
+                expected = "borrower" if hosting == "isolated" else provider
+                catalog = await (await client.get("/api/nodes")).json()
+                assert catalog["packs"]["borrower"]["typeStorage"] == {"owner.thing": expected}
+                result = await composition.make_engine(lambda _event: None).run(graph, ["read"])
+                assert result.outputs["read"]["storing"].resolve() == expected
+                catalog = await (await client.get("/api/nodes")).json()
+                assert catalog["packs"]["borrower"]["typeStorage"] == {"owner.thing": expected}
+                await apply_remove(app[STATE_KEY], composer, provider)
+                catalog = await (await client.get("/api/nodes")).json()
+                assert catalog["packs"]["borrower"]["typeStorage"] == {"owner.thing": "borrower"}
+                result = await composition.make_engine(lambda _event: None).run(graph, ["read"])
+                assert result.outputs["read"]["storing"].resolve() == "borrower"
         finally:
             await composer.close()
 
