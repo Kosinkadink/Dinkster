@@ -123,6 +123,32 @@ def test_frontend_and_status_answer_with_no_engine(tmp_path: Path) -> None:
     run_scenario(scenario())
 
 
+def test_home_status_answers_when_the_wsl_transport_cannot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.home_context import WslContext
+
+    context = WslContext("Dinkster-Desktop-0123456789ab", "/home/dinkster/tools/python3")
+    monkeypatch.setattr(
+        WslContext, "command", lambda *_: [str(tmp_path / "missing-wsl-executable")]
+    )
+
+    def installations() -> frozenset[Path]:
+        context.call(context.windows_path("/"), "installations")
+        raise AssertionError("The missing executable cannot return an installation list")
+
+    async def scenario() -> None:
+        home = Home(installations=installations)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            response = await client.get("/supervisor/status")
+            assert response.status == 200
+            status = await response.json()
+            assert status["role"] == "home" and status["state"] == "stopped"
+            assert "installations" not in status
+
+    run_scenario(scenario())
+
+
 def test_open_engine_receives_the_api_and_events_until_another_opens(tmp_path: Path) -> None:
     async def scenario() -> None:
         frontend = make_frontend(tmp_path / "frontend")

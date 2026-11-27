@@ -76,7 +76,7 @@ class WslContext:
                 check=False,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-        except subprocess.SubprocessError as error:
+        except (OSError, subprocess.SubprocessError) as error:
             raise EnvironmentError("WSL installation operation did not finish") from error
         if result.returncode:
             raise EnvironmentError(result.stderr.strip() or "WSL installation operation failed")
