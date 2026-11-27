@@ -314,12 +314,10 @@ def _torch_device(data: bytes, *, version: str, system: str) -> str:
 def manifest_unavailability(
     requirement: PackRequirement, manifest: PackManifest, variant: str, *, device: str | None = None
 ) -> str | None:
-    """Only manifest-declared resource needs can make portable packs hardware-specific."""
+    """Device declarations constrain execution; sandbox requests only ask for access."""
     if device is None and variant not in VARIANTS:
         raise RequirementError(f"unknown engine variant: {variant}")
     device = VARIANTS[variant] if device is None else device
-    if manifest.sandbox.gpu and device == "cpu":
-        return "pack.sandbox.gpu requires a GPU"
     for provider in manifest.vision_providers:
         if provider.node in requirement.node_types and device not in provider.devices:
             return (

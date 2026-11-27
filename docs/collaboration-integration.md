@@ -15,6 +15,11 @@ the response is the updated descriptor, and every connected participant receives
 `{type: "session_title", title}` in server arrival order. Titles survive restart
 without changing document revisions or snapshots. Sessions created without a
 title, including older stored sessions, omit the field until renamed.
+Descriptors include caller-specific `canEdit`, combining the session's editor
+role and the caller's write capability. After an ACL change, retained subscribers
+receive `{type: "session_permissions", canEdit}`; removed viewers are disconnected.
+This display hint exposes no ACL entries and never replaces server authorization
+on each write.
 
 Clients materialize documents and retain inverse patches locally. Submit undo
 as a new forward operation with a new opId and current baseRevision. Rebase

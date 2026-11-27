@@ -177,6 +177,7 @@ class _Subscriber:
     sender: asyncio.Task[None]
     principal_id: str
     authorized: Callable[[], bool]
+    can_edit: Callable[[], bool]
     authorization_reason: Callable[[], str] = lambda: "authorization-expired"
 
 
@@ -296,7 +297,8 @@ async def _json_body(request: web.Request) -> dict[str, Any]:
     return cast(dict[str, Any], body)
 
 
-def _session_wire(session: DocumentSession) -> dict[str, object]:
+def _session_wire(session: DocumentSession, request: web.Request) -> dict[str, object]:
+    principal = _principal(request)
     return {
         "protocolVersion": PROTOCOL_VERSION,
         "sessionId": session.session_id,
@@ -306,6 +308,10 @@ def _session_wire(session: DocumentSession) -> dict[str, object]:
         "revision": session.revision,
         "snapshotRevision": session.snapshot_revision,
         "createdAt": session.created_at,
+        "canEdit": principal.allows_in(session.scope, "sessions:write")
+        and _can_access(
+            request.app[SESSIONS_KEY], session.session_id, principal.principal_id, "editor"
+        ),
         **({"title": session.title} if session.title is not None else {}),
     }
 
@@ -360,7 +366,7 @@ def _can_access(
 ) -> bool:
     try:
         service.require_role(session_id, principal_id, minimum_role)
-    except SessionRoleError:
+    except (SessionRoleError, UnknownSessionError):
         return False
     return True
 
@@ -449,7 +455,7 @@ async def handle_create_session(request: web.Request) -> web.Response:
         )
     except ValueError as exc:
         raise _bad_request(str(exc)) from exc
-    return web.json_response(_session_wire(session), status=201)
+    return web.json_response(_session_wire(session, request), status=201)
 
 
 async def handle_list_sessions(request: web.Request) -> web.Response:
@@ -468,7 +474,7 @@ async def handle_list_sessions(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "sessions": [
-                _session_wire(session)
+                _session_wire(session, request)
                 for scope in scopes
                 for session in service.sessions(scope)
                 if _can_access(service, session.session_id, principal.principal_id, "viewer")
@@ -479,7 +485,7 @@ async def handle_list_sessions(request: web.Request) -> web.Response:
 
 async def handle_get_session(request: web.Request) -> web.Response:
     session = _get_session(request.app[SESSIONS_KEY], request, "sessions:read", "viewer")
-    return web.json_response(_session_wire(session))
+    return web.json_response(_session_wire(session, request))
 
 
 async def handle_put_title(request: web.Request) -> web.Response:
@@ -496,7 +502,7 @@ async def handle_put_title(request: web.Request) -> web.Response:
     except ValueError as exc:
         raise _bad_request(str(exc)) from exc
     await _broadcast(request, session.session_id, {"type": "session_title", "title": updated.title})
-    return web.json_response(_session_wire(updated))
+    return web.json_response(_session_wire(updated, request))
 
 
 async def handle_close_session(request: web.Request) -> web.Response:
@@ -715,6 +721,10 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
         sender=placeholder,
         principal_id=principal_id,
         authorized=lambda: _principal(request).allows_in(session.scope, "sessions:read"),
+        can_edit=lambda: (
+            _principal(request).allows_in(session.scope, "sessions:write")
+            and _can_access(service, session.session_id, principal_id, "editor")
+        ),
         authorization_reason=lambda: (
             (
                 f"delegation-revoked:{getattr(_principal(request), 'delegation_id', '')}"
@@ -726,7 +736,7 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
     )
     subscriber.sender = asyncio.create_task(_send_frames(subscriber, subscribers))
     subscribers.add(subscriber)
-    queue.put_nowait(json.dumps({"type": "session", **_session_wire(session)}))
+    queue.put_nowait(json.dumps({"type": "session", **_session_wire(session, request)}))
     closed_in_window = False
     try:
         try:
@@ -875,10 +885,17 @@ async def handle_put_acl(request: web.Request) -> web.Response:
         return _error(409, {"error": "acl-invalid", "message": str(exc)})
     subscribers = request.app[_SUBSCRIBERS_KEY].get(session.session_id, set())
     for subscriber in list(subscribers):
-        if not _can_access(service, session.session_id, subscriber.principal_id, "viewer"):
-            subscribers.discard(subscriber)
-            subscriber.sender.cancel()
-            asyncio.create_task(subscriber.ws.close())
+        if _can_access(service, session.session_id, subscriber.principal_id, "viewer"):
+            try:
+                subscriber.queue.put_nowait(
+                    json.dumps({"type": "session_permissions", "canEdit": subscriber.can_edit()})
+                )
+                continue
+            except asyncio.QueueFull:
+                pass
+        subscribers.discard(subscriber)
+        subscriber.sender.cancel()
+        asyncio.create_task(subscriber.ws.close())
     return web.json_response({"defaultRole": updated.default_role, "entries": updated.acl})
 
 
