@@ -2396,11 +2396,11 @@ def test_native_file_import_copies_with_upload_policy_and_operator_authority(
         client = TestClient(TestServer(app))
         await client.start_server()
         try:
-            for native, body, media_type, kind, limit in (
-                (source, data, "application/octet-stream", None, 64),
-                (small_source, small, "application/octet-stream", None, 64),
-                (image_source, image, "image/png", "media/image", len(image) - 1),
-                (latent_source, latent, LATENT_MEDIA_TYPE, "data/latent", len(latent) - 1),
+            for native, body, media_type, kind in (
+                (source, data, "application/octet-stream", None),
+                (small_source, small, "application/octet-stream", None),
+                (image_source, image, "image/png", "media/image"),
+                (latent_source, latent, LATENT_MEDIA_TYPE, "data/latent"),
             ):
                 params = {"scope": "local", "name": native.name}
                 if kind is not None:
@@ -2417,34 +2417,26 @@ def test_native_file_import_copies_with_upload_policy_and_operator_authority(
                 )
                 assert response.status == 403
                 service.allow_changes = True
-                before = store.query_assets("local", limit=10)
                 response = await client.post(
                     url, params=params, json=payload, headers={"Authorization": "Bearer operator"}
                 )
-                refused = limited and len(body) > limit
-                assert response.status == (413 if refused else 201), await response.text()
+                assert response.status == 201, await response.text()
                 assert str(tmp_path) not in await response.text()
-                if refused:
-                    assert not (imports / native.name).exists()
-                    assert store.query_assets("local", limit=10) == before
+                result = await response.json()
+                assert result["asset"] == {
+                    "digest": digest_bytes(body),
+                    "name": native.name,
+                    "size": len(body),
+                    "mediaType": media_type,
+                    "virtualPath": "" if kind == "data/latent" else f"mounts/imports/{native.name}",
+                }
+                if kind == "data/latent":
+                    stored = library.vault.resolve(digest_bytes(body))
+                    assert stored is not None and stored.read_bytes() == body
                 else:
-                    result = await response.json()
-                    assert result["asset"] == {
-                        "digest": digest_bytes(body),
-                        "name": native.name,
-                        "size": len(body),
-                        "mediaType": media_type,
-                        "virtualPath": ""
-                        if kind == "data/latent"
-                        else f"mounts/imports/{native.name}",
-                    }
-                    if kind == "data/latent":
-                        stored = library.vault.resolve(digest_bytes(body))
-                        assert stored is not None and stored.read_bytes() == body
-                    else:
-                        assert (imports / native.name).read_bytes() == body
-                    if kind is not None:
-                        assert store.media_grant("local", digest_bytes(body), kind) is not None
+                    assert (imports / native.name).read_bytes() == body
+                if kind is not None:
+                    assert store.media_grant("local", digest_bytes(body), kind) is not None
                 assert native.read_bytes() == body
             response = await client.post(
                 "/api/mounts/import-file",

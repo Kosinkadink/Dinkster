@@ -244,9 +244,12 @@
   folder order, exclusions, project-only grants or output selections.
 - Managed environments can persist separate generic and classified image, audio,
   video and model3d upload byte caps through `dinkster-env uploads`. Engines with
-  no saved policy are uncapped; existing saved override maps remain enabled.
-  `uploads --off` disables limits, while standalone engines can enable the same
-  per-kind ceilings with `--limit-uploads`. Overrides may lower but never raise
+  no saved policy enforce the default caps; existing saved lower limits remain
+  enabled. The off-by-default "No upload size limit" setting is enabled with
+  `uploads --no-upload-size-limit`, while standalone engines use
+  `--no-upload-size-limit`. An absent or null override policy does not disable
+  limits. Operator-authorized native file copies have no size cap, without
+  exempting ordinary HTTP uploads. Overrides may lower but never raise
   enabled ceilings. Declared and chunked lengths enforce the effective caps, oversized
   requests return 413 without publishing partial assets, and restart retains
   the policy. `GET /api/assets/upload-limits` and `/api/nodes`'s

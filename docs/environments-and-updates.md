@@ -68,8 +68,8 @@ exposing an engine outside a trusted network.
 
 ## Upload size limits
 
-Engines with no saved upload policy have no upload size limits. With every
-environment engine stopped, enable limits in the managed configuration:
+Engines enforce upload size limits by default. With every environment engine
+stopped, lower the limits in the managed configuration:
 
 ```bash
 dinkster-env --root /absolute/environment uploads \
@@ -79,21 +79,28 @@ dinkster-env --root /absolute/environment uploads \
 
 Without `--yes`, this validates and prints the plan without saving. Each
 invocation replaces the complete override policy; omitted kinds use their
-defaults. `uploads --yes` enables the default ceilings with no overrides;
-`uploads --off --yes` disables size limits. Existing saved override maps stay
-enabled with their values. Settings apply on the next managed start and survive
-restart, update and recovery launches. Standalone engines enable the same
-ceilings with `dinkster-serve --limit-uploads`.
+defaults. `uploads --yes` restores the default ceilings with no overrides.
+`uploads --no-upload-size-limit --yes` enables the "No upload size limit"
+setting, retaining saved lower limits. That setting is off by default;
+an absent or null `uploadLimits` does not disable limits. Existing saved
+override maps stay enabled with their values unless the setting is explicitly
+enabled. Settings apply on the next managed start and survive restart, update
+and recovery launches. Standalone engines disable ceilings only with
+`dinkster-serve --no-upload-size-limit`.
 
 The generic cap covers anonymous assets, named file imports and transfers.
 Classified media imports use their own image, audio, video or model3d cap,
-not the generic cap. Enabled ceilings are 16 MiB generic, 256 MiB image and
+not the generic cap. Default ceilings are 16 MiB generic, 256 MiB image and
 1 GiB for each other media kind and latents. Values must be positive integer
 byte counts. A saved request above a transport/media ceiling is clamped to
 that ceiling; it does not raise it. Codec, decoded-size, digest, content-kind and authentication
 checks still apply, including when size limits are off. Latent uploads reserve
 disk headroom as they stream; image-document decoding retains its separate
 working-set budgets.
+
+An operator-authorized native file import copies an already opened local file
+without an upload size cap. This exception does not depend on a network address
+and does not exempt ordinary HTTP uploads from the engine's policy.
 
 `GET /api/assets/upload-limits` returns null when size limits are off, or
 effective byte caps as an object with keys `generic`, `media/image`, `media/audio`, `media/video` and
