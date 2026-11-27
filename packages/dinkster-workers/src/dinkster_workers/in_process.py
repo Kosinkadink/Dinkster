@@ -380,11 +380,18 @@ class InProcessWorker:
         on_event: OnInvocationEvent | None = None,
     ) -> InvocationResult:
         """Invoke with the pack context active across all worker-side work."""
+        if any(spec.secret for spec in invocation.effective_schema.inputs):
+            # Refuse before pack setup can produce side effects or errors.
+            # Credential names are not a trusted resolution channel.
+            return InvocationResult(
+                error=NodeError(
+                    invocation.node_id,
+                    invocation.node_type,
+                    "Secret inputs require a trusted credential resolver",
+                )
+            )
         started_at_ns = time.time_ns()
         with (
-            use_capture_budget(private=True)
-            if any(spec.secret for spec in invocation.effective_schema.inputs)
-            else contextlib.nullcontext(),
             self._pack_context(),
             use_produced_output_job(
                 invocation.job_ref or invocation.invocation_id, invocation.attempt_id
@@ -1038,10 +1045,6 @@ class InProcessWorker:
     ) -> dict[str, object]:
         """Plain values for execute(), boundary-obliviously (hazard H9): the
         body's tree of values, as ``_build_body_kwargs`` builds it."""
-        if any(spec.secret for spec in invocation.effective_schema.inputs):
-            # Names are document data, not credentials. A worker without a
-            # trusted resolution channel must never call a pack with names.
-            raise InputCoercionError("Secret inputs require a trusted credential resolver")
 
         def unwrap(input_id: str, value: Value) -> object:
             return self._unwrap(invocation, input_id, value, diagnostics, media_inputs)

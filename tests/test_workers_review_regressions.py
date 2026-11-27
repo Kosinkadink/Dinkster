@@ -219,7 +219,18 @@ def test_secret_names_cannot_be_wired_or_executed_without_a_trusted_resolver() -
             nodes={"consumer": GraphNode(schema.node_type, {"credential": "service_key"})}
         )
         assert not validate(graph, schemas, ["consumer"])
-        worker = InProcessWorker(build_node_types((CredentialConsumer,)), registry)
+        invoking = False
+
+        @contextlib.contextmanager
+        def pack_context():
+            if invoking:
+                raise RuntimeError("synthetic credential in pack setup failure")
+            yield
+
+        worker = InProcessWorker(
+            build_node_types((CredentialConsumer,)), registry, pack_context=pack_context
+        )
+        invoking = True
         result = await worker.invoke(
             Invocation(
                 invocation_id="credential",
