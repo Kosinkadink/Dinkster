@@ -55,6 +55,7 @@ class SecretOutputStream:
         if any(value in combined for value in self._patterns):
             self._refused = True
             self._tail = b""
+            self._patterns = ()
             raise AssetError("Secret-bearing content cannot be saved")
         tail_size = max(len(value) - 1 for value in self._patterns)
         split = max(0, len(combined) - tail_size)
@@ -65,4 +66,5 @@ class SecretOutputStream:
         if self._refused:
             raise AssetError("Secret-bearing content cannot be saved")
         tail, self._tail = self._tail, b""
+        self._patterns = ()
         return tail

@@ -245,6 +245,7 @@ class VaultWriter:
         _persist_verification_record(self._target, record)
 
     def _discard(self) -> None:
+        self._secret_guard = SecretOutputStream()
         with contextlib.suppress(OSError):
             self._handle.close()
         with contextlib.suppress(OSError):
