@@ -47,6 +47,7 @@ from dinkster_graph import (
     dependency_map,
     elaborate_graph,
     graph_from_wire,
+    graph_output_types,
     has_errors,
     migrate_node_replacements,
     region_interface,
@@ -1477,7 +1478,11 @@ class Engine:
         return [spec.id for spec in schema.inputs if spec.id in names]
 
     @staticmethod
-    def _cache_entry_valid(schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
+    def _cache_entry_valid(
+        schema: NodeSchema,
+        hit: Mapping[str, Value],
+        output_types: Mapping[str, TypeExpr] | None = None,
+    ) -> bool:
         """Cache hits honor the same output contract as worker results: exact
         elaborated output ids, and concrete declared types match the stored
         Value's type_id. An invalid entry (corrupt/foreign cache) is treated
@@ -1491,11 +1496,12 @@ class Engine:
         for out in schema.outputs:
             if out.id not in hit:
                 continue
-            if record_value_problem(out.type, hit[out.id]) is not None:
+            declaration = (output_types or {}).get(out.id, out.type)
+            if record_value_problem(declaration, hit[out.id]) is not None:
                 return False
-            if contains_records(out.type):
+            if contains_records(declaration):
                 continue
-            expected = out.type.runtime_type_id()
+            expected = declaration.runtime_type_id()
             if expected is not None and hit[out.id].type_id != expected:
                 # Blocking can make even a required output absent. The worker
                 # validates the node-side marker before caching the envelope.
@@ -1504,14 +1510,23 @@ class Engine:
                 return False
         return True
 
-    def _cache_hit_valid(self, schema: NodeSchema, hit: Mapping[str, Value]) -> bool:
-        if not self._cache_entry_valid(schema, hit):
+    def _cache_hit_valid(
+        self,
+        schema: NodeSchema,
+        hit: Mapping[str, Value],
+        output_types: Mapping[str, TypeExpr] | None = None,
+    ) -> bool:
+        if not self._cache_entry_valid(schema, hit, output_types):
             return False
         validator = self._runtime().cache_hit_valid
         return validator is None or validator(hit)
 
     def _cached_output_origins(
-        self, label: str, schema: NodeSchema, outputs: Mapping[str, Value]
+        self,
+        label: str,
+        schema: NodeSchema,
+        outputs: Mapping[str, Value],
+        output_types: Mapping[str, TypeExpr] | None = None,
     ) -> CachedResult:
         # Content-identical producers share cache entries, not diagnostic
         # identities. Selectors forward an input's provenance unchanged.
@@ -1519,8 +1534,9 @@ class Engine:
             return CachedResult(outputs)
         rebound = dict(outputs)
         for output in schema.outputs:
-            if output.id in rebound and contains_records(output.type):
-                rebound[output.id] = refresh_record_names(output.type, rebound[output.id])
+            declaration = (output_types or {}).get(output.id, output.type)
+            if output.id in rebound and contains_records(declaration):
+                rebound[output.id] = refresh_record_names(declaration, rebound[output.id])
         for output_id, value in outputs.items():
             if is_absent(value) and not value.meta.get("absent.forwarded", False):
                 current = make_absent_value(
@@ -1642,6 +1658,8 @@ class Engine:
         resolve_expansion: Callable[[str, CachedResult], Awaitable[Mapping[str, Value]]]
         | None = None,
         control_context: Callable[[str, Mapping[str, Value]], RunExecutionContext] | None = None,
+        output_declarations: Mapping[str, Mapping[str, TypeExpr]] | None = None,
+        region_ports: Mapping[str, TypeExpr] | None = None,
     ) -> None:
         """Produce one node's outputs: coalesce, hit cache, or invoke.
 
@@ -1663,6 +1681,22 @@ class Engine:
         assert isinstance(node, GraphNode), f"region {node_id!r} dispatched to _run_node"
         label = prefix + node_id
         schema = effective[node_id]
+        output_types = {
+            name: declaration
+            for name, declaration in (output_declarations or {}).get(node_id, {}).items()
+            if contains_records(declaration)
+        }
+        input_types: dict[str, TypeExpr] = {}
+        for name, linked in node.inputs.items():
+            if not isinstance(linked, Link):
+                continue
+            declaration = (
+                (region_ports or {}).get(linked.output_id)
+                if linked.node_id == PORTS_NODE_ID
+                else (output_declarations or {}).get(linked.node_id, {}).get(linked.output_id)
+            )
+            if declaration is not None and contains_records(declaration):
+                input_types[name] = declaration
         lazy_inputs = tuple(spec for spec in schema.inputs if spec.lazy)
         lazy_links: dict[str, Link] = {
             spec.id: cast("Link", node.inputs[spec.id])
@@ -1893,8 +1927,8 @@ class Engine:
                 if inflight.cancelled():
                     continue  # owner's run died; try to take ownership
                 raise
-            outputs = self._cached_output_origins(label, schema, outputs)
-            if not self._cache_hit_valid(schema, outputs):
+            outputs = self._cached_output_origins(label, schema, outputs, output_types)
+            if not self._cache_hit_valid(schema, outputs, output_types):
                 break
             # Dead-owner check FIRST: a known-unresolvable result must not
             # take pins it would only hold until run cleanup.
@@ -1946,7 +1980,7 @@ class Engine:
                     if isinstance(reported_layer, str):
                         cache_layer = reported_layer
             entry_problem: str | None = None
-            if hit is not None and not self._cache_hit_valid(schema, hit):
+            if hit is not None and not self._cache_hit_valid(schema, hit, output_types):
                 entry_problem = "invalid-entry"
                 hit = None
             # A hit referencing a dead worker lifetime can never resolve
@@ -1964,7 +1998,7 @@ class Engine:
                 entry_problem = "stale-resource"
                 hit = None
             if hit is not None:
-                hit = self._cached_output_origins(label, schema, hit)
+                hit = self._cached_output_origins(label, schema, hit, output_types)
                 self._run_artifacts[run_id].extend(hit.artifacts)
                 produced[node_id] = (
                     await resolve_expansion(node_id, hit)
@@ -2028,6 +2062,11 @@ class Engine:
                 node_type=node.node_type,
                 inputs=inputs,
                 effective_schema=schema,
+                input_types={
+                    name: declaration
+                    for name, declaration in input_types.items()
+                    if name in inputs and declaration.runtime_type_id() == inputs[name].type_id
+                },
                 job_ref=run_id,
                 attempt_id=self._run_attempts[run_id],
                 connected_undemanded_inputs=connected_undemanded_inputs or (),
@@ -2262,7 +2301,7 @@ class Engine:
                 tuple(warnings),
             )
             if entry.expansion is not None:
-                if not self._cache_entry_valid(schema, entry):
+                if not self._cache_entry_valid(schema, entry, output_types):
                     raise ExecutionError(
                         NodeError(
                             label, node.node_type, "expansion violates the declared output contract"
@@ -2367,6 +2406,18 @@ class Engine:
         has_expansion = any(
             schema.may_expand_graph or schema.execution_context for schema in effective.values()
         )
+        declaration_graph = graph
+        output_declarations = (
+            graph_output_types(graph, self._schemas_for(run_id), region_ports)
+            if any(
+                contains_records(output.type)
+                for schema in effective.values()
+                for output in schema.outputs
+            )
+            or any(contains_records(port) for port in (region_ports or {}).values())
+            or any(isinstance(item, RegionNode) for item in graph.nodes.values())
+            else {}
+        )
         if not has_connected_lazy and not has_expansion:
             try:
                 await self._execute_static_dag(
@@ -2387,6 +2438,8 @@ class Engine:
                     cache_enabled,
                     cache_scope,
                     run_cache_enabled,
+                    output_declarations,
+                    region_ports,
                 )
             except BaseException:
                 produced.clear()
@@ -2626,6 +2679,7 @@ class Engine:
             }
 
         async def run_one(node_id: str) -> None:
+            nonlocal declaration_graph, output_declarations
             node = graph.nodes[node_id]
 
             async def ensure_input(dependency: str) -> None:
@@ -2676,6 +2730,11 @@ class Engine:
                     run_cache_enabled and node_id not in rerun_nodes,
                 )
             else:
+                if declaration_graph is not graph:
+                    output_declarations = graph_output_types(
+                        graph, self._schemas_for(run_id), region_ports
+                    )
+                    declaration_graph = graph
                 invoking.add(node_id)
                 await self._run_node(
                     run_id,
@@ -2695,6 +2754,8 @@ class Engine:
                     expansion_scopes.get(node_id, cache_scope),
                     resolve_expansion,
                     control_context,
+                    output_declarations,
+                    region_ports,
                 )
             # A future fragment may refer to any completed node, including a
             # non-idempotent one. Such values must survive until the run ends.
@@ -2739,6 +2800,8 @@ class Engine:
         cache_enabled: bool,
         cache_scope: str | None,
         run_cache_enabled: bool,
+        output_declarations: Mapping[str, Mapping[str, TypeExpr]],
+        region_ports: Mapping[str, TypeExpr] | None,
     ) -> None:
         """Original ready-set scheduler for graphs without deferred edges."""
         dependents: dict[str, list[str]] = {node_id: [] for node_id in deps}
@@ -2779,6 +2842,8 @@ class Engine:
                     prefix,
                     cache_enabled=cache_enabled,
                     cache_scope=cache_scope,
+                    output_declarations=output_declarations,
+                    region_ports=region_ports,
                 )
             references.finished(node_id)
             for dependent in dependents[node_id]:

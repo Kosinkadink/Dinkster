@@ -588,6 +588,15 @@ class InProcessWorker:
                 )
             )
 
+        for input_id, declaration in invocation.input_types.items():
+            problem = record_value_problem(declaration, invocation.inputs[input_id])
+            if problem is not None:
+                return InvocationResult(
+                    error=NodeError(
+                        invocation.node_id, invocation.node_type, f"input '{input_id}': {problem}"
+                    )
+                )
+
         coercion_diagnostics: list[dict[str, object]] = []
         media_inputs = dict(invocation.inputs)
         try:
@@ -1157,7 +1166,7 @@ class InProcessWorker:
                         bindings = bind_type_variables(
                             schema.inputs,
                             {
-                                input_id: value.type_id
+                                input_id: invocation.input_types.get(input_id, value.type_id)
                                 for input_id, value in invocation.inputs.items()
                                 if not is_absent(value)
                             },

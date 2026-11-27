@@ -57,7 +57,12 @@ from dinkster_protocol import (
     validate_preview_animation,
     validate_preview_mode,
 )
-from dinkster_schema import schema_from_wire, schema_to_wire
+from dinkster_schema import (
+    schema_from_wire,
+    schema_to_wire,
+    type_expr_from_wire,
+    type_expr_to_wire,
+)
 from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     CONVERSATION_CAS_BUDGET_BYTES,
@@ -100,12 +105,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v15: linked record declarations accompany generic input envelopes;
 v14: device unloading uses the gated release protocol instead of memoryShed;
 v13: original image document attachments and source closure in successful results;
 v12: explicit mounted saved-file attachments in successful invocation results;
@@ -869,6 +875,11 @@ def encode_invocation(
         ],
         "inputs": inputs_wire,
     }
+    if invocation.input_types:
+        header["inputTypes"] = {
+            name: type_expr_to_wire(declaration)
+            for name, declaration in invocation.input_types.items()
+        }
     if invocation.arm is not None:
         header["arm"] = invocation.arm
     if invocation.expected_execution_identity is not None:
@@ -1108,6 +1119,14 @@ def decode_invocation(
         except (TypeError, ValueError) as exc:
             raise BoundaryError(f"invalid invocation mediaSources entry: {exc}") from exc
     try:
+        input_types_raw = header.get("inputTypes", {})
+        if not isinstance(input_types_raw, Mapping):
+            raise ValueError("inputTypes must be an object")
+        input_types = {}
+        for name, raw in input_types_raw.items():
+            if not isinstance(name, str) or not isinstance(raw, Mapping):
+                raise ValueError("inputTypes must map input names to type declarations")
+            input_types[name] = type_expr_from_wire(dict(raw))
         return Invocation(
             invocation_id=str(header["invocationId"]),
             node_id=str(header["nodeId"]),
@@ -1116,6 +1135,7 @@ def decode_invocation(
             effective_schema=schema_from_wire(
                 dict(cast("Mapping[str, Any]", header["effectiveSchema"]))
             ),
+            input_types=input_types,
             job_ref=job_ref_raw,
             attempt_id=attempt_id_raw,
             output_members=output_members,

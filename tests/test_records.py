@@ -1,6 +1,6 @@
 """Declared records have directional named-field connections."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -18,6 +18,7 @@ from dinkster_graph import (
     graph_output_types,
     validate,
 )
+from dinkster_protocol import Invocation, InvocationResult, OnInvocationEvent
 from dinkster_schema import build_node_types, build_schemas, schema_from_wire, schema_to_wire
 from dinkster_values import (
     RESOURCE_HANDLE_TYPE,
@@ -35,7 +36,12 @@ from dinkster_values import (
     value_resource_ids,
 )
 from dinkster_workers import InProcessWorker
-from dinkster_workers.boundary import ValueCodec
+from dinkster_workers.boundary import (
+    BoundaryError,
+    ValueCodec,
+    decode_invocation,
+    encode_invocation,
+)
 
 from tests.async_scenarios import run_scenario
 
@@ -185,6 +191,7 @@ def test_record_runtime_reads_cross_pack_fields_and_reuses_renamed_cache(
         register_core_types(registry)
         cache = MemoryLRUCache()
         produced: list[str] = []
+        forwarded: list[str] = []
 
         def engine(field_name: str, destination_id: str) -> Engine:
             record = TypeExpr.record_of(
@@ -227,6 +234,20 @@ def test_record_runtime_reads_cross_pack_fields_and_reuses_renamed_cache(
                     )
                     return cls.outputs(value=value)
 
+            class Forward(Node):
+                @classmethod
+                def define_schema(cls) -> NodeSchema:
+                    generic = TypeExpr.variable("T")
+                    return NodeSchema(
+                        "test.record.forward",
+                        body=(Input("value", generic), Output("value", generic)),
+                    )
+
+                @classmethod
+                def execute(cls, *, value: object) -> Mapping[str, object]:
+                    forwarded.append(field_name)
+                    return cls.outputs(value=value)
+
             class Consume(Node):
                 @classmethod
                 def define_schema(cls) -> NodeSchema:
@@ -249,7 +270,7 @@ def test_record_runtime_reads_cross_pack_fields_and_reuses_renamed_cache(
                     assert value == {field_name: 29}
                     return cls.outputs(count=value[field_name])
 
-            nodes = (Produce, Consume)
+            nodes = (Produce, Forward, Consume)
             return Engine(
                 schemas=build_schemas(nodes),
                 registry=registry,
@@ -260,15 +281,17 @@ def test_record_runtime_reads_cross_pack_fields_and_reuses_renamed_cache(
         graph = Graph(
             nodes={
                 "make": GraphNode("test.record.make"),
-                "read": GraphNode("test.record.read", {"value": Link("make", "value")}),
+                "forward": GraphNode("test.record.forward", {"value": Link("make", "value")}),
+                "read": GraphNode("test.record.read", {"value": Link("forward", "value")}),
             }
         )
-        first = await engine("seed", destination_id).run(graph, ["make", "read"])
+        first = await engine("seed", destination_id).run(graph, ["make", "forward", "read"])
         assert first.outputs["read"]["count"].resolve() == 29
-        second = await engine("noise", destination_id).run(graph, ["make", "read"])
+        second = await engine("noise", destination_id).run(graph, ["make", "forward", "read"])
         assert second.outputs["read"]["count"].resolve() == 29
-        assert second.cached == ("make",)
+        assert second.cached == ("make", "forward")
         assert produced == ["seed"]
+        assert forwarded == ["seed"]
         renamed = second.outputs["make"]["value"].resolve()
         expected = {"noise": 29, "prompt": "seven"}
         assert renamed == (
@@ -278,6 +301,7 @@ def test_record_runtime_reads_cross_pack_fields_and_reuses_renamed_cache(
             if container == "tuple"
             else expected
         )
+        assert second.outputs["forward"]["value"].resolve() == renamed
 
         codec = ValueCodec(registry, use_shm=False, accept_shm=False)
         blobs: list[bytes] = []
@@ -471,7 +495,12 @@ def test_region_record_port_binds_fields_before_exporting(port: str, same_record
     run_scenario(scenario())
 
 
-def test_generic_record_containers_keep_fields_for_downstream_and_region_contracts() -> None:
+@pytest.mark.parametrize("raw", [False, True])
+@pytest.mark.parametrize("lazy", [False, True])
+def test_generic_record_containers_keep_fields_for_downstream_and_region_contracts(
+    raw: bool,
+    lazy: bool,
+) -> None:
     async def scenario() -> None:
         registry = TypeRegistry()
         register_core_types(registry)
@@ -503,7 +532,9 @@ def test_generic_record_containers_keep_fields_for_downstream_and_region_contrac
             @classmethod
             def execute(cls, *, input_values: Mapping[str, Value]) -> Mapping[str, object]:
                 value = input_values["value"]
-                return cls.outputs(value=make_list_value(value.type_id, (value,)))
+                return cls.outputs(
+                    value=[value.resolve()] if raw else make_list_value(value.type_id, (value,))
+                )
 
         class Pair(Node):
             @classmethod
@@ -522,7 +553,9 @@ def test_generic_record_containers_keep_fields_for_downstream_and_region_contrac
                 children = list_children(input_values["value"])
                 assert children is not None
                 return cls.outputs(
-                    value=make_tuple_value((registry.wrap("STRING", "first"), children[0]))
+                    value=("first", children[0].resolve())
+                    if raw
+                    else make_tuple_value((registry.wrap("STRING", "first"), children[0]))
                 )
 
         class Pick(Node):
@@ -531,7 +564,7 @@ def test_generic_record_containers_keep_fields_for_downstream_and_region_contrac
                 return NodeSchema(
                     "test.pick",
                     body=(
-                        Input("value", generic),
+                        Input("value", generic, lazy=lazy),
                         Input("index", INTEGER, default=-1),
                         Output("value", TypeExpr.tuple_element("value", "index")),
                     ),
@@ -539,12 +572,16 @@ def test_generic_record_containers_keep_fields_for_downstream_and_region_contrac
                 )
 
             @classmethod
+            def check_lazy_status(cls, **inputs: object) -> list[str]:
+                return ["value"] if inputs.get("value") is None else []
+
+            @classmethod
             def execute(
                 cls, *, index: int, input_values: Mapping[str, Value]
             ) -> Mapping[str, object]:
                 children = value_children(input_values["value"])
                 assert children is not None
-                return cls.outputs(value=children[index])
+                return cls.outputs(value=children[index].resolve() if raw else children[index])
 
         class Consume(Node):
             @classmethod
@@ -611,6 +648,91 @@ def test_generic_record_containers_keep_fields_for_downstream_and_region_contrac
                 d.code == "record-field-mismatch" and d.node_id == "read" and d.severity == "error"
                 for d in problems
             )
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_raw_generic_records_retain_optional_fields_across_invocation_wire(empty: bool) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        record = TypeExpr.record_of(
+            "test.settings",
+            RecordField("s", "seed", INTEGER),
+            RecordField("g", "guidance", INTEGER, optional=True),
+        )
+        generic = TypeExpr.variable("T")
+
+        class Produce(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema("test.make", body=(Output("value", TypeExpr.list_of(record)),))
+
+            @classmethod
+            def execute(cls) -> Mapping[str, object]:
+                return cls.outputs(value=[] if empty else [{"seed": 29}])
+
+        class Append(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    "test.append",
+                    body=(
+                        Input("value", TypeExpr.list_of(generic)),
+                        Output("value", TypeExpr.tuple_of(TEXT, TypeExpr.list_of(generic))),
+                    ),
+                )
+
+            @classmethod
+            def execute(cls, *, value: list[dict[str, object]]) -> Mapping[str, object]:
+                return cls.outputs(value=("first", [*value, {"seed": 97, "guidance": 11}]))
+
+        nodes = (Produce, Append)
+        worker = InProcessWorker(build_node_types(nodes), registry)
+
+        class WireWorker:
+            async def prepare(self, node_types: Sequence[str]) -> None:
+                await worker.prepare(node_types)
+
+            async def invoke(
+                self, invocation: Invocation, on_event: OnInvocationEvent | None = None
+            ) -> InvocationResult:
+                sender = ValueCodec(registry, use_shm=False, accept_shm=False)
+                header, blobs, segments, _ = encode_invocation(sender, invocation)
+                assert segments == []
+                receiver = ValueCodec(registry, use_shm=False, accept_shm=False)
+                decoded = decode_invocation(receiver, header, blobs, [])
+                if invocation.input_types:
+                    bad = {
+                        **header,
+                        "inputTypes": {"value": {"kind": "concrete", "types": ["INT"]}},
+                    }
+                    with pytest.raises(BoundaryError, match="input_types disagrees"):
+                        decode_invocation(receiver, bad, blobs, [])
+                return await worker.invoke(decoded, on_event)
+
+        engine = Engine(
+            schemas=build_schemas(nodes),
+            registry=registry,
+            worker=WireWorker(),
+            cache=MemoryLRUCache(),
+        )
+        result = await engine.run(
+            Graph(
+                nodes={
+                    "make": GraphNode("test.make"),
+                    "append": GraphNode("test.append", {"value": Link("make", "value")}),
+                }
+            ),
+            ["append"],
+        )
+        assert result.outputs["append"]["value"].resolve() == (
+            "first",
+            [{"seed": 97, "guidance": 11}]
+            if empty
+            else [{"seed": 29}, {"seed": 97, "guidance": 11}],
+        )
 
     run_scenario(scenario())
 

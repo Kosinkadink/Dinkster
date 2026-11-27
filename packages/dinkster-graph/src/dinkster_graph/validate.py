@@ -30,6 +30,7 @@ from dinkster_schema import (
     plan_type_equivalence,
     resolved_type_expr,
 )
+from dinkster_schema.records import contains_records
 from dinkster_values import (
     ASSET_TYPE,
     CORE_BOOLEAN,
@@ -608,7 +609,8 @@ def _check_input_value(
                         )
                     )
                     return
-                out_type = level.output_types.get(value.node_id, {}).get(value.output_id, out.type)
+                solved = level.output_types.get(value.node_id, {}).get(value.output_id, out.type)
+                out_type = solved if contains_records(solved) else out.type
                 out_optional = out.optional
                 producer_desc = producer.node_type
         if expected is None:
