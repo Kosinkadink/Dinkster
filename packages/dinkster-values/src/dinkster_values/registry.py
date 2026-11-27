@@ -674,8 +674,10 @@ class TypeRegistry:
         if not isinstance(producer, str) or storing in (None, "core"):
             return None
         assert storing is not None
+        label = type_id.rpartition(".")[2]
+        article = "an" if label[0].lower() in "aeiou" else "a"
         return (
-            f"{producer.partition('~')[0]} made a {type_id} value that "
+            f"{producer.partition('~')[0]} made {article} {label} value that "
             f"{storing.partition('~')[0]} cannot read"
         )
 

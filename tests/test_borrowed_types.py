@@ -221,6 +221,11 @@ def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
         "        input_convert=check_thing",
     }[validation]
     error = "UnresolvablePayload" if validation == "unresolvable" else "ValueError"
+    type_label, article = {
+        "encoded": ("IMAGE", "an"),
+        "unresolvable": ("SEGS", "a"),
+    }.get(validation, ("thing", "a"))
+    type_id = f"owner.{type_label}"
     owner = write_pack(
         tmp_path,
         "owner",
@@ -228,7 +233,8 @@ def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
         + OWNER_SOURCE.replace(
             'decode=lambda data: {**json.loads(data.removeprefix(b"OWNER:")), "storing": "owner"}',
             registration,
-        ).replace(
+        )
+        .replace(
             "def register_types(registry):",
             "def decode_thing(data):\n"
             '    return check_thing(json.loads(data.removeprefix(b"OWNER:")))\n\n'
@@ -237,7 +243,8 @@ def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
             f'        raise {error}("height is required")\n'
             '    return {**thing, "storing": "owner"}\n\n'
             "def register_types(registry):",
-        ),
+        )
+        .replace("owner.thing", type_id),
     )
     source = BORROWER_SOURCE
     if container:
@@ -255,16 +262,16 @@ def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
     borrower = write_pack(
         tmp_path,
         "borrower",
-        source.format(name="borrower", tag="borrower"),
-        'uses-types = ["owner.thing"]\n',
+        source.format(name="borrower", tag="borrower").replace("owner.thing", type_id),
+        f'uses-types = ["{type_id}"]\n',
     )
     maker = write_pack(
         tmp_path,
         "maker",
-        source.format(name="maker", tag="maker").replace(
-            '{"width": 11, "height": 29}', '{"width": 11}'
-        ),
-        'uses-types = ["owner.thing"]\n',
+        source.format(name="maker", tag="maker")
+        .replace('{"width": 11, "height": 29}', '{"width": 11}')
+        .replace("owner.thing", type_id),
+        f'uses-types = ["{type_id}"]\n',
     )
     marker = tmp_path / "read-ran"
     in_process = validation == "input-convert"
@@ -285,7 +292,10 @@ def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
         )
 
     assert failed.value.error.node_id == "read"
-    assert "maker made a owner.thing value that owner cannot read" in failed.value.error.message
+    assert (
+        f"maker made {article} {type_label} value that owner cannot read: height is required"
+        in failed.value.error.message
+    )
     assert "input 'thing'" in failed.value.error.message
     assert not marker.exists()
 
