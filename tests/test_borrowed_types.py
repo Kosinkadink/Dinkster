@@ -428,6 +428,9 @@ def test_pack_catalog_names_the_storing_used_by_its_borrowed_values(
                     if hosting == "parts" and replay < 2:
                         storage["owner.other"] = "cousin"
                     assert catalog["packs"]["cousin"]["typeStorage"] == storage
+                    assert catalog["packs"]["cousin"].get("typeStorageChoices", []) == (
+                        ["owner.thing"] if "owner" not in names and len(names) > 1 else []
+                    )
                 engine = composition.make_engine(lambda _event: None)
                 result = await engine.run(
                     Graph(
@@ -509,6 +512,7 @@ def test_live_catalog_tracks_shared_host_storing_but_not_isolated_workers(
             async with TestClient(TestServer(app)) as client:
                 catalog = await (await client.get("/api/nodes")).json()
                 assert catalog["packs"]["borrower"]["typeStorage"] == {"owner.thing": "borrower"}
+                assert "typeStorageChoices" not in catalog["packs"]["borrower"]
                 graph = Graph(
                     nodes={
                         "produce": GraphNode("borrower.produce"),
@@ -529,6 +533,9 @@ def test_live_catalog_tracks_shared_host_storing_but_not_isolated_workers(
                 expected = "borrower" if hosting == "isolated" else provider
                 catalog = await (await client.get("/api/nodes")).json()
                 assert catalog["packs"]["borrower"]["typeStorage"] == {"owner.thing": expected}
+                assert catalog["packs"]["borrower"].get("typeStorageChoices", []) == (
+                    ["owner.thing"] if provider == "aardvark" else []
+                )
                 result = await composition.make_engine(lambda _event: None).run(graph, ["read"])
                 assert result.outputs["read"]["storing"].resolve() == expected
                 catalog = await (await client.get("/api/nodes")).json()
@@ -536,6 +543,7 @@ def test_live_catalog_tracks_shared_host_storing_but_not_isolated_workers(
                 await apply_remove(app[STATE_KEY], composer, provider)
                 catalog = await (await client.get("/api/nodes")).json()
                 assert catalog["packs"]["borrower"]["typeStorage"] == {"owner.thing": "borrower"}
+                assert "typeStorageChoices" not in catalog["packs"]["borrower"]
                 result = await composition.make_engine(lambda _event: None).run(graph, ["read"])
                 assert result.outputs["read"]["storing"].resolve() == "borrower"
         finally:

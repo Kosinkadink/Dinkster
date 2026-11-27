@@ -947,6 +947,8 @@ class PackInfo:
     """Canonical publisher id ('local' for unpublished installs)."""
     type_storage: tuple[tuple[str, str], ...] = ()
     """Borrowed type ids and the packs selected to store their values in this worker."""
+    type_storage_choices: tuple[str, ...] = ()
+    """Types with competing installed storage providers and no installed owner."""
     blueprints: tuple[PackBlueprintAsset, ...] = ()
     """Starter workflow documents the pack ships; descriptors ride the
     packs table inline, bodies ride the lazy per-pack endpoint. Never
@@ -1003,6 +1005,8 @@ class PackInfo:
             wire["publisher"] = self.publisher
         if self.type_storage:
             wire["typeStorage"] = dict(self.type_storage)
+        if self.type_storage_choices:
+            wire["typeStorageChoices"] = list(self.type_storage_choices)
         if self.icon is not None:
             # Descriptor only - bytes ride /api/packs/{packId}/icon, never
             # inline (the table would re-download on every schema refresh).
@@ -1498,9 +1502,9 @@ class ServerState:
         merged_packs = dict(self.packs)
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and replace(existing, type_storage=()) != replace(
-                info, type_storage=()
-            ):
+            if existing is not None and replace(
+                existing, type_storage=(), type_storage_choices=()
+            ) != replace(info, type_storage=(), type_storage_choices=()):
                 raise ValueError(f"announce redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type, pack_id in node_packs.items():
@@ -1816,9 +1820,9 @@ class ServerState:
         }
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and replace(existing, type_storage=()) != replace(
-                info, type_storage=()
-            ):
+            if existing is not None and replace(
+                existing, type_storage=(), type_storage_choices=()
+            ) != replace(info, type_storage=(), type_storage_choices=()):
                 raise ValueError(f"replace redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type in node_packs:
