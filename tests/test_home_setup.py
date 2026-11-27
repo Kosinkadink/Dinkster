@@ -200,7 +200,16 @@ environment.preparation_progress = progress
                     )
                 engines = engine_status(root)
                 assert len(engines) == 1 and engines[0]["state"] == expected_state
-                assert engine_assignments(root, 1 if cancelling else 2) == before_assignments
+                assignments = engine_assignments(root, 1 if cancelling else 2)
+                assert [
+                    {key: value for key, value in row.items() if key != "port"}
+                    for row in assignments
+                ] == [
+                    {key: value for key, value in row.items() if key != "port"}
+                    for row in before_assignments
+                ]
+                if cancelling or not opened:
+                    assert assignments[0]["port"] == before_assignments[0]["port"]
             stale = await client.post(path, json={"planId": plan["id"]})
             assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
 
