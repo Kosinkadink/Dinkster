@@ -44,6 +44,7 @@ class _Plan:
     credential_revision: str | None = field(repr=False)
     digest: str | None
     destination_space: dict[str, object]
+    location: str | None
     expires: float = field(default_factory=lambda: time.monotonic() + 900)
 
     def wire(self) -> dict[str, object]:
@@ -312,6 +313,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         scope: str,
         source: str | None,
         asset: AssetRef | None,
+        location: str | None,
     ) -> _Plan | dict[str, object]:
         found = local_status(name, kind, project, asset)
         if found is not None:
@@ -319,7 +321,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
         candidates = (source,) if source is not None else sources.for_name(name, kind)
         if len(candidates) != 1:
             return {"status": "picker-required", "sources": list(candidates)}
-        target = downloads.target(kind, project)
+        target = downloads.target(kind, project, location=location)
         if target is None:
             return {"status": "destination-required"}
         credential_revision = None
@@ -342,6 +344,7 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             credential_revision,
             asset.digest if asset is not None else None,
             filesystem_space(root),
+            location,
         )
 
     def plannable(name: str) -> bool:
@@ -430,8 +433,10 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 raise ValueError("expected name, kind, project and scope")
             body = cast("dict[str, object]", raw)
             required = {"name", "kind", "project", "scope"}
-            if not required <= set(body) or set(body) - required - {"source", "asset"}:
-                raise ValueError("expected name, kind, project, scope and optional source or asset")
+            if not required <= set(body) or set(body) - required - {"source", "asset", "location"}:
+                raise ValueError(
+                    "expected name, kind, project, scope and optional source, asset or location"
+                )
             name, kind, project = body["name"], body["kind"], body["project"]
             if (
                 not isinstance(name, str)
@@ -441,6 +446,11 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
                 or not isinstance(project, str)
             ):
                 raise ValueError("expected a bare model name, supported kind and project")
+            location = body.get("location")
+            if "location" in body and (
+                not isinstance(location, str) or not location or len(location) > 255
+            ):
+                raise ValueError("expected a model location identifier")
             asset = None
             if "asset" in body:
                 wire = body["asset"]
@@ -480,7 +490,15 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             try:
                 task = asyncio.create_task(
                     asyncio.to_thread(
-                        plan, name, kind, project, owner, scope, cast("str | None", source), asset
+                        plan,
+                        name,
+                        kind,
+                        project,
+                        owner,
+                        scope,
+                        cast("str | None", source),
+                        asset,
+                        cast("str | None", location),
                     )
                 )
                 try:
@@ -644,7 +662,8 @@ def add_model_download_routes(app: web.Application, downloads: ModelDownloads) -
             if job.plan_id == body["planId"]:
                 return web.json_response(job.wire(job_id), status=200)
         if (
-            downloads.target(selected.kind, selected.project) != selected.target
+            downloads.target(selected.kind, selected.project, location=selected.location)
+            != selected.target
             or selected.target.path.resolve() != selected.root
         ):
             return web.json_response({"error": "download-destination-changed"}, status=409)

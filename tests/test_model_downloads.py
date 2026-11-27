@@ -968,6 +968,154 @@ def test_declared_model_plan_pins_metadata_without_downloading_and_respects_fold
     run_scenario(scenario())
 
 
+def test_download_location_is_selected_per_review_and_revalidated_before_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import asyncio
+
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_assets import MountTable, huggingface
+    from dinkster_assets.provenance import ProvenanceStore
+    from dinkster_server import create_app
+
+    from dinkster.model_downloads import ModelDownloads, shared_model_mounts
+    from dinkster.model_downloads_api import add_model_download_routes
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import SCHEMAS, make_engine
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": "studio",
+                "locations": [
+                    {"id": "studio", "path": str(tmp_path / "studio"), "mode": "readwrite"},
+                    {"id": "archive", "path": str(tmp_path / "archive"), "mode": "readwrite"},
+                    {"id": "readonly", "path": str(tmp_path / "readonly"), "mode": "read"},
+                    {
+                        "id": "vae",
+                        "path": str(tmp_path / "vae"),
+                        "kind": "model/vae",
+                        "mode": "readwrite",
+                    },
+                ],
+            }
+        )
+    )
+    table = MountTable()
+    for mount in shared_model_mounts():
+        table.add(mount, source="shared-models")
+    mounts = MountService(table, tmp_path / "mounts.toml", shared_models=True)
+    downloads = ModelDownloads(mounts, ProvenanceStore(tmp_path / "provenance.json"))
+    payload = b"download to the selected location rather than the global default"
+    name = "selected.safetensors"
+
+    @contextmanager
+    def respond(url: str, *, huggingface_token: str | None = None) -> Generator[HTTPSResponse]:
+        assert huggingface_token is None
+        metadata = {
+            "sha": "b" * 40,
+            "siblings": [
+                {
+                    "rfilename": name,
+                    "size": len(payload),
+                    "lfs": {
+                        "sha256": hashlib.sha256(payload).hexdigest(),
+                        "size": len(payload),
+                    },
+                }
+            ],
+        }
+        yield cast(
+            "HTTPSResponse",
+            io.BytesIO(json.dumps(metadata).encode() if "/api/models/" in url else payload),
+        )
+
+    monkeypatch.setattr(huggingface, "open_model_response", respond)
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS)
+        add_model_download_routes(app, downloads)
+        client = TestClient(TestServer(app))
+        await client.start_server()
+        body = {
+            "name": name,
+            "kind": "model/diffusion",
+            "project": "work",
+            "scope": "local",
+            "source": f"https://huggingface.co/studio/custom/resolve/main/{name}",
+        }
+        try:
+            response = await client.post("/api/models/downloads/plan", json=body)
+            assert response.status == 200
+            assert (await response.json())["destination"] == str(
+                tmp_path / "studio/diffusion_models" / name
+            )
+            for location in ("absent", "readonly", "vae"):
+                response = await client.post(
+                    "/api/models/downloads/plan", json={**body, "location": location}
+                )
+                assert response.status == 200
+                assert await response.json() == {"status": "destination-required"}
+            response = await client.post(
+                "/api/models/downloads/plan", json={**body, "location": None}
+            )
+            assert response.status == 400
+            plans = {}
+            for kind, folder in (("model/diffusion", "diffusion_models"), ("model/vae", "vae")):
+                response = await client.post(
+                    "/api/models/downloads/plan",
+                    json={
+                        **body,
+                        "kind": kind,
+                        "location": "archive",
+                    },
+                )
+                assert response.status == 200
+                plan = await response.json()
+                assert plan["destination"] == str(tmp_path / "archive" / folder / name)
+                plans[kind] = plan
+            start = {"planId": plans["model/diffusion"]["planId"], "consent": True}
+            mounts.update_project(
+                "work",
+                [m.id for m in shared_model_mounts() if not m.id.startswith("archive-")],
+                None,
+            )
+            response = await client.post("/api/models/downloads/start", json=start)
+            assert response.status == 409
+            assert await response.json() == {"error": "download-destination-changed"}
+            response = await client.post(
+                "/api/models/downloads/plan", json={**body, "location": "archive"}
+            )
+            assert await response.json() == {"status": "destination-required"}
+            mounts.update_project("work", list(mounts.mount_ids()), None)
+            response = await client.post("/api/models/downloads/start", json=start)
+            assert response.status == 202
+            job = await response.json()
+            async with asyncio.timeout(5):
+                while True:
+                    response = await client.get(f"/api/models/downloads/{job['jobId']}")
+                    result = await response.json()
+                    if result["status"] in {"completed", "failed"}:
+                        break
+                    await asyncio.sleep(0.01)
+            assert result["status"] == "completed"
+            destination = tmp_path / "archive/diffusion_models" / name
+            assert result["path"] == str(destination)
+            assert destination.read_bytes() == payload
+            assert not (tmp_path / "studio/diffusion_models" / name).exists()
+            settings = mounts.model_settings()
+            assert settings is not None and settings.download_location == "studio"
+            assert (await (await client.get("/api/jobs")).json())["jobs"] == []
+        finally:
+            await client.close()
+            await mounts.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize(
     "outcome",
     [
