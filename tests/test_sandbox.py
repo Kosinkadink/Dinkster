@@ -1355,10 +1355,11 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
 
         run_scenario(scenario())
 
+    @pytest.mark.parametrize("declared", [True, False])
     def test_manifest_origins_grant_only_the_named_destinations(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool
     ) -> None:
-        from dinkster.compose import PackSpec, ServingComposer
+        from dinkster.compose import CompositionError, PackSpec, ServingComposer
 
         async def scenario() -> None:
             async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -1385,8 +1386,13 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
             manifest.write_text(
                 '[pack]\nname="network-pack"\nnamespaces=["networkprobe"]\n'
                 '[pack.entry]\nnodes="network_probe:NODES"\n'
-                "[pack.sandbox]\nnetwork-origins=["
-                f'"https://API.example.test:{port}/", "https://mirror.example.test:{port}"]\n'
+                "[pack.sandbox]\n"
+                + (
+                    "network-origins=["
+                    f'"https://API.example.test:{port}/", "https://mirror.example.test:{port}"]\n'
+                    if declared
+                    else "network=true\n"
+                )
             )
             (pack / "network_probe.py").write_text(
                 "import os, socket\n"
@@ -1424,14 +1430,25 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                 },
             )
             try:
+                if not declared:
+                    ungranted = ServingComposer(sandbox_policy=SandboxPolicy())
+                    try:
+                        with pytest.raises(CompositionError, match="network access requested"):
+                            await ungranted.add_pack(PackSpec(manifest))
+                    finally:
+                        await ungranted.close()
                 await composer.add_pack(PackSpec(manifest, env={"PYTHONPATH": str(pack)}))
                 engine = composer.composition.make_engine(lambda event: None)
                 result = await engine.run(
                     Graph(nodes={"probe": GraphNode("networkprobe.probe", {})}), ["probe"]
                 )
                 assert result.outputs["probe"]["report"].resolve() == (
-                    "api.example.test:200,mirror.example.test:200,"
-                    "operator.example.test:200,other.example.test:403"
+                    (
+                        "api.example.test:200,mirror.example.test:200,"
+                        if declared
+                        else "api.example.test:403,mirror.example.test:403,"
+                    )
+                    + "operator.example.test:200,other.example.test:403"
                 )
             finally:
                 await composer.close()
