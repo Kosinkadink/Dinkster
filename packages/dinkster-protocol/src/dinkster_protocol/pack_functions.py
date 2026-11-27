@@ -16,13 +16,13 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Final, cast
 
 from dinkster_schema import NodeSchema
-from dinkster_schema.body import Call, declared_calls
+from dinkster_schema.body import Call, declared_calls, declared_calls_with_secrets
 from dinkster_schema.formula import MAX_INTEGER_BITS
 
 from .lookups import JSON_SAFE_INTEGER_MAX
@@ -139,6 +139,10 @@ class PackFunctionRequest:
     args: tuple[object, ...]
     writes: tuple[str, ...] = ()
     download: str | None = None
+    resolve_secret: Callable[[str], str | None] | None = field(
+        default=None, repr=False, compare=False
+    )
+    """Host-only authority of the authenticated presser; never part of the wire call."""
 
     def __post_init__(self) -> None:
         if not self.node_type or not self.function:
@@ -199,6 +203,28 @@ def declared_call(schema: NodeSchema | None, request: PackFunctionRequest) -> Ca
         ),
         None,
     )
+
+
+def secret_arguments(schema: NodeSchema | None, request: PackFunctionRequest) -> frozenset[int]:
+    """Secret positions are declaration authority, never an editor-supplied flag.
+
+    The call wire does not identify a button. Declarations sharing its function
+    and writes must agree about which positions resolve secrets.
+    """
+    matches: set[frozenset[int]] = (
+        {
+            positions
+            for call, positions in declared_calls_with_secrets(schema.body, schema.menu)
+            if call.name == request.function
+            and call.writes == request.writes
+            and call.download == request.download
+        }
+        if schema is not None
+        else set()
+    )
+    if len(matches) != 1:
+        raise PackFunctionRefused("not-declared", FAILED_MESSAGE)
+    return next(iter(matches))
 
 
 @dataclass(frozen=True)

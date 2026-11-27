@@ -66,7 +66,11 @@ from dinkster_protocol import (
     derive_attention_route_token,
 )
 from dinkster_protocol.lookups import LOOKUP_ERRORS, LookupCallError, lookup_marks_from_wire
-from dinkster_protocol.pack_functions import PackFunctionAnswer, PackFunctionRequest
+from dinkster_protocol.pack_functions import (
+    PackFunctionAnswer,
+    PackFunctionRequest,
+    secret_arguments,
+)
 from dinkster_protocol.pack_surfaces import PackRoute, pack_surfaces_from_wire
 from dinkster_schema import (
     NodeSchema,
@@ -505,6 +509,7 @@ class BoundarySession:
         self._route_pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._route_request_index = 0
         self._function_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
+        self._function_secret_requests: dict[str, PackFunctionRequest] = {}
         self._function_progress: dict[str, Callable[[float, str], None]] = {}
         self._function_request_index = 0
         self._rendition_pending: dict[str, asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
@@ -1232,6 +1237,7 @@ class BoundarySession:
             asyncio.get_running_loop().create_future()
         )
         self._function_pending[request_id] = future
+        self._function_secret_requests[request_id] = request
         self._function_progress[request_id] = on_progress
         try:
             await self.send(
@@ -1245,6 +1251,7 @@ class BoundarySession:
             raise
         finally:
             self._function_pending.pop(request_id, None)
+            self._function_secret_requests.pop(request_id, None)
             self._function_progress.pop(request_id, None)
 
     async def call_lookup(self, function: str, args: Sequence[object]) -> object:
@@ -2397,6 +2404,29 @@ class BoundarySession:
                 if type(name) is str:
                     value = invocation.resolve_secret(name)
             except Exception:  # noqa: BLE001 - store errors must not disclose credentials
+                value = None
+        function_pending = self._function_pending.get(str(invocation_id))
+        call = self._function_secret_requests.get(str(invocation_id))
+        if (
+            self._trusted_secret_channel
+            and not self._rebinding
+            and function_pending is not None
+            and not function_pending.done()
+            and call is not None
+            and call.resolve_secret is not None
+        ):
+            try:
+                position = int(str(input_id))
+                positions = secret_arguments(self.schemas.get(call.node_type), call)
+                if (
+                    str(position) == input_id
+                    and position in positions
+                    and position < len(call.args)
+                ):
+                    name = call.args[position]
+                    if type(name) is str:
+                        value = call.resolve_secret(name)
+            except Exception:  # noqa: BLE001 - private resolution never supplies error detail
                 value = None
         payloads: list[bytes] = []
         if type(value) is str:

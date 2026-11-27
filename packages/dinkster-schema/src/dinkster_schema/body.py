@@ -1570,6 +1570,48 @@ def declared_calls(body: tuple[BodyRow, ...], menu: tuple[Button, ...] = ()) -> 
                 yield step
 
 
+def declared_calls_with_secrets(
+    body: tuple[BodyRow, ...], menu: tuple[Button, ...] = ()
+) -> Iterator[tuple[Call, frozenset[int]]]:
+    """Calls and their direct secret arguments, respecting each button's field scope."""
+
+    def visit(
+        rows: tuple[BodyRow | Use, ...], inherited: frozenset[str], buttons: tuple[Button, ...] = ()
+    ) -> Iterator[tuple[Call, frozenset[int]]]:
+        scoped = tuple(scope_rows(rows))
+        secrets = (inherited - formula_names(rows).names.keys()) | {
+            row.id for row in scoped if isinstance(row, Input) and row.secret
+        }
+        for row in (*scoped, *buttons):
+            if isinstance(row, Button):
+                for step in row.steps:
+                    if isinstance(step, Call):
+                        yield (
+                            step,
+                            frozenset(
+                                index
+                                for index, argument in enumerate(step.args)
+                                if isinstance(argument, str) and argument in secrets
+                            ),
+                        )
+            elif isinstance(row, Group):
+                yield from visit(
+                    (row.value,) if row.value is not None else row.member or (), secrets
+                )
+            elif isinstance(row, Choice):
+                for option in row.options:
+                    yield from visit(option_rows(row, option.key), secrets)
+            elif isinstance(row, TypeChoice):
+                if row.variants is None:
+                    yield from visit(row.rows, secrets)
+                for variant in row.variants or ():
+                    yield from visit((*row.rows, *variant.rows), secrets)
+            elif isinstance(row, Described):
+                yield from visit(row.kinds, secrets)
+
+    yield from visit(body, frozenset(), menu)
+
+
 def replace_rows[R: BodyRow | Use](
     rows: tuple[R, ...], by_id: Mapping[str, Input]
 ) -> tuple[R, ...]:
@@ -2294,8 +2336,7 @@ def _parameters(function: Callable[..., object], *, pack: bool) -> list[tuple[st
                 raise ValueError(
                     f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is "
                     "not int, float, bool, str, a list of one of those, or AssetRef, "
-                    "after an optional first CallContext. "
-                    "Secrets for pack functions are not built yet"
+                    "after an optional first CallContext"
                 )
             raise ValueError(
                 f"{name}: parameter {parameter.name} ({_annotation_text(annotation)}) is not "

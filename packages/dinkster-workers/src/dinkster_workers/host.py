@@ -1485,34 +1485,40 @@ async def serve_connection(
             if type(name) is not str or name in requested:
                 continue
             requested.add(name)
-            request_id = uuid4().hex
-            key = (invocation.invocation_id, request_id)
-            future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
-                asyncio.get_running_loop().create_future()
-            )
-            pending_secrets[key] = future
-            try:
-                await send(
-                    {
-                        "type": "resolveSecret",
-                        "invocationId": invocation.invocation_id,
-                        "requestId": request_id,
-                        "inputId": spec.id,
-                    }
-                )
-                reply, payloads = await asyncio.wait_for(future, 30)
-                if reply.get("available") is True:
-                    if len(payloads) != 1:
-                        raise BoundaryError("secret reply is malformed")
-                    try:
-                        values[name] = payloads[0].decode("utf-8")
-                    except UnicodeError:
-                        raise BoundaryError("secret reply is malformed") from None
-                elif reply.get("available") is not False or payloads:
-                    raise BoundaryError("secret reply is malformed")
-            finally:
-                pending_secrets.pop(key, None)
+            value = await read_secret(invocation.invocation_id, spec.id)
+            if value is not None:
+                values[name] = value
         return values
+
+    async def read_secret(invocation_id: str, input_id: str) -> str | None:
+        request_id = uuid4().hex
+        key = (invocation_id, request_id)
+        future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        pending_secrets[key] = future
+        try:
+            await send(
+                {
+                    "type": "resolveSecret",
+                    "invocationId": invocation_id,
+                    "requestId": request_id,
+                    "inputId": input_id,
+                }
+            )
+            reply, payloads = await asyncio.wait_for(future, 30)
+            if reply.get("available") is True:
+                if len(payloads) != 1:
+                    raise BoundaryError("secret reply is malformed")
+                try:
+                    return payloads[0].decode("utf-8")
+                except UnicodeError:
+                    raise BoundaryError("secret reply is malformed") from None
+            if reply.get("available") is not False or payloads:
+                raise BoundaryError("secret reply is malformed")
+            return None
+        finally:
+            pending_secrets.pop(key, None)
 
     async def send_error(invocation_id: str, header: dict[str, Any], message: str) -> None:
         await send(
@@ -3072,7 +3078,12 @@ async def serve_connection(
                 function_task = track_resource_task(
                     asyncio.create_task(
                         run_pack_function(
-                            header, schemas, send, function_cancelled, asset=call_asset
+                            header,
+                            schemas,
+                            send,
+                            function_cancelled,
+                            asset=call_asset,
+                            resolve_secret=read_secret,
                         )
                     )
                 )
