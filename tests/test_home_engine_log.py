@@ -161,7 +161,7 @@ def test_engine_failure_remains_in_public_log_after_status_polling(tmp_path: Pat
         assert tail["available"] is True
         assert tail["truncated"] is False
         text = tail["text"]
-        assert "\nengine startup diagnostic\n" in text
+        assert "engine startup diagnostic" in text.splitlines()
         assert "WARNING:root:engine warning diagnostic" in text
         assert "ERROR:root:engine failure diagnostic" in text
         assert "exit code 3" in text

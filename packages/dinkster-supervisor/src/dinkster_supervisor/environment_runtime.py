@@ -30,6 +30,11 @@ from urllib.request import (
 
 from .environment_listener import PublicListener, read_response_compression, read_runtime_offline
 from .environment_process import cancel_pending_process, prepare_process, process_state
+from .environment_sandbox import (
+    internet_addresses,
+    read_sandbox_settings,
+    sandbox_command_arguments,
+)
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -256,6 +261,8 @@ def start_engine(
 ) -> dict[str, object]:
     """Start one generation through its identity-bound managed supervisor."""
     root = Path(root)
+    if (root / "pack-sandbox.json").exists():
+        sandbox_packs = read_sandbox_settings(root)["sandboxPacks"]
     if sandbox_packs:
         readiness = sandbox_readiness(root, generation)
         if not readiness["available"]:
@@ -455,7 +462,12 @@ def _start_engine(
         ),
     ]
     if sandbox_packs:
-        command.append("--sandbox-packs")
+        metadata = installation_pack_metadata(root, name, snapshot=generation)
+        if not metadata["available"]:
+            raise EnvironmentError(str(metadata.get("message", "pack metadata unavailable")))
+        command.extend(
+            sandbox_command_arguments(cast("list[dict[str, object]]", metadata["packs"]))
+        )
     if selected_packs:
         command.append("--selected-packs")
     if frontend_root is not None:
@@ -793,7 +805,9 @@ def _validate_name(name: str) -> None:
         raise EnvironmentError("engine name must be a portable engine id")
 
 
-def installation_pack_metadata(root: Path, name: str) -> dict[str, object]:
+def installation_pack_metadata(
+    root: Path, name: str, *, snapshot: int | None = None
+) -> dict[str, object]:
     """Ask the selected snapshot for installed requests without starting an engine."""
     _validate_name(name)
     answer: dict[str, object] = {
@@ -804,7 +818,7 @@ def installation_pack_metadata(root: Path, name: str) -> dict[str, object]:
         "packs": None,
     }
     try:
-        current = read_current(root)
+        current = read_current(root) if snapshot is None else snapshot
         if current is None:
             raise EnvironmentError("no installed snapshot")
         answer["snapshot"] = str(current)
@@ -836,8 +850,28 @@ def installation_pack_metadata(root: Path, name: str) -> dict[str, object]:
         packs = cast("dict[str, object]", metadata).get("packs")
         if not isinstance(packs, list):
             raise EnvironmentError("invalid installed pack metadata")
-        if read_current(root) != current:
+        if snapshot is None and read_current(root) != current:
             raise EnvironmentError("installation changed; read its packs again")
+        settings = read_sandbox_settings(root)
+        for row in cast("list[dict[str, object]]", packs):
+            origins = row.get("networkOrigins")
+            row["internetAddresses"] = (
+                internet_addresses(str(row["pack"]), cast("list[str]", origins), settings)
+                if isinstance(origins, list)
+                else None
+            )
+            graphics_value = row.get("graphicsCard")
+            graphics: dict[str, object] = (
+                cast("dict[str, object]", graphics_value)
+                if isinstance(graphics_value, dict)
+                else {"requested": None, "granted": None}
+            )
+            row["graphicsCard"] = graphics
+            graphics["granted"] = (
+                settings["sandboxPacks"] and graphics["requested"] is True
+                if graphics["requested"] is not None
+                else None
+            )
         answer.update(available=True, packs=cast("list[object]", packs))
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         answer["message"] = str(exc)

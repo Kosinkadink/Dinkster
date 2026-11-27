@@ -2188,6 +2188,7 @@ class ServingComposer:
         sandbox_policy: SandboxPolicy | None = None,
         sandbox_gpu_grants: Iterable[str] = (),
         sandbox_network_grants: Mapping[str, Iterable[str]] | None = None,
+        sandbox_network_policy: Mapping[str, Iterable[str]] | None = None,
         sandbox_writable_mounts: Sequence[str] = (),
         pack_scratch_root: Path | str | None = None,
         worker_temporary_root: Path | None = None,
@@ -2260,6 +2261,16 @@ class ServingComposer:
             )
         self._sandbox_network_grants = MappingProxyType(
             {name: tuple(dict.fromkeys(origins)) for name, origins in network_grants.items()}
+        )
+        self._sandbox_network_policy = (
+            {
+                canonical_name(name): tuple(
+                    dict.fromkeys(normalize_egress_origin(origin) for origin in origins)
+                )
+                for name, origins in sandbox_network_policy.items()
+            }
+            if sandbox_network_policy is not None
+            else None
         )
         self._sandbox_writable_mounts = tuple(sandbox_writable_mounts)
         self._worker_temporary_root = worker_temporary_root
@@ -2452,6 +2463,7 @@ class ServingComposer:
             sandbox_policy=self._sandbox_policy,
             sandbox_gpu_grants=self._sandbox_gpu_grants,
             sandbox_network_grants=self._sandbox_network_grants,
+            sandbox_network_policy=self._sandbox_network_policy,
             sandbox_writable_mounts=self._sandbox_writable_mounts,
             pack_scratch_root=self._pack_scratch_root,
             worker_temporary_root=self._worker_temporary_root,
@@ -2562,6 +2574,7 @@ class ServingComposer:
             spec, {**self._worker_env, **spec.env}
         )
         manifests = _group_manifests(spec)
+        selected_name = canonical_name(load_manifest(spec.manifest, part=spec.part).name)
         allowed = tuple(
             manifest
             for manifest in manifests
@@ -2571,6 +2584,12 @@ class ServingComposer:
                 or canonical_name(manifest.name) in self._sandbox_gpu_grants
             )
             and not (self._runtime_offline and manifest.node_source == "remote-gateway-catalog")
+            and (
+                self._sandbox_policy is None
+                or self._sandbox_network_policy is None
+                or self._sandbox_network_policy.get(canonical_name(manifest.name), ())
+                == self._sandbox_network_policy.get(selected_name, ())
+            )
         )
         if len(allowed) == len(manifests):
             return spec
@@ -2594,6 +2613,11 @@ class ServingComposer:
         )
         return replace(
             spec,
+            worker_group=spec.worker_group
+            + "-"
+            + hashlib.sha256(
+                "\0".join(manifest.execution_id for manifest in allowed).encode("utf-8")
+            ).hexdigest()[:16],
             env={
                 **spec.env,
                 "PYTHONPATH": os.pathsep.join(
@@ -2690,7 +2714,10 @@ class ServingComposer:
             canonical_name(manifest.name) for manifest in manifests if manifest.sandbox.gpu
         )
         network_requesters = frozenset(
-            canonical_name(manifest.name) for manifest in manifests if manifest.sandbox.network
+            canonical_name(manifest.name)
+            for manifest in manifests
+            if manifest.sandbox.network
+            or self._sandbox_network_grants.get(canonical_name(manifest.name))
         )
         network_grants = dict(self._sandbox_network_grants)
         for manifest in manifests:
@@ -2743,7 +2770,10 @@ class ServingComposer:
         missing_network_grants = {
             requester
             for requester in network_requesters
-            if not global_egress and not implicit_egress and not network_grants.get(requester)
+            if not global_egress
+            and not implicit_egress
+            and not network_grants.get(requester)
+            and self._sandbox_network_policy is None
         }
         if missing_network_grants:
             denied = ", ".join(
@@ -2770,10 +2800,22 @@ class ServingComposer:
                 )
             )
         )
+        if self._sandbox_network_policy is not None:
+            egress_allowlist = tuple(
+                dict.fromkeys(
+                    origin
+                    for manifest in manifests
+                    for origin in self._sandbox_network_policy.get(
+                        canonical_name(manifest.name), ()
+                    )
+                )
+            )
 
         policy = replace(
             base,
-            egress_allowlist=egress_allowlist if network_requesters else (),
+            egress_allowlist=egress_allowlist
+            if network_requesters or self._sandbox_network_policy is not None
+            else (),
             gpu=gpu,
             ro_binds=tuple(dict.fromkeys(ro_binds)),
             rw_binds=tuple(dict.fromkeys(rw_binds)),

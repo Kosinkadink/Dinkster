@@ -63,6 +63,16 @@ unknown requests. Origins include execution parts, not operator grants.
 ``GET /supervisor/installations/history`` takes an absolute registered ``root``
 and returns ``root``, ``current`` and the recorded ``history``, including entries
 whose build trees were collected. Unreadable history answers 503, not an empty list.
+``internetAddresses`` lists effective exact HTTPS origins with ``source`` of
+``pack`` or ``user``; ``graphicsCard`` reports nullable ``requested`` and
+``granted`` booleans. These describe next-start sandbox policy, not live devices.
+``GET/PUT /supervisor/installations/sandbox`` reads/sets ``{root, sandboxPacks}``;
+new installations default off. ``GET`` on its ``/readiness`` subpath reports
+the selected engine's sandbox prerequisites. ``GET/POST/DELETE`` on
+``/supervisor/installations/packs/internet`` reads/adds/removes a pack's
+effective addresses, including manifest requests. Reads take registered ``root``,
+``pack`` and optional ``engine``; writes take those fields plus ``address``.
+Mutations persist without restarting; Home restart rebuilds engine authority.
 
 ``POST /supervisor/engine/stop`` stops the open engine and keeps its
 installation open. ``GET /supervisor/engine/log`` reads the last 64 KiB of
@@ -509,6 +519,11 @@ class Home:
         if self.target is None:
             known = await asyncio.to_thread(self._installations)
             await self._replace(OpenTarget(self._default_installation(known), "main"))
+            return
+        if await asyncio.to_thread((self.target.root / "pack-sandbox.json").exists):
+            target = self.target
+            await self.stop_open()
+            await self._replace(target)
             return
         if self._task is not None and not self._task.done() and self.link.state != "starting":
             timeout = aiohttp.ClientTimeout(total=10)
@@ -1037,26 +1052,132 @@ async def _handle_installation_history(request: web.Request) -> web.Response:
 async def _handle_installation_packs(request: web.Request) -> web.Response:
     from .environment_runtime import installation_pack_metadata
 
-    root = Path(request.query.get("root", ""))
-    engine = request.query.get("engine", "main")
-    if not root.is_absolute():
-        return web.json_response(
-            {"error": "invalid-request", "message": "root must be an absolute path"}, status=400
-        )
-    try:
-        roots = await request.app[HOME_KEY].installations()
-    except ValueError as error:
-        return web.json_response(
-            {"error": "installations-unavailable", "message": str(error)}, status=503
-        )
-    root = root.resolve()
-    if root not in roots:
-        return web.json_response({"error": "unknown-installation"}, status=404)
+    root, fields = await _installation_fields(request, {"root", "engine"})
+    engine = fields.get("engine", "main")
+    if not isinstance(engine, str):
+        return web.json_response({"error": "invalid-request"}, status=400)
     try:
         metadata = await asyncio.to_thread(installation_pack_metadata, root, engine)
     except ValueError as error:
         return web.json_response({"error": "invalid-request", "message": str(error)}, status=400)
     return web.json_response(metadata)
+
+
+async def _installation_fields(
+    request: web.Request, allowed: set[str]
+) -> tuple[Path, dict[str, object]]:
+    if request.method == "GET":
+        fields: dict[str, object] = dict(request.query)
+        valid = len(request.query) == len(fields)
+    else:
+        try:
+            body: object = await request.json()
+        except ValueError:
+            body = None
+        fields = cast("dict[str, object]", body) if isinstance(body, dict) else {}
+        valid = isinstance(body, dict) and not request.query
+    root_value = fields.get("root")
+    if (
+        not valid
+        or set(fields) - allowed
+        or not isinstance(root_value, str)
+        or not Path(root_value).is_absolute()
+    ):
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": "invalid-request", "message": "invalid installation fields"}),
+            content_type="application/json",
+        )
+    try:
+        roots = await request.app[HOME_KEY].installations()
+    except ValueError as error:
+        raise web.HTTPServiceUnavailable(
+            text=json.dumps({"error": "installations-unavailable", "message": str(error)}),
+            content_type="application/json",
+        ) from error
+    root = Path(root_value).resolve()
+    if root not in roots:
+        raise web.HTTPNotFound(
+            text=json.dumps({"error": "unknown-installation"}), content_type="application/json"
+        )
+    return root, fields
+
+
+async def _handle_installation_sandbox(request: web.Request) -> web.Response:
+    from .environment_runtime import sandbox_readiness
+    from .environment_sandbox import read_sandbox_settings, set_sandbox_switch
+    from .environment_state import read_current
+
+    allowed = {"root", "sandboxPacks"} if request.method == "PUT" else {"root"}
+    root, fields = await _installation_fields(request, allowed)
+    try:
+        if request.method == "PUT":
+            enabled = fields.get("sandboxPacks")
+            if type(enabled) is not bool:
+                raise ValueError("sandboxPacks must be a boolean")
+            return web.json_response(await asyncio.to_thread(set_sandbox_switch, root, enabled))
+        settings = await asyncio.to_thread(read_sandbox_settings, root)
+        answer: dict[str, object] = {"root": str(root), "sandboxPacks": settings["sandboxPacks"]}
+        if request.path.endswith("/readiness"):
+            current = await asyncio.to_thread(read_current, root)
+            report = (
+                await asyncio.to_thread(sandbox_readiness, root, current)
+                if current is not None
+                else {
+                    "format": "dinkster.sandbox-readiness/1",
+                    "available": False,
+                    "detail": "Install an engine before enabling pack sandboxing.",
+                }
+            )
+            answer.update(report)
+        return web.json_response(answer)
+    except (OSError, ValueError) as error:
+        return web.json_response({"error": "invalid-request", "message": str(error)}, status=400)
+
+
+async def _handle_pack_internet(request: web.Request) -> web.Response:
+    from .environment_runtime import installation_pack_metadata
+    from .environment_sandbox import change_internet_address
+
+    allowed = {"root", "engine", "pack"}
+    if request.method != "GET":
+        allowed.add("address")
+    root, fields = await _installation_fields(request, allowed)
+    engine, pack = fields.get("engine", "main"), fields.get("pack")
+    if not isinstance(engine, str) or not isinstance(pack, str) or not pack:
+        return web.json_response({"error": "invalid-request"}, status=400)
+    try:
+        metadata = await asyncio.to_thread(installation_pack_metadata, root, engine)
+        if not metadata["available"]:
+            return web.json_response(metadata, status=503)
+        rows = cast("list[dict[str, object]]", metadata["packs"])
+        row = next((row for row in rows if row["pack"] == pack), None)
+        if row is None:
+            return web.json_response({"error": "unknown-pack"}, status=404)
+        if row["internetAddresses"] is None:
+            return web.json_response({"error": "pack-metadata-unavailable"}, status=503)
+        if request.method != "GET":
+            address = fields.get("address")
+            if not isinstance(address, str):
+                raise ValueError("address must be an exact HTTPS origin")
+            row["internetAddresses"] = await asyncio.to_thread(
+                change_internet_address,
+                root,
+                pack,
+                address,
+                cast("list[str]", row["networkOrigins"]),
+                str(metadata["snapshot"]),
+                allow=request.method == "POST",
+            )
+        return web.json_response(
+            {
+                "root": str(root),
+                "engine": engine,
+                "pack": pack,
+                "internetAddresses": row["internetAddresses"],
+            }
+        )
+    except (OSError, ValueError) as error:
+        return web.json_response({"error": "invalid-request", "message": str(error)}, status=400)
 
 
 async def _handle_open(request: web.Request) -> web.Response:
@@ -1259,6 +1380,12 @@ def create_home_app(
     app.router.add_get("/supervisor/installations", _handle_installations)
     app.router.add_get("/supervisor/installations/history", _handle_installation_history)
     app.router.add_get("/supervisor/installations/packs", _handle_installation_packs)
+    app.router.add_get("/supervisor/installations/sandbox", _handle_installation_sandbox)
+    app.router.add_put("/supervisor/installations/sandbox", _handle_installation_sandbox)
+    app.router.add_get("/supervisor/installations/sandbox/readiness", _handle_installation_sandbox)
+    app.router.add_get("/supervisor/installations/packs/internet", _handle_pack_internet)
+    app.router.add_post("/supervisor/installations/packs/internet", _handle_pack_internet)
+    app.router.add_delete("/supervisor/installations/packs/internet", _handle_pack_internet)
     app.router.add_post("/supervisor/engine", _handle_open)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)

@@ -45,6 +45,7 @@ parser.add_argument('--engine-state-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
 parser.add_argument('--sandbox-packs', action='store_true')
+parser.add_argument('--sandbox-network-policy')
 parser.add_argument('--allow-origin', action='append')
 args = parser.parse_args()
 
@@ -193,6 +194,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         package.mkdir(exist_ok=True)
         (package / "__init__.py").write_text("")
         (package / "serve.py").write_text(SERVE)
+        (package / "manager.py").write_text('import json; print(json.dumps({"packs": []}))\n')
         (site / "000-project.pth").write_text(str(root.resolve()) + "\n")
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():

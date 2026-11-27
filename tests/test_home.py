@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -1258,7 +1259,9 @@ def test_installations_report_their_wire_version_and_own_frontend(tmp_path: Path
     run_scenario(scenario())
 
 
-def test_installation_packs_read_stopped_snapshot_requests(tmp_path: Path) -> None:
+def test_installation_packs_read_stopped_snapshot_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from dinkster_registry import LockedPack, Lockfile
     from test_environment_runtime import make_generation
 
@@ -1281,7 +1284,8 @@ def test_installation_packs_read_stopped_snapshot_requests(tmp_path: Path) -> No
             + (
                 '[pack.sandbox]\nnetwork-origins=["https://API.example.test:443/"]\n'
                 '[[pack.parts]]\nname="extra"\n[pack.parts.entry]\nnodes="nodes:NODES"\n'
-                '[pack.parts.sandbox]\nnetwork-origins=["https://mirror.example.test:8443", '
+                "[pack.parts.sandbox]\ngpu=true\n"
+                'network-origins=["https://mirror.example.test:8443", '
                 '"https://api.example.test"]\n'
                 if name == "declared"
                 else "[pack.sandbox]\nnetwork=true\n"
@@ -1311,12 +1315,104 @@ def test_installation_packs_read_stopped_snapshot_requests(tmp_path: Path) -> No
                 "displayName": "declared",
                 "available": True,
                 "networkOrigins": ["https://api.example.test", "https://mirror.example.test:8443"],
+                "graphicsCard": {"requested": True, "granted": False},
+                "internetAddresses": [
+                    {"address": "https://api.example.test", "source": "pack"},
+                    {"address": "https://mirror.example.test:8443", "source": "pack"},
+                ],
             }
             assert packs["offline"]["networkOrigins"] == []
+            assert packs["offline"]["graphicsCard"] == {"requested": False, "granted": False}
             assert packs["missing"]["version"] == "1.2"
             assert packs["missing"]["available"] is False
             assert packs["missing"]["networkOrigins"] is None
+            assert packs["missing"]["graphicsCard"] == {"requested": None, "granted": None}
             assert packs["missing"]["message"]
+            sandbox = "/supervisor/installations/sandbox"
+            query = {"root": str(root)}
+            assert (await (await client.get(sandbox, params=query)).json())["sandboxPacks"] is False
+            changed = await client.put(sandbox, json={**query, "sandboxPacks": True})
+            assert changed.status == 200
+            assert (await changed.json())["sandboxPacks"] is True
+            grants = await (await client.get(endpoint, params=query)).json()
+            by_pack = {row["pack"]: row for row in grants["packs"]}
+            assert by_pack["declared"]["graphicsCard"] == {"requested": True, "granted": True}
+            assert by_pack["offline"]["graphicsCard"] == {"requested": False, "granted": False}
+            internet = endpoint + "/internet"
+            pack_query = {**query, "pack": "declared"}
+            user = {**pack_query, "address": "https://USER.example.test:443/"}
+            added = await client.post(internet, json=user)
+            assert added.status == 200
+            assert (await added.json())["internetAddresses"][-1] == {
+                "address": "https://user.example.test",
+                "source": "user",
+            }
+            removed = await client.delete(
+                internet, json={**pack_query, "address": "https://api.example.test"}
+            )
+            assert removed.status == 200
+            assert (await removed.json())["internetAddresses"] == [
+                {"address": "https://mirror.example.test:8443", "source": "pack"},
+                {"address": "https://user.example.test", "source": "user"},
+            ]
+            restored = await client.post(
+                internet, json={**pack_query, "address": "https://api.example.test"}
+            )
+            assert (await restored.json())["internetAddresses"][0] == {
+                "address": "https://api.example.test",
+                "source": "pack",
+            }
+            assert (await client.delete(internet, json=user)).status == 200
+            for path, valid in (
+                (sandbox, query),
+                (sandbox + "/readiness", query),
+                (endpoint, query),
+                (internet, pack_query),
+            ):
+                assert (await client.get(path, params={**valid, "extra": "no"})).status == 400
+                assert (
+                    await client.get(path, params={**valid, "root": str(tmp_path / "unknown")})
+                ).status == 404
+            for method, path, valid in (
+                ("PUT", sandbox, {**query, "sandboxPacks": True}),
+                ("POST", internet, user),
+                ("DELETE", internet, user),
+            ):
+                assert (
+                    await client.request(method, path, json={**valid, "extra": False})
+                ).status == 400
+                assert (
+                    await client.request(
+                        method, path, json={**valid, "root": str(tmp_path / "unknown")}
+                    )
+                ).status == 404
+            assert (await client.put(sandbox, json={**query, "sandboxPacks": 1})).status == 400
+            assert (
+                await client.post(internet, json={**user, "address": "https://127.0.0.1"})
+            ).status == 400
+            assert (await client.delete(internet, json={**user, "pack": "unknown"})).status == 404
+            assert (await client.post(internet, json={**user, "pack": "missing"})).status == 503
+            # Probe the selected engine with no host tools on PATH, not Home's interpreter.
+            with monkeypatch.context() as isolated:
+                isolated.setenv("PATH", "")
+                readiness = await (await client.get(sandbox + "/readiness", params=query)).json()
+            assert readiness["sandboxPacks"] is True
+            if sys.platform == "linux":
+                assert readiness["available"] is False
+                assert "bubblewrap" in readiness["detail"]
+            assert readiness["detail"]
+            await client.close()
+            client = TestClient(
+                TestServer(
+                    create_home_app(
+                        Home(installations=lambda: frozenset({root.resolve()})), frontend=None
+                    )
+                )
+            )
+            await client.start_server()
+            assert (await (await client.get(sandbox, params=query)).json())["sandboxPacks"] is True
+            persisted = await (await client.get(internet, params=pack_query)).json()
+            assert persisted["internetAddresses"] == packs["declared"]["internetAddresses"]
             (generation / "dinkster.lock").unlink()
             unavailable = await (await client.get(endpoint, params={"root": str(root)})).json()
             assert unavailable["available"] is False and unavailable["packs"] is None
