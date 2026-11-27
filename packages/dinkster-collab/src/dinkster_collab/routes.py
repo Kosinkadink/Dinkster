@@ -692,6 +692,11 @@ async def handle_session_events(request: web.Request) -> web.WebSocketResponse:
     # Capture before registration. Appends may run while ws.prepare
     # yields; the replay below closes that window before live delivery.
     captured_revision = session.revision
+    try:
+        # Titles have no operation log to replay after the handshake.
+        session.title = service.get(session.session_id).title
+    except UnknownSessionError:
+        pass
     # Registration, the descriptor frame, the gap-free replay, and the
     # closed-in-the-window check form ONE synchronous block - no awaits -
     # so a concurrent DELETE is strictly ordered against it: running

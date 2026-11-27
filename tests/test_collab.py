@@ -164,7 +164,9 @@ def test_session_lifecycle_over_http() -> None:
     run_scenario(scenario())
 
 
-def test_session_titles_reach_peers_and_reconnect_without_changing_content(tmp_path: Path) -> None:
+def test_session_titles_reach_peers_and_reconnect_without_changing_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     async def scenario() -> None:
         store = SessionStore(tmp_path / "sessions.sqlite")
         service = SessionService(store=store)
@@ -224,8 +226,25 @@ def test_session_titles_reach_peers_and_reconnect_without_changing_content(tmp_p
                 await socket.close()
             listed = await (await client.get("/api/sessions?scope=team", headers=viewer)).json()
             assert listed["sessions"] == [{**original, "title": title}]
-            reconnected = await client.ws_connect(f"/api/sessions/{sid}/events", headers=viewer)
-            assert (await reconnected.receive_json())["title"] == title
+            original_prepare = web.WebSocketResponse.prepare
+
+            async def rename_during_handshake(
+                ws: web.WebSocketResponse, request: web.Request
+            ) -> Any:
+                result = await original_prepare(ws, request)
+                if not ws.prepared:
+                    return result
+                response = await client.put(
+                    f"/api/sessions/{sid}/title", headers=editor, json={"title": "During handshake"}
+                )
+                assert response.status == 200
+                return result
+
+            with monkeypatch.context() as patch:
+                patch.setattr(web.WebSocketResponse, "prepare", rename_during_handshake)
+                reconnected = await client.ws_connect(f"/api/sessions/{sid}/events", headers=viewer)
+                assert (await reconnected.receive_json())["title"] == "During handshake"
+            title = "During handshake"
             await reconnected.close()
             assert await (
                 await client.get(f"/api/sessions/{sid}/snapshot", headers=viewer)
