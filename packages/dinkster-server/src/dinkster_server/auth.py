@@ -1195,6 +1195,8 @@ def install_auth(
             request[PRINCIPAL_KEY] = store.apply(principal)
 
         raw = request[_RAW_PRINCIPAL_KEY]
+        if raw.browser_session_id is not None and browser_principal is None:
+            return web.json_response({"error": "account-session-ended"}, status=401)
         if (
             authenticator is not None
             and raw.kind != "agent"

@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 import pytest
-from aiohttp import ClientSession, web
+from aiohttp import ClientSession, WSServerHandshakeError, web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_library import AsyncLibraryClient, LibraryClient
 from dinkster_server.auth import Principal, handle_ws_ticket, install_auth, principal_for
@@ -995,6 +995,16 @@ async def _browser_account_native_flow(identity, tmp_path):
             unbound = await other.get(client.make_url("/api/account"))
             assert (await unbound.json())["principalRevision"] == "local"
             assert (await (await other.get(client.make_url("/who"))).json())["principal"] == "local"
+            if not legacy:
+                browser_ticket = (await (await client.post("/api/auth/ws-ticket")).json())["ticket"]
+                try:
+                    async with other.ws_connect(
+                        client.make_url("/api/events"), params={"ticket": browser_ticket}
+                    ):
+                        pytest.fail("Unbound browser redeemed an account WebSocket ticket")
+                except WSServerHandshakeError as error:
+                    if error.status != 401:
+                        pytest.fail(f"Unbound browser ticket returned HTTP {error.status}")
             forged = await other.get(
                 client.make_url("/who"), headers={"Cookie": "dinkster_account=forged"}
             )
@@ -1054,7 +1064,8 @@ async def _browser_account_native_flow(identity, tmp_path):
             old_ticket = await client.get(
                 "/api/events", params={"ticket": ticket}, headers={"Upgrade": "websocket"}
             )
-            assert old_ticket.status == 403
+            assert old_ticket.status == 401
+            assert await old_ticket.json() == {"error": "account-session-ended"}
         assert not session.state_path.exists()
         assert not session.token_path.exists()
         if not legacy:
