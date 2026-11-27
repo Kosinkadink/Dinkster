@@ -15,10 +15,12 @@ from __future__ import annotations
 import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 from dinkster_assets import AssetError, digest_bytes
+from dinkster_assets.privacy import protect_secret_outputs
 from dinkster_caches import (
     BudgetedDiskCAS,
     CASError,
@@ -37,11 +39,13 @@ from dinkster_engine import (
 from dinkster_schema import build_schemas
 from dinkster_values import (
     RESOURCE_ID_META_KEY,
+    BufferEncoding,
     EncodedPayload,
     TypeRegistry,
     UnresolvablePayload,
     Value,
     ValueMeta,
+    make_list_value,
     register_core_types,
 )
 from dinkster_workers import ValueCodec
@@ -83,6 +87,78 @@ def test_shm_payload_survives_sender_ack_without_eager_copy() -> None:
         assert view.readonly
         assert bytes(view) == registry.spec("test.large").encode("x" * 1024)
     assert received.resolve() == "x" * 1024
+
+
+@pytest.mark.parametrize("transport", ["inline", "shm", "cas", "persistentCas"])
+@pytest.mark.parametrize("source", ["payload", "encoded", "buffer", "meta", "child", "identity"])
+def test_secret_output_refused_before_transport_retains_bytes(
+    tmp_path: Path, transport: str, source: str
+) -> None:
+    secret = "credential-\u03bb-017"
+    raw_secret = secret.encode("utf-8")
+    safe = b"useful-public-result"
+    registry = make_registry()
+
+    def encode(value: object) -> bytes:
+        if source == "buffer" and transport == "shm":
+            return safe
+        return raw_secret if value == 1 else safe
+
+    def prepare(value: object) -> BufferEncoding:
+        data = raw_secret if value == 1 else safe
+
+        def write(target: memoryview) -> int:
+            target[:] = data
+            return len(data)
+
+        return BufferEncoding(len(data), write)
+
+    registry.register(
+        "test.private",
+        encode=encode,
+        decode=lambda data: data,
+        fingerprint=lambda _: "public-identity",
+        prepare_buffer_encoding=prepare if source == "buffer" else None,
+    )
+    store = DiskCAS(tmp_path / "store")
+    codec = ValueCodec(
+        registry, use_shm=transport == "shm", shm_threshold=1, cas_threshold=1, value_store=store
+    )
+    if transport == "cas":
+        codec.enable_cas()
+    elif transport == "persistentCas":
+        codec.enable_persistent_cas()
+    value = registry.wrap("test.private", 1 if source in ("payload", "buffer") else 2)
+    if source == "encoded":
+        value = replace(value, payload=EncodedPayload("test.private", raw_secret, None))
+    elif source == "meta":
+        value = replace(value, meta=ValueMeta({"nested": [{secret: "metadata"}]}))
+    elif source == "child":
+        value = make_list_value("STRING", [registry.wrap("STRING", secret)])
+    elif source == "identity":
+        value = replace(value, fingerprint=secret)
+    blobs: list[bytes] = []
+    segments = []
+    try:
+        with protect_secret_outputs([secret]):
+            with pytest.raises(AssetError, match="Secret-bearing content cannot be saved"):
+                codec.encode(value, blobs, segments)
+        assert blobs == segments == []
+        assert codec.take_pending_store_blobs() == []
+        assert codec.conversation_checkpoint() == ({}, 0)
+        assert store.digests() == []
+        with protect_secret_outputs([secret]):
+            wire, stat = codec.encode(registry.wrap("test.private", 2), blobs, segments)
+        assert stat.transport == transport
+        if transport == "persistentCas":
+            assert codec.take_pending_store_blobs() == [(digest_bytes(safe), safe)]
+        else:
+            received, _ = codec.decode(wire, blobs, [])
+            assert received.resolve() == safe
+        assert all(raw_secret not in blob for blob in blobs)
+    finally:
+        for segment in segments:
+            release_segment(segment)
 
 
 # -- DiskCAS ---------------------------------------------------------------

@@ -6,9 +6,10 @@ outside the managed asset API. It is not a Python sandbox.
 
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable
+from collections.abc import Generator, Iterable, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
+from typing import cast
 
 from .identity import AssetError
 
@@ -28,6 +29,37 @@ def protect_secret_outputs(values: Iterable[str]) -> Generator[None]:
 def check_secret_text(text: str) -> None:
     if any(value and value in text for value in _secret_values.get()):
         raise AssetError("Secret-bearing content cannot be saved")
+
+
+def secret_output_protection_active() -> bool:
+    return bool(_secret_values.get())
+
+
+def check_secret_data(data: object) -> None:
+    """Check literal text and bytes in a value's portable fields before retention."""
+    if not secret_output_protection_active():
+        return
+    patterns = tuple(value.encode("utf-8") for value in _secret_values.get() if value)
+    seen: set[int] = set()
+
+    def check(item: object) -> None:
+        if isinstance(item, str):
+            check_secret_text(item)
+        elif isinstance(item, (bytes, bytearray, memoryview)):
+            encoded = bytes(cast("bytes | bytearray | memoryview[int]", item))
+            if any(value in encoded for value in patterns):
+                raise AssetError("Secret-bearing content cannot be saved")
+        elif id(item) not in seen:
+            seen.add(id(item))
+            if isinstance(item, Mapping):
+                for key, value in cast("Mapping[object, object]", item).items():
+                    check(key)
+                    check(value)
+            elif isinstance(item, Sequence):
+                for value in cast("Sequence[object]", item):
+                    check(value)
+
+    check(data)
 
 
 class SecretOutputStream:

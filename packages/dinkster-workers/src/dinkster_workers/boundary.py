@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from dinkster_assets import AssetError, digest_bytes
+from dinkster_assets.privacy import check_secret_data, secret_output_protection_active
 from dinkster_protocol import (
     AssetFolderContext,
     ErrorHint,
@@ -243,6 +244,7 @@ def _create_empty_segment(size: int) -> SharedMemory:
 
 
 def _create_segment(data: bytes | memoryview) -> SharedMemory:
+    check_secret_data(data)
     segment = _create_empty_segment(len(data))
     buffer = segment.buf
     assert buffer is not None  # always set on a live segment
@@ -256,6 +258,14 @@ def _create_segment(data: bytes | memoryview) -> SharedMemory:
 
 
 def _create_segment_from_encoding(encoding: BufferEncoding) -> SharedMemory:
+    if secret_output_protection_active():
+        # Private encoders must finish inspection before allocating shared storage.
+        data = bytearray(encoding.size)
+        with memoryview(data) as target:
+            written = encoding.write(target)
+            if written != encoding.size:
+                raise ValueError(f"buffer encoder wrote {written} bytes, expected {encoding.size}")
+            return _create_segment(target)
     segment = _create_empty_segment(encoding.size)
     buffer = segment.buf
     assert buffer is not None  # always set on a live segment
@@ -451,6 +461,9 @@ class ValueCodec:
     def encode(
         self, value: Value, blobs: list[bytes], segments: list[SharedMemory]
     ) -> tuple[dict[str, object], TransferStat]:
+        check_secret_data((value.type_id, value.fingerprint, value.meta.entries))
+        meta_data = default_encode(dict(value.meta.entries))
+        check_secret_data(meta_data)
         children = value_children(value)
         if children is not None:
             # Containers cross as recursive descriptors: each child is a full
@@ -481,7 +494,7 @@ class ValueCodec:
                 "metaBlob": len(blobs),
                 "elements": element_wires,
             }
-            blobs.append(default_encode(dict(value.meta.entries)))
+            blobs.append(meta_data)
             return wire, TransferStat(
                 value.payload.transport, total_size, total_ms, all_declared, all_reused
             )
@@ -490,9 +503,9 @@ class ValueCodec:
         reused = isinstance(payload, EncodedPayload) and payload.type_id == value.type_id
         if reused:
             encoded = cast(EncodedPayload, payload)
+            check_secret_data(encoded.storing)
             if self._use_shm and self._shm_threshold <= encoded.size:
                 codec_ms = (time.perf_counter() - started) * 1000.0
-                meta_data = default_encode(dict(value.meta.entries))
                 with encoded.borrow_data() as data:
                     segment = _create_segment(data)
                 segments.append(segment)
@@ -525,10 +538,10 @@ class ValueCodec:
                     "registered in this process and the payload is not already encoded"
                 ) from exc
             obj = payload.load()
+            check_secret_data(obj)
             if self._use_shm and spec.prepare_buffer_encoding is not None:
                 encoding = spec.prepare_buffer_encoding(obj)
                 if self._shm_threshold <= encoding.size:
-                    meta_data = default_encode(dict(value.meta.entries))
                     segment = _create_segment_from_encoding(encoding)
                     segments.append(segment)
                     codec_ms = (time.perf_counter() - started) * 1000.0
@@ -549,6 +562,7 @@ class ValueCodec:
                         "shm", encoding.size, codec_ms, spec.declared_codec, False
                     )
             data = spec.encode(obj)
+        check_secret_data(data)
         codec_ms = (time.perf_counter() - started) * 1000.0
         declared = (
             self._registry.spec(value.type_id).declared_codec
@@ -565,7 +579,7 @@ class ValueCodec:
         )
         if stored_by is not None:
             wire["storing"] = stored_by
-        blobs.append(default_encode(dict(value.meta.entries)))
+        blobs.append(meta_data)
         if self._use_shm and 0 < self._shm_threshold <= len(data):
             segment = _create_segment(data)
             segments.append(segment)
