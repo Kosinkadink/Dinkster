@@ -103,6 +103,7 @@ def configured_wsl() -> WslContext | None:
     value = json.loads(Path(config).read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise EnvironmentError("invalid Desktop WSL context")
+    value = cast("dict[str, object]", value)
     distribution, python = value.get("distribution"), value.get("python")
     if (
         not isinstance(distribution, str)
