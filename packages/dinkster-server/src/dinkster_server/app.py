@@ -944,6 +944,8 @@ class PackInfo:
     'local:<path>') - where the bytes came from, never identity."""
     publisher: str = ""
     """Canonical publisher id ('local' for unpublished installs)."""
+    type_storage: tuple[tuple[str, str], ...] = ()
+    """Borrowed type ids and the packs selected to store their values in this worker."""
     blueprints: tuple[PackBlueprintAsset, ...] = ()
     """Starter workflow documents the pack ships; descriptors ride the
     packs table inline, bodies ride the lazy per-pack endpoint. Never
@@ -996,6 +998,8 @@ class PackInfo:
             wire["source"] = self.source
         if self.publisher:
             wire["publisher"] = self.publisher
+        if self.type_storage:
+            wire["typeStorage"] = dict(self.type_storage)
         if self.icon is not None:
             # Descriptor only - bytes ride /api/packs/{packId}/icon, never
             # inline (the table would re-download on every schema refresh).

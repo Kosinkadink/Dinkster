@@ -8,19 +8,34 @@ crosses a process boundary and is stored by a codec.
 
 from __future__ import annotations
 
+import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from aiohttp.test_utils import TestClient, TestServer
 from dinkster_engine import ExecutionError
 from dinkster_graph import Graph, GraphNode, Link
 from dinkster_registry import Lockfile
-from dinkster_workers.doctor import diagnose
+from dinkster_server import create_app
+from dinkster_workers.doctor import diagnose, prepare_catalog
 
-from dinkster.compose import compose_serving
+from dinkster.compose import ServingComposer, compose_serving
 from dinkster.installer import Installer, lock_local_pack
 from dinkster.pack_spec import PackSpec
 from tests.async_scenarios import run_scenario
+
+
+@pytest.fixture(autouse=True)
+def clear_pack_imports(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    yield
+    for name, module in tuple(sys.modules.items()):
+        path = getattr(module, "__file__", None)
+        if path is not None and Path(path).is_relative_to(tmp_path):
+            del sys.modules[name]
+
 
 OWNER_SOURCE = """
 import json
@@ -188,7 +203,7 @@ def test_owner_storing_carries_the_borrowers_value_when_the_owner_is_installed(
     assert (difference, storing) == (18, "owner")
 
 
-@pytest.mark.parametrize("validation", ["decode", "encoded", "input-convert"])
+@pytest.mark.parametrize("validation", ["decode", "unresolvable", "encoded", "input-convert"])
 @pytest.mark.parametrize("container", [False, True], ids=["atom", "list"])
 def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
     tmp_path: Path,
@@ -198,15 +213,18 @@ def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
 ) -> None:
     registration = {
         "decode": "decode=decode_thing",
+        "unresolvable": "decode=decode_thing",
         "encoded": 'decode=lambda data: json.loads(data.removeprefix(b"OWNER:")),\n'
         "        validate_encoded=lambda data, _meta: decode_thing(data)",
         "input-convert": 'decode=lambda data: json.loads(data.removeprefix(b"OWNER:")),\n'
         "        input_convert=check_thing",
     }[validation]
+    error = "UnresolvablePayload" if validation == "unresolvable" else "ValueError"
     owner = write_pack(
         tmp_path,
         "owner",
-        OWNER_SOURCE.replace(
+        "from dinkster_values import UnresolvablePayload\n"
+        + OWNER_SOURCE.replace(
             'decode=lambda data: {**json.loads(data.removeprefix(b"OWNER:")), "storing": "owner"}',
             registration,
         ).replace(
@@ -215,7 +233,7 @@ def test_invalid_borrowed_value_fails_on_receiver_naming_producer_and_owner(
             '    return check_thing(json.loads(data.removeprefix(b"OWNER:")))\n\n'
             "def check_thing(thing):\n"
             '    if "height" not in thing:\n'
-            '        raise ValueError("height is required")\n'
+            f'        raise {error}("height is required")\n'
             '    return {**thing, "storing": "owner"}\n\n'
             "def register_types(registry):",
         ),
@@ -328,6 +346,105 @@ def test_without_the_owner_the_first_named_user_stores_the_type(
             produce_and_read([manifests[name] for name in order], "cousin", "borrower")
         )
         assert result == (18, "borrower"), f"start {start}"
+
+
+@pytest.mark.parametrize(
+    ("names", "expected", "hosting"),
+    [
+        (("cousin",), "cousin", "isolated"),
+        (("cousin", "borrower"), "borrower", "isolated"),
+        (("borrower", "cousin"), "borrower", "isolated"),
+        (("cousin", "owner", "borrower"), "owner", "isolated"),
+        (("cousin", "borrower"), "borrower", "group"),
+        (("cousin", "owner"), "owner", "catalog"),
+        (("cousin",), "cousin", "parts"),
+    ],
+)
+def test_pack_catalog_names_the_storing_used_by_its_borrowed_values(
+    tmp_path: Path, names: tuple[str, ...], expected: str, hosting: str
+) -> None:
+    manifests = [
+        write_pack(tmp_path, name, OWNER_SOURCE)
+        if name == "owner"
+        else write_borrower(tmp_path, name)
+        for name in names
+    ]
+    if hosting == "catalog":
+        for manifest in manifests:
+            assert prepare_catalog(manifest).ok
+    entries = [
+        PackSpec(
+            manifest,
+            require_catalog=hosting == "catalog",
+            worker_group="borrowed" if hosting == "group" else None,
+            group_manifests=tuple(manifests) if hosting == "group" else (),
+        )
+        for manifest in manifests
+    ]
+    if hosting == "parts":
+        manifest = manifests[0]
+        (manifest.parent / "cousin" / "part.py").write_text(
+            BORROWER_SOURCE.format(name="cousin.part", tag="cousin").replace(
+                "owner.thing", "owner.other"
+            )
+        )
+        manifest.write_text(
+            manifest.read_text() + '\n[[pack.parts]]\nname="plain"\nuses-types=["owner.other"]\n'
+            '[pack.parts.entry]\nnodes="cousin.part:NODES"\ntypes="cousin.part:register_types"\n'
+        )
+        entries.append(PackSpec(manifest, part="plain"))
+
+    async def scenario() -> None:
+        composer = ServingComposer()
+        composition = composer.composition
+        try:
+            for entry in composer.order_pack_entries(entries):
+                await composer.add_pack(entry)
+            for replay in range(3 if hosting == "parts" else 2):
+                if replay == 1:
+                    await composer.reload_pack("cousin")
+                if replay == 2:
+                    await composer.remove_pack("cousin~plain")
+                app = create_app(
+                    composition.make_engine,
+                    composition.schemas,
+                    packs=composition.packs,
+                    node_packs=composition.node_packs,
+                )
+                async with TestClient(TestServer(app)) as client:
+                    catalog = await (await client.get("/api/nodes")).json()
+                    storage = {"owner.thing": expected}
+                    if hosting == "parts" and replay < 2:
+                        storage["owner.other"] = "cousin"
+                    assert catalog["packs"]["cousin"]["typeStorage"] == storage
+                engine = composition.make_engine(lambda _event: None)
+                result = await engine.run(
+                    Graph(
+                        nodes={
+                            "produce": GraphNode("cousin.produce"),
+                            "read": GraphNode("cousin.read", {"thing": Link("produce", "thing")}),
+                        }
+                    ),
+                    ["read"],
+                )
+                assert result.outputs["read"]["storing"].resolve() == expected
+                if hosting == "parts" and replay < 2:
+                    result = await engine.run(
+                        Graph(
+                            nodes={
+                                "produce": GraphNode("cousin.part.produce"),
+                                "read": GraphNode(
+                                    "cousin.part.read", {"thing": Link("produce", "thing")}
+                                ),
+                            }
+                        ),
+                        ["read"],
+                    )
+                    assert result.outputs["read"]["storing"].resolve() == "cousin"
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
 
 
 def test_in_process_owner_composes_after_a_user_loaded_its_storing(tmp_path: Path) -> None:

@@ -1138,8 +1138,6 @@ class TypeRegistry:
                 return tuple(converted) if parse_tuple_type_id(type_id) is not None else converted
             try:
                 obj = obj.resolve()
-            except UnresolvablePayload:
-                raise
             except Exception as exc:
                 message = self.unreadable_value_message(type_id, producer)
                 if message is None:
@@ -1148,12 +1146,15 @@ class TypeRegistry:
         positions = parse_tuple_type_id(type_id)
         if positions is not None:
             return tuple(
-                self.input_object(position, item)
+                self.input_object(position, item, producer=producer)
                 for position, item in zip(positions, cast(Sequence[object], obj), strict=True)
             )
         element = parse_list_type_id(type_id)
         if element is not None:
-            return [self.input_object(element, item) for item in cast(Sequence[object], obj)]
+            return [
+                self.input_object(element, item, producer=producer)
+                for item in cast(Sequence[object], obj)
+            ]
         spec = self._types.get(type_id)
         try:
             return (
