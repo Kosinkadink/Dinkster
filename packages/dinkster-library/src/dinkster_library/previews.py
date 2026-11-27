@@ -87,6 +87,7 @@ def _webp(image: bytes, size: int) -> bytes:
 
 def _render(source: _VerifiedSource, size: int) -> Thumbnail:
     from dinkster_values.image_codec import decode_image_file, render_image_png
+    from dinkster_values.registry import RenditionUnavailable
     from PIL import Image
 
     try:
@@ -104,6 +105,8 @@ def _render(source: _VerifiedSource, size: int) -> Thumbnail:
 
     try:
         video = video_from_source(source)
+    except ImportError as error:
+        raise ThumbnailUnavailable("the media thumbnail decoder is unavailable") from error
     except (OSError, ValueError):
         video = None
     if video is not None:
@@ -135,7 +138,7 @@ def _render(source: _VerifiedSource, size: int) -> Thumbnail:
         peaks = tuple(audio_waveform_peaks(audio, size))
         image = render_audio_waveform(audio, {"waveform": f"{size}x{size // 4}", "batch": "0"})
         return Thumbnail(_webp(image, size), float(duration), peaks)
-    except (ImportError, OSError, ValueError) as error:
+    except (ImportError, OSError, ValueError, RenditionUnavailable) as error:
         raise ThumbnailUnavailable("this asset has no drawable image, video or audio") from error
 
 

@@ -13,6 +13,11 @@ on:
       - scripts/build_release.py
       - scripts/publish_environment_channel.py
       - packages/dinkster-supervisor/**
+      - packages/dinkster-library/**
+      - packages/dinkster-values/**
+      - packages/dinkster-assets/**
+      - packages/dinkster-image-document/**
+      - packages/dinkster-video-runtime/**
       - pyproject.toml
       - uv.lock
   pull_request:
@@ -26,6 +31,11 @@ on:
       - scripts/build_release.py
       - scripts/publish_environment_channel.py
       - packages/dinkster-supervisor/**
+      - packages/dinkster-library/**
+      - packages/dinkster-values/**
+      - packages/dinkster-assets/**
+      - packages/dinkster-image-document/**
+      - packages/dinkster-video-runtime/**
       - pyproject.toml
       - uv.lock
 
