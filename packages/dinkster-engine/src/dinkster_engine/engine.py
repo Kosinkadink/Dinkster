@@ -827,7 +827,8 @@ class Engine:
                 f"{attribution} in {pack_detail} was refused access to {origin}."
                 if origin is not None
                 else (
-                    f"{attribution} in {pack_detail} was refused internet access; destination unknown."
+                    f"{attribution} in {pack_detail} was refused internet access; "
+                    "destination unknown."
                 ),
             )
             reported[node_id] = hint
