@@ -4947,6 +4947,8 @@ class ServingComposer:
         schemas: dict[str, NodeSchema],
         node_packs: dict[str, str],
         manifest: PackManifest,
+        spec: PackSpec,
+        packs: Mapping[str, PackInfo],
         replacing: Collection[str] = (),
     ) -> dict[str, type[Node]]:
         try:
@@ -5002,8 +5004,18 @@ class ServingComposer:
                     f"from_signature={schema_signature(previous)!r} and a note explaining "
                     "how saved Make nodes are updated"
                 )
+        attributed = {
+            node_type: spec.attribute(node_type) if spec.attribute else manifest.name
+            for node_type in generated
+        }
+        for node_type, pack_id in attributed.items():
+            if pack_id not in packs:
+                raise CompositionError(
+                    f"{manifest.name}: generated record node {node_type!r} attributes to "
+                    f"{pack_id!r}, which is not among this spec's pack entries"
+                )
         schemas.update(generated)
-        node_packs.update(dict.fromkeys(makers, manifest.name))
+        node_packs.update(attributed)
         return makers
 
     def _build_topology(
@@ -5818,7 +5830,9 @@ class ServingComposer:
                     )
                 delta_schemas[node_type] = schema
                 delta_node_packs[node_type] = pack_id
-            makers = self._add_record_makers(delta_schemas, delta_node_packs, manifest)
+            makers = self._add_record_makers(
+                delta_schemas, delta_node_packs, manifest, spec, spec_packs
+            )
             delta_choices: dict[str, tuple[str, ...]] = {}
             for choice_id, values in worker.combo_choices.items():
                 if not any(claim_covers(claim, choice_id) for claim in manifest.namespaces):
@@ -6864,7 +6878,9 @@ class ServingComposer:
                         )
                     delta_schemas[node_type] = schema
                     delta_node_packs[node_type] = pack_id
-                makers = self._add_record_makers(delta_schemas, delta_node_packs, manifest, (name,))
+                makers = self._add_record_makers(
+                    delta_schemas, delta_node_packs, manifest, spec, spec_packs, (name,)
+                )
                 delta_choices: dict[str, tuple[str, ...]] = {}
                 for choice_id, values in worker.combo_choices.items():
                     if not any(claim_covers(claim, choice_id) for claim in manifest.namespaces):
@@ -7322,7 +7338,9 @@ class ServingComposer:
                             f"{prior!r} and {pack!r}"
                         )
                     compat_skips.setdefault(pack_id, {})[node_id] = diagnostic
-                makers = self._add_record_makers(announced, node_packs, manifest, group_names)
+                makers = self._add_record_makers(
+                    announced, node_packs, manifest, member_spec, spec_packs, group_names
+                )
                 delta = replace(
                     old_record.delta,
                     schemas=announced,

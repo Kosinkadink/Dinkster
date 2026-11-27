@@ -766,7 +766,10 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
     run_scenario(scenario())
 
 
-def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> None:
+@pytest.mark.parametrize("attributed", [False, True])
+def test_host_record_helpers_execute_and_survive_pack_reload(
+    tmp_path: Path, attributed: bool
+) -> None:
     def manifest(
         version: str,
         name: str,
@@ -852,12 +855,44 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
     updated_defaults_manifest = manifest("updated_defaults", "noise", added_default=13)
     required_manifest = manifest("required", "noise")
 
+    def pack_spec(path: Path) -> PackSpec:
+        return PackSpec(
+            path,
+            packs={
+                "records-library": PackInfo(display_name="Records Library"),
+                "inner-library": PackInfo(display_name="Inner Library"),
+            }
+            if attributed
+            else None,
+            attribute=(
+                lambda node_type: (
+                    "inner-library"
+                    if node_type.startswith("recordtest.inner.")
+                    else "records-library"
+                )
+            )
+            if attributed
+            else None,
+        )
+
     async def scenario() -> None:
         composer = ServingComposer(worker_env=WORKER_ENV)
         try:
             with pytest.raises(CompositionError, match="generated record node.*collides"):
-                await composer.add_pack(PackSpec(collision_manifest))
-            delta = await composer.add_pack(PackSpec(first_manifest))
+                await composer.add_pack(pack_spec(collision_manifest))
+            if attributed:
+                with pytest.raises(CompositionError, match="not among this spec's pack entries"):
+                    await composer.add_pack(
+                        replace(
+                            pack_spec(first_manifest),
+                            attribute=lambda node_type: (
+                                "missing-library"
+                                if node_type.endswith(".make")
+                                else "records-library"
+                            ),
+                        )
+                    )
+            delta = await composer.add_pack(pack_spec(first_manifest))
             graph = Graph(
                 nodes={
                     "inner": GraphNode("recordtest.inner.make", {"field_312d73656564": 29}),
@@ -923,6 +958,30 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
                 }
             )
             assert delta.schema_owners["recordtest.inner.make"] == "record-test"
+            client = TestClient(
+                TestServer(
+                    create_app(
+                        composer.composition.make_engine,
+                        composer.composition.schemas,
+                        packs=composer.composition.packs,
+                        node_packs=composer.composition.node_packs,
+                    )
+                )
+            )
+            await client.start_server()
+            try:
+                catalog = await (await client.get("/api/nodes")).json()
+                pack_id = "records-library" if attributed else "record-test"
+                for record in ("inner", "outer", "foreign"):
+                    for operation in ("make", "read", "change"):
+                        assert catalog["nodes"][f"recordtest.{record}.{operation}"]["pack"] == (
+                            "inner-library" if attributed and record == "inner" else pack_id
+                        )
+                assert pack_id in catalog["packs"]
+                assert ("inner-library" in catalog["packs"]) == attributed
+                assert ("record-test" in catalog["packs"]) != attributed
+            finally:
+                await client.close()
             engine = composer.composition.make_engine(lambda _event: None)
             result = await engine.run(graph, list(graph.nodes))
             assert result.outputs["consume"]["text"].resolve() == "58|seven"
@@ -1003,8 +1062,26 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             assert changed.outputs["nested"]["value"].resolve() == 97
             assert changed.outputs["chained"]["value"].resolve() == 97
             assert changed.outputs["optional"]["value"].resolve() == 11
-            reload = await composer.reload_pack("record-test", PackSpec(second_manifest))
+            if attributed:
+                with pytest.raises(CompositionError, match="not among this spec's pack entries"):
+                    await composer.reload_pack(
+                        "record-test",
+                        replace(
+                            pack_spec(second_manifest),
+                            attribute=lambda node_type: (
+                                "missing-library"
+                                if node_type.endswith(".read")
+                                else "records-library"
+                            ),
+                        ),
+                    )
+                unchanged = await engine.run(graph, ["consume"])
+                assert unchanged.outputs["consume"]["text"].resolve() == "194|seven"
+            reload = await composer.reload_pack("record-test", pack_spec(second_manifest))
             assert "recordtest.inner.make" in reload.delta.schemas
+            assert reload.delta.node_packs["recordtest.inner.read"] == (
+                "inner-library" if attributed else "record-test"
+            )
             renamed = await engine.run(graph, list(graph.nodes))
             assert renamed.outputs["consume"]["text"].resolve() == "194|seven"
             assert renamed.outputs["inner"]["record"].resolve() == {"noise": 97, "guidance": 11}
@@ -1052,7 +1129,7 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             )
             saved_make = graph_from_wire(json.loads(json.dumps(graph_to_wire(saved_make))))
             with pytest.raises(CompositionError, match="adds required fields.*iterations"):
-                await composer.reload_pack("record-test", PackSpec(required_manifest))
+                await composer.reload_pack("record-test", pack_spec(required_manifest))
             for version, signature, note in (
                 ("unexplained", old_signature, ""),
                 ("unsigned", "", "Set iterations on saved Make nodes."),
@@ -1060,18 +1137,18 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             ):
                 invalid = manifest(version, "noise", migration_from=signature, migration_note=note)
                 with pytest.raises(CompositionError, match="migration|adds required fields"):
-                    await composer.reload_pack("record-test", PackSpec(invalid))
+                    await composer.reload_pack("record-test", pack_spec(invalid))
             unchanged = await engine.run(saved_make, ["consume"])
             assert unchanged.outputs["consume"]["text"].resolve() == "194|seven"
             migrated_manifest = manifest("migrated", "noise", migration_from=old_signature)
-            await composer.reload_pack("record-test", PackSpec(migrated_manifest))
+            await composer.reload_pack("record-test", pack_spec(migrated_manifest))
             migrated_live = await engine.run(saved_make, ["inner"])
             assert migrated_live.outputs["inner"]["record"].resolve() == {
                 "noise": 97,
                 "guidance": 11,
                 "iterations": 23,
             }
-            await composer.reload_pack("record-test", PackSpec(defaults_manifest))
+            await composer.reload_pack("record-test", pack_spec(defaults_manifest))
             added = await engine.run(saved_make, ["inner", "consume"])
             assert added.outputs["inner"]["record"].resolve() == {
                 "noise": 97,
@@ -1079,7 +1156,7 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
                 "iterations": 0,
             }
             assert added.outputs["consume"]["text"].resolve() == "194|seven"
-            await composer.reload_pack("record-test", PackSpec(updated_defaults_manifest))
+            await composer.reload_pack("record-test", pack_spec(updated_defaults_manifest))
             updated_default = await engine.run(saved_make, ["inner", "consume"])
             assert updated_default.outputs["inner"]["record"].resolve() == {
                 "noise": 97,
@@ -1097,14 +1174,14 @@ def test_host_record_helpers_execute_and_survive_pack_reload(tmp_path: Path) -> 
             )
             supplied = await engine.run(explicit, ["inner"])
             assert supplied.outputs["inner"]["record"].resolve() == {"noise": 29, "iterations": 7}
-            await composer.reload_pack("record-test", PackSpec(required_manifest))
+            await composer.reload_pack("record-test", pack_spec(required_manifest))
             with pytest.raises(GraphValidationError, match=r"Missing required input: iterations\."):
                 await engine.run(saved_make, ["inner"])
             supplied = await engine.run(explicit, ["inner"])
             assert supplied.outputs["inner"]["record"].resolve() == {"noise": 29, "iterations": 7}
             cold = ServingComposer(worker_env=WORKER_ENV)
             try:
-                await cold.add_pack(PackSpec(migrated_manifest))
+                await cold.add_pack(pack_spec(migrated_manifest))
                 cold_engine = cold.composition.make_engine(lambda _event: None)
                 migrated = await cold_engine.run(saved_make, ["inner", "consume"])
                 assert migrated.outputs["inner"]["record"].resolve() == {
