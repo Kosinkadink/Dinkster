@@ -1010,7 +1010,7 @@ def required_capability(method: str, path: str) -> str | object | None:
         return _AUTHENTICATED
     if path == "/api/principals" or path.startswith("/api/principals/"):
         return _AUTHENTICATED
-    if path.startswith("/api/secrets/"):
+    if path == "/api/secrets" or path.startswith("/api/secrets/"):
         return _AUTHENTICATED
     if path == "/api/jobs":
         return "jobs:submit" if method == "POST" else "jobs:read"

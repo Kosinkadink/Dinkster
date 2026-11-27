@@ -200,6 +200,30 @@ class SecretStore:
             except (OSError, sqlite3.Error, InvalidToken, ValueError):
                 raise SecretStoreError("Cannot read private secret storage") from None
 
+    def names(self, principal: Principal) -> list[str]:
+        """List only entries this account may resolve, without reading values."""
+        owners = ["account:" + principal.principal_id]
+        if principal.is_operator or principal.allows("secrets:use"):
+            owners.append("deployment")
+        with self._lock:
+            try:
+                if self._root is None:
+                    return sorted({name for owner, name in self._memory if owner in owners})
+                self._cipher()
+                connection = self._connection()
+                try:
+                    rows = connection.execute(
+                        "SELECT DISTINCT name FROM credentials WHERE owner IN ("
+                        + ",".join("?" for _ in owners)
+                        + ") ORDER BY name",
+                        owners,
+                    ).fetchall()
+                    return [row[0] for row in rows]
+                finally:
+                    connection.close()
+            except (OSError, sqlite3.Error, ValueError):
+                raise SecretStoreError("Cannot read private secret storage") from None
+
     def status(self, principal: Principal, name: str) -> dict[str, object]:
         """Presence and authorized fallback only; never return a credential to a client."""
         value, source, fallback = self.resolve(principal, name)
@@ -356,6 +380,22 @@ def add_secret_routes(app: web.Application, store: SecretStore) -> None:
             )
         return web.json_response(status, headers={"Cache-Control": "no-store"})
 
+    async def names(request: web.Request) -> web.Response:
+        principal = principal_for(request)
+        try:
+            available = await asyncio.to_thread(store.names, principal)
+        except SecretStoreError:
+            return web.json_response(
+                {"error": "Cannot access secret. Try again"},
+                status=503,
+                headers={"Cache-Control": "no-store"},
+            )
+        return web.json_response(
+            {"names": available, "canManageDeployment": principal.is_operator},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    app.router.add_get("/api/secrets", names)
     app.router.add_get("/api/secrets/{name}", secret)
     app.router.add_put("/api/secrets/{name}", secret)
     app.router.add_delete("/api/secrets/{name}", secret)

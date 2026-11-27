@@ -1080,6 +1080,23 @@ def test_secret_accounts_deployment_fallback_and_private_persistence(tmp_path: P
                 "fallback": True,
             }
             await call("PUT", "bob", json={"value": bob_value})
+            await call("PUT", "alice", "/api/secrets/alice_only", json={"value": personal_value})
+            await call("PUT", "bob", "/api/secrets/bob_only", json={"value": bob_value})
+            await call(
+                "PUT",
+                "admin",
+                "/api/secrets/deployment_only",
+                json={"scope": "deployment", "value": deployment_value},
+            )
+            assert await call("GET", "alice", "/api/secrets") == {
+                "names": ["alice_only", "deployment_only", "service_key"]
+            }
+            assert await call("GET", "bob", "/api/secrets") == {
+                "names": ["bob_only", "service_key"]
+            }
+            assert await call("GET", "admin", "/api/secrets") == {
+                "names": ["deployment_only", "service_key"]
+            }
             store = app[SECRETS_KEY]
             assert store.resolve(alice, "service_key") == (personal_value, "account", True)
             assert store.resolve(bob, "service_key") == (bob_value, "account", False)
