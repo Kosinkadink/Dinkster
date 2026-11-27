@@ -8,7 +8,7 @@ import pytest
 from dinkster_api.v1 import Input, Node, NodeSchema, Output, RecordField, TypeExpr
 from dinkster_caches import DiskCacheStore, MemoryLRUCache, encode_entry
 from dinkster_engine import Engine, ExecutionError
-from dinkster_graph import Graph, GraphNode, Link, validate
+from dinkster_graph import PORTS_NODE_ID, Graph, GraphNode, Link, RegionNode, RegionOutput, validate
 from dinkster_schema import build_node_types, build_schemas, schema_from_wire, schema_to_wire
 from dinkster_values import (
     RESOURCE_HANDLE_TYPE,
@@ -98,19 +98,38 @@ def test_record_rename_and_reorder_follow_only_explicit_identity() -> None:
     assert "seed" in problems[0].message
 
 
-def test_nested_record_connection_names_the_missing_inner_field() -> None:
+@pytest.mark.parametrize("container", ["record", "list", "tuple"])
+def test_nested_record_connection_names_the_missing_inner_field(container: str) -> None:
+    def shape(expr: TypeExpr) -> TypeExpr:
+        if container == "list":
+            return TypeExpr.list_of(expr)
+        if container == "tuple":
+            return TypeExpr.tuple_of(TEXT, expr)
+        return expr
+
     source = TypeExpr.record_of(
         "source.outer",
         RecordField(
             "inner",
             "settings",
-            TypeExpr.record_of("source.inner", RecordField("s", "seed", INTEGER)),
+            shape(TypeExpr.record_of("source.inner", RecordField("s", "seed", INTEGER))),
         ),
     )
+    compatible = TypeExpr.record_of(
+        "target.outer",
+        RecordField(
+            "i",
+            "settings",
+            shape(TypeExpr.record_of("target.inner", RecordField("t", "seed", INTEGER))),
+        ),
+    )
+    assert _connection(source, compatible) == []
     destination = TypeExpr.record_of(
         "target.outer",
         RecordField(
-            "i", "settings", TypeExpr.record_of("target.inner", RecordField("p", "prompt", TEXT))
+            "i",
+            "settings",
+            shape(TypeExpr.record_of("target.inner", RecordField("p", "prompt", TEXT))),
         ),
     )
     problems = _connection(source, destination)
@@ -118,6 +137,19 @@ def test_nested_record_connection_names_the_missing_inner_field() -> None:
     assert problems[0].severity == "error"
     assert "settings" in problems[0].message
     assert "prompt" in problems[0].message
+    wrong_type = replace(
+        compatible,
+        fields=(
+            replace(
+                compatible.fields[0],
+                type=shape(TypeExpr.record_of("target.inner", RecordField("t", "seed", TEXT))),
+            ),
+        ),
+    )
+    problems = _connection(source, wrong_type)
+    assert len(problems) == 1
+    assert problems[0].severity == "error"
+    assert all(word in problems[0].message for word in ("settings", "seed", "INT", "STRING"))
 
 
 @pytest.mark.parametrize("source", [INTEGER, TypeExpr.wildcard()])
@@ -246,6 +278,181 @@ def test_record_runtime_reads_cross_pack_fields_and_reuses_renamed_cache(
         assert restored is not None
         assert restored["value"].resolve() == original.resolve()
         assert restored["value"].fingerprint == original.fingerprint
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("port", ["element", "broadcast", "state"])
+@pytest.mark.parametrize("same_record", [False, True])
+def test_region_record_port_binds_fields_before_exporting(port: str, same_record: bool) -> None:
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        source_name = "noise" if same_record else "seed"
+        source = TypeExpr.record_of(
+            "source.settings",
+            RecordField("count", source_name, INTEGER),
+            RecordField("label", "prompt", TEXT),
+        )
+        target = TypeExpr.record_of(
+            "source.settings" if same_record else "target.settings",
+            RecordField("count" if same_record else "other", "seed", INTEGER),
+        )
+
+        class Produce(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    "test.region.make",
+                    body=(
+                        Output("value", TypeExpr.list_of(source) if port == "element" else source),
+                    ),
+                )
+
+            @classmethod
+            def execute(cls) -> Mapping[str, object]:
+                values = [{source_name: 29, "prompt": "first"}, {source_name: 97, "prompt": "last"}]
+                return cls.outputs(value=values if port == "element" else values[0])
+
+        class Advance(Node):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                return NodeSchema(
+                    "test.region.advance",
+                    body=(
+                        Input("value", target),
+                        Input("increment", INTEGER),
+                        Output("value", source),
+                    ),
+                )
+
+            @classmethod
+            def execute(cls, *, value: dict[str, int], increment: int) -> Mapping[str, object]:
+                return cls.outputs(value={source_name: value["seed"] + increment, "prompt": "next"})
+
+        region = RegionNode(
+            kind="fold" if port == "state" else "map",
+            body=Graph(nodes={}),
+            ports={"record": target, "item": INTEGER},
+            inputs={"record": Link("make", "value"), "item": [3, 7]},
+            element_ports=("record",) if port == "element" else ("item",),
+            state_ports=("record",) if port == "state" else (),
+            outputs={
+                "record": RegionOutput(
+                    Link(PORTS_NODE_ID, "record"), "state" if port == "state" else "gather"
+                )
+            },
+        )
+        if port == "element":
+            region = replace(
+                region, ports={"record": target}, inputs={"record": Link("make", "value")}
+            )
+        elif port == "state":
+            region = replace(
+                region,
+                body=Graph(
+                    nodes={
+                        "advance": GraphNode(
+                            "test.region.advance",
+                            {
+                                "value": Link(PORTS_NODE_ID, "record"),
+                                "increment": Link(PORTS_NODE_ID, "item"),
+                            },
+                        )
+                    }
+                ),
+                outputs={"record": RegionOutput(Link("advance", "value"), "state")},
+            )
+        nodes = (Produce, Advance)
+        schemas = build_schemas(nodes)
+        graph = Graph(nodes={"make": GraphNode("test.region.make"), "region": region})
+        if port == "state":
+            assert validate(graph, schemas, ["region"]) == []
+            for fields in (
+                (RecordField("wrong", "other", INTEGER),),
+                (replace(source.fields[0], type=TEXT), source.fields[1]),
+            ):
+                broken = TypeExpr.record_of(source.types[0], *fields)
+                advance = schemas["test.region.advance"]
+                broken_schemas = {
+                    **schemas,
+                    "test.region.advance": replace(
+                        advance, body=(*advance.body[:-1], Output("value", broken))
+                    ),
+                }
+                problems = validate(graph, broken_schemas, ["region"])
+                assert any(
+                    d.severity == "error"
+                    and d.node_id == "region"
+                    and d.input_id == "record"
+                    and "seed" in d.message
+                    for d in problems
+                )
+        engine = Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(nodes), registry),
+            cache=MemoryLRUCache(),
+        )
+        result = await engine.run(graph, ["region"])
+        value = result.outputs["region"]["record"]
+        assert value.resolve() == (
+            {"seed": 39}
+            if port == "state"
+            else [{"seed": 29}, {"seed": 97 if port == "element" else 29}]
+        )
+        assert value.type_id == (target.types[0] if port == "state" else f"list<{target.types[0]}>")
+
+        optional_source = replace(
+            source, fields=(replace(source.fields[0], optional=True), source.fields[1])
+        )
+        missing_input = False
+
+        class MissingProduce(Produce):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                schema = Produce.define_schema()
+                output_type = (
+                    TypeExpr.list_of(optional_source) if port == "element" else optional_source
+                )
+                return replace(schema, body=(Output("value", output_type),))
+
+            @classmethod
+            def execute(cls) -> Mapping[str, object]:
+                value = (
+                    {"prompt": "missing"}
+                    if missing_input
+                    else {source_name: 29, "prompt": "present"}
+                )
+                return cls.outputs(value=[value] if port == "element" else value)
+
+        class MissingAdvance(Advance):
+            @classmethod
+            def define_schema(cls) -> NodeSchema:
+                schema = Advance.define_schema()
+                return replace(schema, body=(*schema.body[:-1], Output("value", optional_source)))
+
+            @classmethod
+            def execute(cls, *, value: dict[str, int], increment: int) -> Mapping[str, object]:
+                return cls.outputs(value={"prompt": "missing"})
+
+        for missing_at in ("input", "state") if port == "state" else ("input",):
+            missing_input = missing_at == "input"
+            missing_nodes = (MissingProduce, MissingAdvance)
+            missing_engine = Engine(
+                schemas=build_schemas(missing_nodes),
+                registry=registry,
+                worker=InProcessWorker(build_node_types(missing_nodes), registry),
+                cache=MemoryLRUCache(),
+            )
+            with pytest.raises(
+                ExecutionError, match="Missing required record field: seed"
+            ) as raised:
+                await missing_engine.run(graph, ["region"])
+            assert raised.value.error.node_id == "region"
+            assert (
+                "state port" if missing_at == "state" else "input"
+            ) in raised.value.error.message
 
     run_scenario(scenario())
 

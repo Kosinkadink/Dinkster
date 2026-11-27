@@ -304,20 +304,33 @@ class TypeExpr:
                     f"Expected record {self.types[0]}, "
                     f"got {source.runtime_type_id() or source.kind}."
                 )
+
+            def field_problem(wanted: TypeExpr, found: TypeExpr) -> str | None:
+                if wanted.kind == found.kind == "list":
+                    assert wanted.element is not None and found.element is not None
+                    return field_problem(wanted.element, found.element)
+                if wanted.kind == found.kind == "tuple" and len(wanted.elements) == len(
+                    found.elements
+                ):
+                    for item, supplied in zip(wanted.elements, found.elements, strict=True):
+                        if (problem := field_problem(item, supplied)) is not None:
+                            return problem
+                    return None
+                if (problem := wanted.record_connection_problem(found)) is not None:
+                    return problem
+                if wanted.kind != "record" and wanted != found:
+                    return f"Expected {wanted.runtime_type_id()}, got {found.runtime_type_id()}."
+                return None
+
             same_record = self.types == source.types
             supplied = {(item.id if same_record else item.name): item for item in source.fields}
             for wanted in self.fields:
                 found = supplied.get(wanted.id if same_record else wanted.name)
                 if found is None:
                     return f"Missing record field: {wanted.name}."
-                nested = wanted.type.record_connection_problem(found.type)
+                nested = field_problem(wanted.type, found.type)
                 if nested is not None:
                     return f"Record field '{wanted.name}': {nested}"
-                if wanted.type.kind != "record" and wanted.type != found.type:
-                    return (
-                        f"Record field '{wanted.name}' expects {wanted.type.runtime_type_id()}, "
-                        f"got {found.type.runtime_type_id()}."
-                    )
             return None
         if self.kind == source.kind:
             if self.element is not None and source.element is not None:

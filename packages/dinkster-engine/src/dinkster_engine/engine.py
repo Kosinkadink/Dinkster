@@ -2832,6 +2832,10 @@ class Engine:
         await self._prepare_host_types(region.ports.values(), region.inputs.values())
         inputs: dict[str, Value] = {}
         for input_id, raw in region.inputs.items():
+            port_type = region.ports[input_id]
+            expected = (
+                TypeExpr.list_of(port_type) if input_id in region.element_ports else port_type
+            )
             if isinstance(raw, Link):
                 inputs[input_id] = produced[raw.node_id][raw.output_id]
             elif isinstance(raw, TypedLiteral):
@@ -2846,14 +2850,14 @@ class Engine:
                     stands_for=region.ports[input_id].runtime_type_id(),
                 )
             else:
-                port_type = region.ports[input_id]
-                expected = (
-                    TypeExpr.list_of(port_type) if input_id in region.element_ports else port_type
-                )
                 runtime = expected.runtime_type_id()
                 if runtime is None:  # pragma: no cover - validation rejects this
                     raise ValueError(f"{label}: literal on non-runtime-resolvable port {input_id}")
                 inputs[input_id] = wrap_declared_value(expected, raw, self._registry)
+            try:
+                inputs[input_id] = project_record_value(expected, inputs[input_id])
+            except TypeError as exc:
+                raise region_error(f"input '{input_id}': {exc}") from exc
 
         interface = region_interface(region, self._schemas_for(run_id))
 
@@ -3035,7 +3039,12 @@ class Engine:
         def advance_state(body_produced: Mapping[str, Mapping[str, Value]]) -> None:
             for out_id, out in region.outputs.items():
                 if out.mode == "state":
-                    state[out_id] = source_value(body_produced, out.source)
+                    try:
+                        state[out_id] = project_record_value(
+                            region.ports[out_id], source_value(body_produced, out.source)
+                        )
+                    except TypeError as exc:
+                        raise region_error(f"state port '{out_id}': {exc}") from exc
 
         iterations_done = 0
         if region.kind == "map":

@@ -1274,6 +1274,14 @@ def _validate_region(
         elif out.mode == "state":
             port_type = region.ports.get(out_id)
             src_runtime = src_type.runtime_type_id()
+            if port_type is not None:
+                if problem := port_type.record_connection_problem(src_type):
+                    diags.append(
+                        Diagnostic("error", "record-field-mismatch", problem, where, out_id)
+                    )
+                    continue
+                if port_type.kind == src_type.kind == "record":
+                    continue
             if (
                 port_type is not None
                 and src_runtime is not None
