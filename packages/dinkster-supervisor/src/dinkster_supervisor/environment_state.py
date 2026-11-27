@@ -580,6 +580,31 @@ def read_current(root: Path) -> int | None:
     return int(text)
 
 
+def update_selection_identity(root: Path) -> str:
+    """Bind an update approval to the recorded selection, not just its number."""
+    current = read_current(root)
+    if current is None:
+        raise EnvironmentError("environment has no active snapshot; run setup first")
+    identity = (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(
+                {
+                    "root": str(root.resolve()),
+                    "current": current,
+                    "settings": content_digest(root / "environment.json"),
+                    "store": content_digest(root / "store"),
+                    "build": content_digest(root / "builds" / str(current) / "build.json"),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+    )
+    if read_current(root) != current:
+        raise EnvironmentError("environment changed while reviewing update")
+    return identity
+
+
 def set_current(root: Path, number: int) -> None:
     generation_number(number)
     path = root / "builds" / str(number) / "build.json"

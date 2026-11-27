@@ -98,6 +98,7 @@ from .environment_state import (
     read_current,
     read_document,
     shared_library,
+    update_selection_identity,
     write_document,
     writer_lock,
     writer_operation,
@@ -499,6 +500,9 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
         _recover_pending(root)
     settings = _settings(root)
     current = read_current(root)
+    selection_approval = getattr(args, "selection_approval", None)
+    if selection_approval is not None and update_selection_identity(root) != selection_approval:
+        raise EnvironmentError("update selection changed; review a new plan")
     if args.operation == "setup" and current is not None:
         raise EnvironmentError("environment already has an active snapshot")
     if args.operation == "setup" and settings is None and not args.plan:
@@ -1066,6 +1070,8 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
     def revalidate() -> None:
         if args.operation in {"setup", "update"}:
             preparation_progress(f"checking-{args.operation}")
+        if selection_approval is not None and update_selection_identity(root) != selection_approval:
+            raise EnvironmentError("update selection changed; review a new plan")
         changed_inputs = [
             path
             for path, identity in supplied_inputs.items()
@@ -2629,6 +2635,9 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
     develop.add_argument("--python", type=Path, help="explicit host interpreter override")
     develop.set_defaults(from_scratch=True, engine_release=None, base_id=None)
     update = commands.add_parser("update", help="build and activate a channel's next snapshot")
+    update.add_argument(
+        "--selection-approval", help="require the reviewed current selection digest"
+    )
     for command in (setup, update):
         command.add_argument(
             "--progress", type=Path, help="observe progress; sibling .cancel requests cancellation"
