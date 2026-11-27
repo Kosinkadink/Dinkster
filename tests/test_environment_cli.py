@@ -2285,11 +2285,17 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     else:
         import subprocess
 
+        class PciPath(Path):
+            @property
+            def name(self) -> str:
+                # Preserve sysfs PCI names without creating invalid Windows paths.
+                return super().name.replace("_", ":")
+
         pci.mkdir()
         monkeypatch.setattr(
             environment_hardware,
             "Path",
-            lambda path: pci if path == "/sys/bus/pci/devices" else Path(path),
+            lambda path: PciPath(pci) if path == "/sys/bus/pci/devices" else Path(path),
         )
 
         def command(arguments: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
@@ -2386,7 +2392,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
             for device in pci.iterdir():
                 shutil.rmtree(device)
             for card in cards:
-                device = pci / card_address(card)
+                device = pci / card_address(card).replace(":", "_")
                 device.mkdir()
                 (device / "vendor").write_text("0x" + vendor_ids[card["vendor"]])
                 (device / "class").write_text("0x030000")
