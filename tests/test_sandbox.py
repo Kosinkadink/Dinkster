@@ -804,6 +804,221 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    def test_refused_https_origins_are_reported_once_per_run(self, tmp_path: Path) -> None:
+        from dinkster_engine import ExecutionError
+
+        from dinkster.compose import PackSpec, ServingComposer
+
+        pack = tmp_path / "network-probe"
+        pack.mkdir()
+        manifest = pack / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname="networkprobe"\nnamespaces=["networkprobe"]\n'
+            '[pack.entry]\nnodes="network_probe:NODES"\n',
+            encoding="ascii",
+        )
+        (pack / "network_probe.py").write_text(
+            "import asyncio, errno, socket, urllib.request\n"
+            "from dinkster_schema.reporting import _emit\n"
+            "from dinkster_api.v1 import (CORE_STRING, InputSpec, Node, NodeSchema, "
+            "OutputSpec, TypeExpr)\n"
+            "class Probe(Node):\n"
+            "    arrived = 0\n"
+            "    finished = 0\n"
+            "    ready = None\n"
+            "    done = None\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='networkprobe.probe', idempotent=False, "
+            "io_bound=True,\n"
+            "            inputs=(InputSpec('mode', TypeExpr.concrete(CORE_STRING)),), outputs=(\n"
+            "            OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "    @classmethod\n"
+            "    async def execute(cls, mode):\n"
+            "        _emit('sandbox-network-denied', {'pack': 'innocent',\n"
+            "            'origin': 'https://forged.example.test'}, None)\n"
+            "        if mode == 'file-denied':\n"
+            "            raise PermissionError(errno.EACCES, 'denied', '/private/file')\n"
+            "        if mode == 'unknown':\n"
+            "            last = None\n"
+            "            for attempt in range(2):\n"
+            "                try:\n"
+            "                    connection = socket.create_connection(('203.0.113.9', 443), 1)\n"
+            "                    connection.close()\n"
+            "                except OSError as error:\n"
+            "                    last = error\n"
+            "                else:\n"
+            "                    raise RuntimeError('sandbox unexpectedly allowed direct TCP')\n"
+            "            raise last\n"
+            "        if mode != 'single':\n"
+            "            if Probe.ready is None:\n"
+            "                Probe.ready, Probe.done = asyncio.Event(), asyncio.Event()\n"
+            "            Probe.arrived += 1\n"
+            "            if Probe.arrived == 2:\n"
+            "                Probe.ready.set()\n"
+            "            await Probe.ready.wait()\n"
+            "        last = None\n"
+            "        for host in ('downloads.example.test', 'mirror.example.test:8443'):\n"
+            "            for attempt in range(2):\n"
+            "                try:\n"
+            "                    await asyncio.to_thread(urllib.request.urlopen,\n"
+            "                        'https://' + host + '/model', timeout=1)\n"
+            "                except OSError as error:\n"
+            "                    last = error\n"
+            "                else:\n"
+            "                    raise RuntimeError('sandbox unexpectedly allowed HTTPS')\n"
+            "        if mode == 'single':\n"
+            "            raise last\n"
+            "        Probe.finished += 1\n"
+            "        if Probe.finished == 2:\n"
+            "            Probe.done.set()\n"
+            "        await Probe.done.wait()\n"
+            "        return cls.outputs(report='refused')\n"
+            "class AlternateProbe(Probe):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='alternateprobe.probe', idempotent=False,\n"
+            "            io_bound=True, inputs=(InputSpec('mode',\n"
+            "            TypeExpr.concrete(CORE_STRING)),), outputs=(\n"
+            "            OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "NODES = (Probe,)\n"
+            "ALTERNATE_NODES = (AlternateProbe,)\n",
+            encoding="ascii",
+        )
+
+        async def scenario() -> None:
+            composer = ServingComposer(sandbox_policy=SandboxPolicy())
+            try:
+                await composer.add_pack(PackSpec(manifest, env={"PYTHONPATH": str(pack)}))
+                events = []
+                engine = composer.composition.make_engine(events.append)
+                graph = Graph(nodes={"probe": GraphNode("networkprobe.probe", {"mode": "single"})})
+                for _run in range(2):
+                    events.clear()
+                    with pytest.raises(ExecutionError) as refused:
+                        await engine.run(graph, ["probe"])
+                    error = refused.value.error
+                    reports = [
+                        hint for hint in error.hints if hint.code == "sandbox-network-denied"
+                    ]
+                    assert len(reports) == 2, error
+                    for origin in (
+                        "https://downloads.example.test",
+                        "https://mirror.example.test:8443",
+                    ):
+                        assert (
+                            sum(
+                                "networkprobe" in hint.message and origin in hint.message
+                                for hint in reports
+                            )
+                            == 1
+                        ), error
+                    diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                    assert len(diagnostics) == 2
+                    assert all("One of these nodes" not in hint.message for hint in reports)
+
+                for mode in ("unknown", "file-denied"):
+                    events.clear()
+                    with pytest.raises(ExecutionError) as refused:
+                        await engine.run(
+                            Graph(nodes={"probe": GraphNode("networkprobe.probe", {"mode": mode})}),
+                            ["probe"],
+                        )
+                    reports = [
+                        hint
+                        for hint in refused.value.error.hints
+                        if hint.code == "sandbox-network-denied"
+                    ]
+                    diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                    if mode == "unknown":
+                        assert len(reports) == len(diagnostics) == 1, refused.value.error
+                        assert "networkprobe" in reports[0].message
+                        assert "destination unknown" in reports[0].message
+                        assert "203.0.113.9" not in reports[0].message
+                        assert diagnostics[0].detail["diagnostics"][0]["origin"] is None
+                    else:
+                        assert reports == diagnostics == []
+
+                events.clear()
+                result = await asyncio.wait_for(
+                    engine.run(
+                        Graph(
+                            nodes={
+                                node: GraphNode("networkprobe.probe", {"mode": node})
+                                for node in ("left", "right")
+                            }
+                        ),
+                        ["left", "right"],
+                    ),
+                    timeout=30,
+                )
+                assert result.outputs["left"]["report"].resolve() == "refused"
+                assert result.outputs["right"]["report"].resolve() == "refused"
+                assert len(result.diagnostics) == 4
+                assert {item.node_id for item in result.diagnostics} == {"left", "right"}
+                assert all("One of these nodes" in item.message for item in result.diagnostics)
+                diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                assert len(diagnostics) == 4
+                assert all(
+                    set(event.detail["diagnostics"][0]["candidateNodeIds"]) == {"left", "right"}
+                    for event in diagnostics
+                )
+            finally:
+                await composer.close()
+
+            alternate = pack / "alternate-pack.toml"
+            alternate.write_text(
+                '[pack]\nname="alternateprobe"\nnamespaces=["alternateprobe"]\n'
+                '[pack.entry]\nnodes="network_probe:ALTERNATE_NODES"\n',
+                encoding="ascii",
+            )
+            composer = ServingComposer(sandbox_policy=SandboxPolicy())
+            try:
+                for path in (manifest, alternate):
+                    await composer.add_pack(
+                        PackSpec(
+                            path,
+                            env={"PYTHONPATH": str(pack)},
+                            worker_group="network-probes",
+                            group_manifests=(manifest, alternate),
+                        )
+                    )
+                events = []
+                result = await asyncio.wait_for(
+                    composer.composition.make_engine(events.append).run(
+                        Graph(
+                            nodes={
+                                "left": GraphNode("networkprobe.probe", {"mode": "left"}),
+                                "right": GraphNode("alternateprobe.probe", {"mode": "right"}),
+                            }
+                        ),
+                        ["left", "right"],
+                    ),
+                    timeout=30,
+                )
+                assert result.outputs["left"]["report"].resolve() == "refused"
+                assert result.outputs["right"]["report"].resolve() == "refused"
+                assert len(result.diagnostics) == 4
+                assert all(
+                    "One of these nodes" in item.message
+                    and "sandboxed packs" in item.message
+                    and "networkprobe" in item.message
+                    and "alternateprobe" in item.message
+                    for item in result.diagnostics
+                )
+                assert all("forged.example.test" not in item.message for item in result.diagnostics)
+                diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                assert len(diagnostics) == 4
+                assert all(
+                    set(event.detail["diagnostics"][0]["candidatePacks"])
+                    == {"networkprobe", "alternateprobe"}
+                    for event in diagnostics
+                )
+            finally:
+                await composer.close()
+
+        run_scenario(scenario())
+
     def test_helper_published_indexes_resolve_with_only_snapshot_and_folder_grants(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
