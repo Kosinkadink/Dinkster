@@ -434,6 +434,117 @@ def board_snapshot() -> dict[str, Any]:
     }
 
 
+def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        path = tmp_path / "cards.sqlite"
+        store = SessionStore(path)
+        client = await make_client(SessionService(store=store))
+        document = board_snapshot()
+        input_key = '["g0","node","prompt"]'
+        for key, kind, source in (
+            ("first", "workflow", {"kind": "library", "recordId": "saved-workflow"}),
+            ("second", "workflow", {"kind": "library", "recordId": "saved-workflow"}),
+            ("saved", "blueprint", {"kind": "library", "recordId": "saved-blueprint"}),
+            (
+                "pack",
+                "blueprint",
+                {
+                    "kind": "pack",
+                    "packId": "example.pack",
+                    "blueprintId": "rain",
+                    "digest": "sha256:" + "a" * 64,
+                },
+            ),
+        ):
+            document["items"][key] = {
+                "id": key,
+                "kind": kind,
+                "name": "Rain",
+                "source": source,
+                "values": {input_key: "Original"},
+                "rect": {"x": 20, "y": 40, "width": 340, "height": 240},
+            }
+            document["order"].append(key)
+        try:
+            created = await client.post(
+                "/api/sessions",
+                json={
+                    "scope": "local",
+                    "documentKind": "board",
+                    "documentId": "board-one",
+                    "snapshot": document,
+                },
+            )
+            assert created.status == 201
+            sid = (await created.json())["sessionId"]
+            changed = await client.post(
+                f"/api/sessions/{sid}/ops",
+                json=op_body(
+                    "input-change",
+                    0,
+                    patch=[
+                        {
+                            "op": "replace",
+                            "path": ["items", "first", "values", input_key],
+                            "value": {"text": "Rain at night", "variants": [2, 5]},
+                        }
+                    ],
+                ),
+            )
+            assert changed.status == 200
+            document["items"]["first"]["values"][input_key] = {
+                "text": "Rain at night",
+                "variants": [2, 5],
+            }
+            assert (
+                await client.put(
+                    f"/api/sessions/{sid}/snapshot", json={"revision": 1, "document": document}
+                )
+            ).status == 200
+        finally:
+            await client.close()
+            store.close()
+        store = SessionStore(path)
+        client = await make_client(SessionService(store=store))
+        try:
+            reopened = await (await client.get(f"/api/sessions/{sid}/snapshot")).json()
+            assert reopened == {"revision": 1, "document": document}
+            assert reopened["document"]["items"]["second"]["values"][input_key] == "Original"
+            for changes in (
+                {"source": {"kind": "library", "recordId": ""}},
+                {
+                    "source": {
+                        "kind": "pack",
+                        "packId": "p",
+                        "blueprintId": "b",
+                        "digest": "sha256:" + "b" * 64,
+                    }
+                },
+                {"values": []},
+            ):
+                refused = await client.post(
+                    f"/api/sessions/{sid}/ops",
+                    json=op_body(
+                        "invalid-card",
+                        1,
+                        patch=[
+                            {
+                                "op": "replace",
+                                "path": ["items", "first"],
+                                "value": {**document["items"]["first"], **changes},
+                            }
+                        ],
+                    ),
+                )
+                assert refused.status == 400
+            assert (await (await client.get(f"/api/sessions/{sid}")).json())["revision"] == 1
+        finally:
+            await client.close()
+            store.close()
+
+    run_scenario(scenario())
+
+
 def test_board_session_refuses_invalid_edits_and_reconnects(tmp_path: Path) -> None:
     async def scenario() -> None:
         path = tmp_path / "board-sessions.sqlite"
