@@ -1571,8 +1571,9 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
         run_scenario(scenario())
 
     @pytest.mark.parametrize("declared", [True, False])
+    @pytest.mark.parametrize("managed", [None, "selected", "empty"])
     def test_manifest_origins_grant_only_the_named_destinations(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool, managed: str | None
     ) -> None:
         from dinkster.compose import CompositionError, PackSpec, ServingComposer
 
@@ -1643,6 +1644,18 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                     "networkprobe": (f"https://operator.example.test:{port}",),
                     "different-pack": (f"https://other.example.test:{port}",),
                 },
+                sandbox_network_policy=(
+                    {
+                        "networkprobe": [
+                            f"https://mirror.example.test:{port}",
+                            f"https://operator.example.test:{port}",
+                        ]
+                    }
+                    if managed == "selected"
+                    else {"networkprobe": []}
+                    if managed == "empty"
+                    else None
+                ),
             )
             try:
                 if not declared:
@@ -1657,14 +1670,22 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                 result = await engine.run(
                     Graph(nodes={"probe": GraphNode("networkprobe.probe", {})}), ["probe"]
                 )
-                assert result.outputs["probe"]["report"].resolve() == (
-                    (
-                        "api.example.test:200,mirror.example.test:200,"
-                        if declared
-                        else "api.example.test:403,mirror.example.test:403,"
+                expected = (
+                    "api.example.test:403,mirror.example.test:403,"
+                    "operator.example.test:403,other.example.test:403"
+                    if managed == "empty"
+                    else (
+                        (
+                            "api.example.test:403,mirror.example.test:200,"
+                            if managed == "selected"
+                            else "api.example.test:200,mirror.example.test:200,"
+                            if declared
+                            else "api.example.test:403,mirror.example.test:403,"
+                        )
+                        + "operator.example.test:200,other.example.test:403"
                     )
-                    + "operator.example.test:200,other.example.test:403"
                 )
+                assert result.outputs["probe"]["report"].resolve() == expected
             finally:
                 await composer.close()
                 server.close()
