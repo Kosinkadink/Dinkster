@@ -376,8 +376,16 @@ def _records(root: Path, kind: str) -> list[dict[str, object]]:
     directory = root / kind
     if directory.is_symlink() or directory.is_junction():
         raise EnvironmentError("history must not be a symlink")
+    try:
+        paths = sorted(directory.iterdir())
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise EnvironmentError(f"cannot read {kind}: {error}") from error
     entries: list[dict[str, object]] = []
-    for path in sorted(directory.glob("*.json")):
+    for path in paths:
+        if not path.name.endswith(".json"):
+            continue
         if path.is_symlink() or path.is_junction():
             raise EnvironmentError("history entries must not be symlinks")
         entry = read_document(path)

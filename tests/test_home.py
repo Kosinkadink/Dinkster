@@ -1425,6 +1425,89 @@ def test_installation_packs_read_stopped_snapshot_requests(
     run_scenario(scenario())
 
 
+def test_installation_history_reads_recorded_entries_without_retained_builds(
+    tmp_path: Path,
+) -> None:
+    import shutil
+
+    from dinkster_supervisor.environment_history import prepare_entry, publish_entry
+    from test_environment_state import _generation
+
+    root, empty = tmp_path / "nightly", tmp_path / "empty"
+    empty.mkdir()
+    for number, version in ((1, "0.3.1"), (2, "0.4.2")):
+        manifest = _generation(root, number)
+        generation = manifest.parent
+        record = json.loads(manifest.read_text())
+        record["engine"]["version"] = version
+        manifest.write_text(json.dumps(record))
+        publish_entry(
+            root,
+            prepare_entry(
+                root,
+                generation,
+                operation=str(number),
+                reason="setup" if number == 1 else "update",
+            ),
+        )
+    (root / "current").write_text("2\n")
+    shutil.rmtree(root / "builds")
+    before = {
+        str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({root.resolve(), empty.resolve()}))
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/history"
+            for query, expected in (
+                ({}, 400),
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unregistered")}, 404),
+                ({"root": str(root), "generation": "1"}, 400),
+                ([("root", str(root)), ("root", str(empty))], 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected
+            response = await client.get(endpoint, params={"root": str(root)})
+            assert response.status == 200
+            body = await response.json()
+            assert body["root"] == str(root.resolve()) and body["current"] == 2
+            assert [entry["id"] for entry in body["history"]] == [1, 2]
+            assert [entry["snapshot"]["engine"]["version"] for entry in body["history"]] == [
+                "0.3.1",
+                "0.4.2",
+            ]
+            assert [entry["reason"] for entry in body["history"]] == ["setup", "update"]
+            known_empty = await (await client.get(endpoint, params={"root": str(empty)})).json()
+            assert known_empty == {"root": str(empty.resolve()), "current": None, "history": []}
+            (empty / "history").write_text("not a directory")
+            unavailable = await client.get(endpoint, params={"root": str(empty)})
+            assert unavailable.status == 503
+            assert (await unavailable.json())["error"] == "history-unavailable"
+            assert (empty / "history").read_text() == "not a directory"
+            (empty / "history").unlink()
+            empty.rmdir()
+            assert (await client.get(endpoint, params={"root": str(empty)})).status == 503
+            assert not empty.exists()
+            assert {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            } == before
+            (root / "history" / "00000000000000000001.json").write_text("broken history")
+            unavailable = await client.get(endpoint, params={"root": str(root)})
+            assert unavailable.status == 503
+            assert (await unavailable.json())["error"] == "history-unavailable"
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["state"] == "stopped" and "open" not in status
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
 def test_installation_frontend_address_serves_the_open_installations_own_frontend(
     tmp_path: Path,
 ) -> None:
