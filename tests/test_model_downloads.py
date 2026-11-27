@@ -2353,6 +2353,67 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
     assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
 
 
+def test_model_settings_report_each_location_space_without_changing_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from dinkster_assets import MountTable
+
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("DINKSTER_HOME", str(home))
+    roots = [tmp_path / "large", tmp_path / "small"]
+    for root in roots:
+        root.mkdir()
+    settings = {
+        "version": 1,
+        "downloadLocation": None,
+        "locations": [
+            {"id": root.name, "path": str(root), "mode": "read", "visibility": "opt-in"}
+            for root in roots
+        ],
+    }
+    saved = home / "model-settings.json"
+    saved.write_text(json.dumps(settings))
+    original = saved.read_bytes()
+    measured = {roots[0]: 9000, roots[1]: 120}
+    monkeypatch.setattr(
+        "dinkster.model_settings.shutil.disk_usage",
+        lambda path: SimpleNamespace(free=measured[path]),
+    )
+    service = MountService(MountTable(), tmp_path / "mounts.toml", shared_models=True)
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.get("/api/models/settings")
+            assert response.status == 200
+            state = await response.json()
+            assert [(row["id"], row["space"]["freeBytes"]) for row in state["locations"]] == [
+                ("large", 9000),
+                ("small", 120),
+            ]
+            assert all(row["space"]["status"] == "available" for row in state["locations"])
+
+            def unavailable(_path: Path) -> None:
+                raise PermissionError("space not readable")
+
+            monkeypatch.setattr("dinkster.model_settings.shutil.disk_usage", unavailable)
+            state = await (await client.get("/api/models/settings")).json()
+            assert [row["space"] for row in state["locations"]] == [{"status": "unavailable"}] * 2
+            assert saved.read_bytes() == original
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
+
+
 @pytest.mark.parametrize("helper_storage", [False, True])
 @pytest.mark.parametrize("sandboxed", [False, True])
 def test_model_management_shares_locations_without_deleting_files(
