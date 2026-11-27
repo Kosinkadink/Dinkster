@@ -1355,6 +1355,91 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
 
         run_scenario(scenario())
 
+    def test_manifest_origins_grant_only_the_named_destinations(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from dinkster.compose import PackSpec, ServingComposer
+
+        async def scenario() -> None:
+            async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+                try:
+                    if await reader.read(4) == b"ping":
+                        writer.write(b"pong")
+                        await writer.drain()
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+
+            server = await asyncio.start_server(echo, "127.0.0.1", 0)
+            port = int(server.sockets[0].getsockname()[1])
+            hosts = ("api.example.test", "mirror.example.test", "operator.example.test")
+
+            async def test_resolver(host: str, resolved_port: int) -> tuple[str, ...]:
+                assert host in hosts and resolved_port == port
+                return ("127.0.0.1",)
+
+            monkeypatch.setattr(egress_module, "_resolve_public_addresses", test_resolver)
+            pack = tmp_path / "network-pack"
+            pack.mkdir()
+            manifest = pack / "dinkster-pack.toml"
+            manifest.write_text(
+                '[pack]\nname="network-pack"\nnamespaces=["networkprobe"]\n'
+                '[pack.entry]\nnodes="network_probe:NODES"\n'
+                "[pack.sandbox]\nnetwork-origins=["
+                f'"https://API.example.test:{port}/", "https://mirror.example.test:{port}"]\n'
+            )
+            (pack / "network_probe.py").write_text(
+                "import os, socket\n"
+                "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, OutputSpec, TypeExpr\n"
+                "class Probe(Node):\n"
+                "    @classmethod\n"
+                "    def define_schema(cls):\n"
+                "        return NodeSchema(node_type='networkprobe.probe', outputs=(\n"
+                "            OutputSpec('report', TypeExpr.concrete(CORE_STRING)),))\n"
+                "    @classmethod\n"
+                "    def execute(cls):\n"
+                "        reports = []\n"
+                f"        for host in {(*hosts, 'other.example.test')!r}:\n"
+                "            with socket.socket(socket.AF_UNIX) as proxy:\n"
+                "                proxy.settimeout(5)\n"
+                "                proxy.connect(os.environ['DINKSTER_EGRESS_PROXY'])\n"
+                f"                proxy.sendall(f'CONNECT {{host}}:{port} HTTP/1.1\\r\\n\\r\\n'"
+                ".encode('ascii'))\n"
+                "                head = b''\n"
+                "                while b'\\r\\n\\r\\n' not in head:\n"
+                "                    head += proxy.recv(4096)\n"
+                "                status = head.split(b' ')[1].decode()\n"
+                "                if status == '200':\n"
+                "                    proxy.sendall(b'ping')\n"
+                "                    assert proxy.recv(4) == b'pong'\n"
+                "                reports.append(host + ':' + status)\n"
+                "        return cls.outputs(report=','.join(reports))\n"
+                "NODES = (Probe,)\n"
+            )
+            composer = ServingComposer(
+                sandbox_policy=SandboxPolicy(ro_binds=(str(REPO_ROOT),)),
+                sandbox_network_grants={
+                    "network-pack": (f"https://operator.example.test:{port}",),
+                    "different-pack": (f"https://other.example.test:{port}",),
+                },
+            )
+            try:
+                await composer.add_pack(PackSpec(manifest, env={"PYTHONPATH": str(pack)}))
+                engine = composer.composition.make_engine(lambda event: None)
+                result = await engine.run(
+                    Graph(nodes={"probe": GraphNode("networkprobe.probe", {})}), ["probe"]
+                )
+                assert result.outputs["probe"]["report"].resolve() == (
+                    "api.example.test:200,mirror.example.test:200,"
+                    "operator.example.test:200,other.example.test:403"
+                )
+            finally:
+                await composer.close()
+                server.close()
+                await server.wait_closed()
+
+        run_scenario(scenario())
+
     def test_openai_transport_uses_unix_egress_with_loopback_unavailable(
         self,
         tmp_path: Path,
