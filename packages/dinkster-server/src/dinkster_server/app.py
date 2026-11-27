@@ -3720,6 +3720,12 @@ async def handle_submit(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "assets-missing", "assets": missing_assets}, status=409
             )
+        secret_store = request.app[SECRETS_KEY]
+
+        def resolve_secret(name: str) -> str | None:
+            return secret_store.resolve(principal, name)[0]
+
+        execution = replace(execution, resolve_secret=resolve_secret)
         try:
             job = state.queue.submit(
                 client_id,

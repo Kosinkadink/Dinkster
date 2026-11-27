@@ -491,6 +491,7 @@ class InProcessWorker:
             inputs=invocation.available_inputs,
             effective_schema=invocation.effective_schema,
             connected_undemanded_inputs=invocation.connected_undemanded_inputs,
+            resolve_secret=invocation.resolve_secret,
             expected_execution_identity=invocation.expected_execution_identity,
             fp8_matmul=invocation.fp8_matmul,
             diffusion_dtype=invocation.diffusion_dtype,

@@ -293,6 +293,10 @@ class ExecutionRuntime:
     """Host-side validator for external references in a cached result."""
     secret_account_id: str | None = None
     """Host-authenticated account partition for secret-node results, never a credential."""
+    resolve_secret: Callable[[str], str | None] | None = field(
+        default=None, compare=False, repr=False
+    )
+    """Account-scoped authority pinned at admission, separate from graph and cache data."""
     extension_snapshot: ExtensionSnapshot = ExtensionSnapshot()
     sampler_registry_snapshot: SamplerRegistrySnapshot = SamplerRegistrySnapshot()
     graph_compiler_registry: GraphCompilerRegistrySnapshot = GraphCompilerRegistrySnapshot()
@@ -1793,6 +1797,7 @@ class Engine:
                                     name for name in lazy_links if name not in demanded
                                 ),
                                 effective_schema=schema,
+                                resolve_secret=self._runtime().resolve_secret,
                                 asset_folders=self._runtime().asset_folders,
                                 extension_snapshot_digest=(
                                     self._runtime().extension_snapshot_digest
@@ -2095,6 +2100,7 @@ class Engine:
                 node_type=node.node_type,
                 inputs=inputs,
                 effective_schema=schema,
+                resolve_secret=self._runtime().resolve_secret,
                 job_ref=run_id,
                 attempt_id=self._run_attempts[run_id],
                 connected_undemanded_inputs=connected_undemanded_inputs or (),
