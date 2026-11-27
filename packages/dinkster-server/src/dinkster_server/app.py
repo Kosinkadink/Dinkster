@@ -656,6 +656,8 @@ def job_to_wire(
         wire["resultOffers"] = {node: dict(offers) for node, offers in job.result_offers.items()}
     if job.artifact_offers:
         wire["artifactOffers"] = list(job.artifact_offers)
+    if job.artifacts_published:
+        wire["artifacts"] = [_artifact_wire(artifact) for artifact in job.artifacts]
     if job.result is not None:
         wire["outputs"] = {
             node_id: {out: value_descriptor(v, registry) for out, v in outs.items()}
@@ -4858,27 +4860,28 @@ def create_app(
         except AssetError:
             return False
 
-    async def complete_result(job: Job, result: RunResult) -> RunResult:
-        for node_id, outputs in result.outputs.items():
-            if node_id not in job.result_offers:
-                await publish_outputs(job.run_id, node_id, outputs)
+    async def publish_artifacts(job: Job) -> None:
         assert library is not None
         store = library.store
-        if result.artifacts:
-            record_outputs = library.record_saved_outputs
-            result = await run_media_publication(library, lambda: record_outputs(job, result))
+        # Retention may create files before a later catalog write fails; never retry it here.
+        job.artifacts_publication_started = True
+        if job.artifacts:
+            record_artifacts = library.record_saved_artifacts
+            artifacts = await run_media_publication(
+                library, lambda: record_artifacts(job, job.artifacts)
+            )
             announce_asset_kinds(
                 app,
                 {
                     kind
-                    for artifact in result.artifacts
+                    for artifact in artifacts
                     for kind in recorded_asset_kinds("asset/file", artifact.media_type)
                 },
             )
 
             def persist_artifacts() -> list[dict[str, object]]:
                 offers: list[dict[str, object]] = []
-                for index, artifact in enumerate(result.artifacts):
+                for index, artifact in enumerate(artifacts):
                     roots = [artifact.digest]
                     if artifact.preview is not None:
                         roots.append(artifact.preview.digest)
@@ -4897,7 +4900,16 @@ def create_app(
                 return offers
 
             job.artifact_offers = await run_owned_thread(persist_artifacts)
-        return result
+            job.artifacts = artifacts
+        job.artifacts_published = True
+
+    async def complete_result(job: Job, result: RunResult) -> RunResult:
+        for node_id, outputs in result.outputs.items():
+            if node_id not in job.result_offers:
+                await publish_outputs(job.run_id, node_id, outputs)
+        job.artifacts = result.artifacts
+        await publish_artifacts(job)
+        return replace(result, artifacts=job.artifacts)
 
     async def settle_job(job: Job, terminal_state: JobState) -> None:
         from dinkster_library import LibraryError
@@ -4947,10 +4959,12 @@ def create_app(
                     "principalId": job.principal_id,
                     "principalKind": job.principal_kind,
                 },
-                artifacts_complete=job.result is not None,
+                artifacts_complete=job.artifacts_published,
             )
 
         try:
+            if not job.artifacts_publication_started:
+                await publish_artifacts(job)
             if library.scratch_root is not None:
                 scratch = library.scratch_root
                 vault = library.vault

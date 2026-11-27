@@ -166,16 +166,20 @@ def record_from_job(job: Job) -> HistoryRecord:
     if job.result is not None:
         for outputs in job.result.outputs.values():
             references.update(value_asset_references(outputs))
-        for artifact in job.result.artifacts:
-            for item in (artifact.preview, artifact):
-                if item is None:
-                    continue
-                ref = AssetRef(
-                    item.digest, item.name, item.size, item.media_type, item.virtual_path
-                )
-                references[ref.digest] = ref
-                if thumbnail is None and ref.media_type.startswith(("image/", "video/")):
-                    thumbnail = ref
+    artifacts = (
+        job.result.artifacts
+        if job.result is not None
+        else (job.artifacts if job.artifacts_published else ())
+    )
+    for artifact in artifacts:
+        for item in (artifact.preview, artifact):
+            if item is None:
+                continue
+            ref = AssetRef(item.digest, item.name, item.size, item.media_type, item.virtual_path)
+            references[ref.digest] = ref
+            if thumbnail is None and ref.media_type.startswith(("image/", "video/")):
+                thumbnail = ref
+    if job.result is not None:
         if thumbnail is None:
             thumbnail = next(
                 (

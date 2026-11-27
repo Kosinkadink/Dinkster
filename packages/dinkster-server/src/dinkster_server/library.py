@@ -133,8 +133,6 @@ from .lookups import announce_asset_kinds, recorded_asset_kinds
 from .paging import decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
-    from dinkster_engine import RunResult
-
     from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
@@ -357,7 +355,9 @@ class ServerLibrary:
 
         return await publish_original_documents(self, node_id, claims)
 
-    def record_saved_outputs(self, job: Job, result: RunResult) -> RunResult:
+    def record_saved_artifacts(
+        self, job: Job, saved: Sequence[SavedArtifact]
+    ) -> tuple[SavedArtifact, ...]:
         """Retain required encoded attachments and catalog saves before completion."""
 
         def prepare(ref: AssetRef, node_id: str, journal: Path) -> None:
@@ -376,7 +376,7 @@ class ServerLibrary:
             )
 
         artifacts: list[SavedArtifact] = []
-        for artifact in result.artifacts:
+        for artifact in saved:
             journal = self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
             ref = AssetRef(
                 artifact.digest,
@@ -474,7 +474,7 @@ class ServerLibrary:
                     with contextlib.suppress(OSError):
                         preview_journal.unlink(missing_ok=True)
             artifacts.append(artifact)
-        return replace(result, artifacts=tuple(artifacts))
+        return tuple(artifacts)
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
