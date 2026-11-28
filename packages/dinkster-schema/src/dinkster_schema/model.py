@@ -1791,12 +1791,13 @@ class Output:
     alpha_policy: Literal["preserve", "require", "create_if_missing", "drop"] = "preserve"
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
-    list_count: int | OutputListCount | None = None
-    """An exact item count or its declared source, separate from the type.
+    list_count: int | OutputListCount | Formula | None = None
+    """An item count, its input source, or a formula, separate from the type.
+    File-derived formula answers are estimates, not document-known counts.
     Editor metadata only: never an execution value or part of cache identity."""
 
     def __post_init__(self) -> None:
-        from .body import check_flag_or_formula, check_text_or_formula
+        from .body import Formula, check_flag_or_formula, check_text_or_formula
 
         _validate_media_policy(self.alpha_policy, self.mask_polarity, self.mask_semantic)
         check_text_or_formula(self.label, f"output {self.id} label")
@@ -1814,12 +1815,12 @@ class Output:
         if self.list_count is not None:
             if self.type.kind != "list":
                 raise ValueError(f"output {self.id}: list_count needs a list output")
-            if not isinstance(self.list_count, OutputListCount) and not (
+            if not isinstance(self.list_count, (OutputListCount, Formula)) and not (
                 type(self.list_count) is int and 0 <= self.list_count <= 2**53 - 1
             ):
                 raise ValueError(
                     f"output {self.id}: list_count needs a safe nonnegative integer "
-                    "or OutputListCount"
+                    "or OutputListCount or Formula"
                 )
 
 

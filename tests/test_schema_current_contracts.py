@@ -4,6 +4,7 @@ from typing import cast
 import pytest
 from dinkster_schema import (
     ComboWidget,
+    Formula,
     Group,
     Input,
     Node,
@@ -27,22 +28,34 @@ def test_list_count_advice_does_not_invalidate_cached_computation() -> None:
     items = TypeExpr.list_of(integer)
     plain = NodeSchema(
         node_type="test.counted",
-        body=(Input("items", items), Input("count", integer, pin=False), Output("out", items)),
+        body=(
+            Input("items", items),
+            Input("count", integer, pin=False),
+            Output("out", items),
+            Input("video", TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))),
+        ),
     )
-    for count in (0, 7, OutputListCount("items")):
+    for count in (0, 7, OutputListCount("items"), Formula("frames(video)")):
         advised = replace(
             plain,
             body=(
                 plain.inputs[0],
                 replace(plain.inputs[1], list_count_of="items"),
                 replace(plain.outputs[0], list_count=count),
+                plain.inputs[2],
             ),
         )
         restored = schema_from_wire(schema_to_wire(advised))
+        assert restored.outputs[0].list_count == count
         assert schema_signature(restored) == schema_signature(plain)
         assert schema_signature(
             elaborate(restored, {"items": [1, 2], "count": 2})
         ) == schema_signature(elaborate(plain, {"items": [1, 2], "count": 2}))
+
+    with pytest.raises(ValueError, match=r"frames\(\) takes the name of an input"):
+        replace(
+            plain, body=(*plain.inputs, Output("out", items, list_count=Formula("frames(missing)")))
+        )
 
 
 class TwoOutputs(Node):

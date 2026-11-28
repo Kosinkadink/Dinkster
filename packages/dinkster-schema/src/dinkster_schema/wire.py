@@ -970,7 +970,7 @@ def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
                 count["group"] = out.list_count.group
             out_entry["listCount"] = count
         else:
-            out_entry["listCount"] = out.list_count
+            out_entry["listCount"] = _formula_to_wire(out.list_count)
     return out_entry
 
 
@@ -1635,20 +1635,23 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
             input=_expect_str(data.get("input"), "output.knownValue.input"),
             limits=limits,
         )
-    list_count = None
+    list_count: int | OutputListCount | body.Formula | None = None
     if "listCount" in entry:
         raw_count = entry["listCount"]
         if type(raw_count) is int:
             list_count = raw_count
         else:
             data = _expect_object(raw_count, "output.listCount")
-            _reject_unknown_fields(data, frozenset({"input", "group"}), "output.listCount")
-            list_count = OutputListCount(
-                input=_expect_str(data.get("input"), "output.listCount.input"),
-                group=None
-                if "group" not in data
-                else _expect_str(data["group"], "output.listCount.group"),
-            )
+            if "formula" in data:
+                list_count = cast("body.Formula", _formula_from_wire(data, "output.listCount"))
+            else:
+                _reject_unknown_fields(data, frozenset({"input", "group"}), "output.listCount")
+                list_count = OutputListCount(
+                    input=_expect_str(data.get("input"), "output.listCount.input"),
+                    group=None
+                    if "group" not in data
+                    else _expect_str(data["group"], "output.listCount.group"),
+                )
     return Output(
         id=_expect_str(entry.get("id"), "output.id"),
         type=expr,
