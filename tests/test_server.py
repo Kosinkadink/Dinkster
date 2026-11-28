@@ -1275,6 +1275,105 @@ def test_secret_accounts_deployment_fallback_and_private_persistence(tmp_path: P
         assert (root / "credentials.sqlite3").stat().st_mode & 0o777 == 0o600
 
 
+def test_secret_results_are_reused_only_within_the_paying_account() -> None:
+    calls: list[str] = []
+    keys = {
+        "alice-first-key": "alice result",
+        "alice-rotated-key": "new alice result",
+        "bob-key": "bob result",
+    }
+
+    class PaidResult(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.paid_result",
+                body=(
+                    Input("key", STRING, secret=True, pin=False, default="service"),
+                    Output("out", STRING),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, key: str) -> Mapping[str, object]:
+            result = keys[key]
+            calls.append(result)
+            return cls.outputs(out=result)
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = build_schemas([PaidResult, Echo])
+
+        def engine(on_event: EventListener) -> Engine:
+            return Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker(build_node_types([PaidResult, Echo]), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        authenticator = MappingAuthenticator(
+            {
+                name: Principal(name, {"local": frozenset({"jobs:submit"})})
+                for name in ("alice", "bob")
+            }
+        )
+        app = create_app(engine, schemas, authenticator=authenticator)
+        graph = Graph(
+            nodes={
+                "paid": GraphNode("test.paid_result"),
+                "public": GraphNode("test.echo", {"text": "shared public result"}),
+            }
+        )
+        async with TestClient(TestServer(app)) as client:
+            sequence = 0
+
+            async def save(who: str, value: str) -> None:
+                response = await client.put(
+                    "/api/secrets/service",
+                    json={"value": value},
+                    headers={"Authorization": "Bearer " + who},
+                )
+                assert response.status == 200
+
+            async def run(who: str, cached: tuple[str, ...], expected: str) -> None:
+                nonlocal sequence
+                sequence += 1
+                job_id = str(sequence)
+                headers = {"Authorization": "Bearer " + who}
+                response = await client.post(
+                    "/api/jobs",
+                    json=submit_body(graph, ["paid", "public"], jobId=job_id),
+                    headers=headers,
+                )
+                assert response.status == 202, await response.text()
+                job = app[STATE_KEY].queue.get("c1", job_id)
+                assert job is not None
+                await wait_for_state(job, "completed", "failed")
+                response = await client.get(f"/api/jobs/c1/{job_id}", headers=headers)
+                status = await response.json()
+                assert status["state"] == "completed", status
+                assert job.result is not None
+                assert sorted(job.result.cached) == sorted(cached)
+                assert job.result.outputs["paid"]["out"].resolve() == expected
+                assert job.result.outputs["public"]["out"].resolve() == "shared public result"
+                assert not any(value in json.dumps(status) for value in keys)
+
+            await save("alice", "alice-first-key")
+            await save("bob", "bob-key")
+            await run("alice", (), "alice result")
+            await run("alice", ("paid", "public"), "alice result")
+            await save("alice", "alice-rotated-key")
+            await run("alice", ("paid", "public"), "alice result")
+            await run("bob", ("public",), "bob result")
+            await run("bob", ("paid", "public"), "bob result")
+            assert calls == ["alice result", "bob result"]
+
+    run_scenario(scenario())
+
+
 def test_pack_static_assets_and_settings_end_to_end(tmp_path: Path) -> None:
     schema = PackSettingsSchema.from_wire(
         {
