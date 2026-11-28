@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 from dinkster_store import object_path
@@ -63,12 +65,20 @@ def prepare_engine(
         wheels = sorted(release.glob("*.whl"))
         validate_engine_wheels(wheels)
         constraints = write_constraints(root, release, wheels, "uv")
+        boundary = (root / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
+        protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", boundary)
+        if protocol is None:
+            raise ValueError("worker boundary must declare PROTOCOL_VERSION")
+        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
         engine: dict[str, object] = {
             "format": "dinkster.engine/1",
             "repository": "Kosinkadink/Dinkster",
             "commit": git_head(root),
             "version": version,
-            "workerProtocol": base["workerProtocol"],
+            "workerProtocol": int(protocol[1]),
+            "baseWorkerProtocols": project.get("tool", {})
+            .get("dinkster", {})
+            .get("base-worker-protocols", [int(protocol[1])]),
             "workspaceWheels": [wheel.name for wheel in wheels],
             "dependencies": select_dependency_wheels(root, "uv", [base_manifest]),
         }

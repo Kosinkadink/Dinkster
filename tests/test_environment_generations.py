@@ -2100,12 +2100,13 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
         'dependencies=["fixture-base==1.0","fixture-cached==1.0","fixture-new==1.0"]\n'
         '[tool.dinkster]\nlibrary-api=1\nlibrary-capabilities=["index.scan.selected"]\n'
+        "base-worker-protocols=[11,12]\n"
         '[dependency-groups]\nengine-base=["fixture-base==1.0"]\n'
         '[build-system]\nrequires=["hatchling"]\nbuild-backend="hatchling.build"\n'
     )
     boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
     boundary.parent.mkdir(parents=True)
-    boundary.write_text("PROTOCOL_VERSION = 11\n")
+    boundary.write_text("PROTOCOL_VERSION = 12\n")
     monkeypatch.setenv("UV_NO_INDEX", "1")
     monkeypatch.setenv("UV_FIND_LINKS", str(index))
     monkeypatch.setenv("UV_OFFLINE", "1")
@@ -2156,6 +2157,7 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         library_wheels=library_wheels,
     )
     assert inputs["base"] == base["id"]
+    assert inputs["worker_protocol"] == 12
     assert {path: content_digest(store / path) for path in before} == before
     assert "fixture-new==1.0" in inputs["constraints"].read_text()
     root = tmp_path / "project"
@@ -2168,11 +2170,13 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         engine_release=inputs["engine_release"],
         constraints=inputs["constraints"],
         variant=variant,
-        worker_protocol=11,
+        worker_protocol=inputs["worker_protocol"],
         source_kind="source",
     )
     generation_root = root / "builds/1"
     manifest = json.loads((generation_root / "engine-manifest.json").read_bytes())
+    assert manifest["workerProtocol"] == 12
+    assert json.loads((generation_root / "base-manifest.json").read_bytes())["workerProtocol"] == 11
     assert manifest["libraryApi"] == 1
     assert manifest["libraryCapabilities"] == ["index.scan.selected"]
     assert generation.source == "source"
@@ -2198,7 +2202,9 @@ def test_source_engine_reuses_release_base_and_locked_wheels(
         object_path(store / "engines", inputs["engine_release"]) / "checkout"
     )
     assert {path: content_digest(store / path) for path in before} == before
-    boundary.write_text("PROTOCOL_VERSION = 12\n")
+    (source / "pyproject.toml").write_text(
+        (source / "pyproject.toml").read_text().replace("base-worker-protocols=[11,12]\n", "")
+    )
     with pytest.raises(EnvironmentError, match="protocol does not match"):
         prepare_source_engine(
             source,
