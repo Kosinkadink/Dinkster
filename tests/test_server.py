@@ -1316,7 +1316,7 @@ def test_secret_results_are_reused_only_within_the_paying_account() -> None:
 
         authenticator = MappingAuthenticator(
             {
-                name: Principal(name, {"local": frozenset({"jobs:submit"})})
+                name: Principal(name, {"local": frozenset({"jobs:submit", "jobs:read"})})
                 for name in ("alice", "bob")
             }
         )
