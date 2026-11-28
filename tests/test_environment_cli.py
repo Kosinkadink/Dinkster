@@ -1887,12 +1887,13 @@ def test_source_engine_ref_update_and_exact_commit_rollback(
         (source / "pyproject.toml").write_text(
             '[project]\nname="dinkster"\nversion="1.1"\nrequires-python=">=3.12"\n'
             'dependencies=["fixture-base==1.0","fixture-new==1.0"]\n[dependency-groups]\n'
-            'engine-base=["fixture-base==1.0"]\n[build-system]\n'
+            'engine-base=["fixture-base==1.0"]\n[tool.dinkster]\n'
+            "base-worker-protocols=[11,12]\n[build-system]\n"
             'requires=["hatchling"]\nbuild-backend="hatchling.build"\n'
         )
         boundary = source / "packages/dinkster-workers/src/dinkster_workers/boundary.py"
         boundary.parent.mkdir(parents=True)
-        boundary.write_text("PROTOCOL_VERSION = 11\n")
+        boundary.write_text("PROTOCOL_VERSION = 12\n")
         index = tmp_path / "index"
         index.mkdir()
         base = read_document(Path(fixture["baseManifest"]))

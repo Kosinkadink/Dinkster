@@ -1378,10 +1378,11 @@ def _install(args: argparse.Namespace, result: dict[str, object]) -> int:
                     constraints = published_constraints
                     engine_version = cast("str", catalog.engine["version"])
                     engine_release = catalog.channel.engine_release
-                    worker_protocol = cast("int", base["workerProtocol"])
+                    worker_protocol = cast("int", catalog.engine["workerProtocol"])
                     if source_inputs is not None:
                         engine_version = source_inputs["engine_version"]
                         engine_release = source_inputs["engine_release"]
+                        worker_protocol = source_inputs["worker_protocol"]
                 retained_sources = {}
                 if local is None and previous_root is not None and catalog_lock is not None:
                     provenance = previous_root / "artifact-sources.json"

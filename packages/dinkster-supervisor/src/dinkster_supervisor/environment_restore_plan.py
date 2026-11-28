@@ -31,6 +31,7 @@ from .environment_artifacts import (
     discover,
     engine_constraints,
     parse_metadata,
+    supports_base_protocol,
     trusted_metadata,
     validate_dependency_base,
     validate_manifest,
@@ -1054,7 +1055,7 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
             identity == recorded_base["id"]
             or base.get("platform") != original.get("platform")
             or base.get("python") != original.get("python")
-            or base.get("workerProtocol") != snapshot.get("workerProtocol")
+            or not supports_base_protocol(engine, base)
         ):
             continue
         try:

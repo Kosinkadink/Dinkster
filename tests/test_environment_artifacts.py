@@ -1292,14 +1292,22 @@ def test_part_hashes_do_not_substitute_for_verifying_extracted_wheel_hashes(tmp_
 
 
 @pytest.mark.parametrize("labelled", [False, True])
+@pytest.mark.parametrize("older_base", [False, True])
 def test_channel_builder_round_trips_both_channels_without_changing_publisher_inputs(
     tmp_path: Path,
     labelled: bool,
+    older_base: bool,
 ):
     mirror = tmp_path / "mirror"
-    base, engine, channel = _mirror(mirror, variant="linux-cpu")
+    base, engine, channel = _mirror(
+        mirror,
+        variant="linux-cpu",
+        protocol=14 if older_base else 15,
+        engine_protocol=15,
+        base_protocols=[14, 15],
+    )
     second = tmp_path / "second"
-    extra, _, _ = _mirror(second, variant="win-cpu")
+    extra, _, _ = _mirror(second, variant="win-cpu", protocol=15)
     shutil.copytree(second / "base/win-cpu", mirror / "base/win-cpu")
     release = mirror / "engine" / channel["engine"]["release"][7:]
     bases = [
