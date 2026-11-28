@@ -16,6 +16,7 @@ import math
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from graphlib import TopologicalSorter
 from typing import cast
 
 from dinkster_graph import Graph, GraphNode, RegionNode
@@ -279,23 +280,23 @@ def _correct_number(
     return min(last, max(first, nearer))
 
 
-async def resolve_numeric_corrections(
+def _number_widget(spec: Input) -> NumberWidget | None:
+    widgets = (
+        tuple(item.widget for item in spec.widget.representations)
+        if isinstance(spec.widget, WidgetRepresentations)
+        else (spec.widget,)
+    )
+    return next((widget for widget in widgets if isinstance(widget, NumberWidget)), None)
+
+
+def _correction_order(
     graph: Graph,
     targets: Sequence[str],
     schemas: Mapping[str, NodeSchema],
-    *,
-    call_lookup: CallLookup | None = None,
-    automatic: Sequence[AutomaticRecord] = (),
-) -> tuple[Graph, tuple[CorrectedRecord, ...]]:
-    """Apply unanswered numeric fixes only to the run, never its source document.
-
-    Wires and absent fields stay unchanged. Unknown limits offer no correction;
-    failed hard rules still see the submitted values and cannot be repaired away.
-    """
-    nodes = _nodes(graph, schemas, targets, "")
-    candidates: list[tuple[_Node, InputSite, NumberWidget, dict[str, object]]] = []
-    calls: dict[tuple[str, LookupCall], asyncio.Future[LookupAnswer]] = {}
-    for node in nodes:
+    automatic: Sequence[AutomaticRecord],
+) -> TopologicalSorter[tuple[str, str]]:
+    order: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for node in _nodes(graph, schemas, targets, ""):
         in_use = {
             record.input_id: record.value for record in automatic if record.node_id == node.path
         }
@@ -336,16 +337,103 @@ async def resolve_numeric_corrections(
             literal=literal_value,
             in_use=in_use,
         )
+        reads: dict[str, set[str]] = {}
+        numbers: set[str] = set()
         for site in flat.sites:
+            spec = site.input
+            expressions: Sequence[object] = ()
+            if spec.id not in node.node.inputs and spec.automatic is not None:
+                expressions = (spec.automatic,)
+            elif (
+                not is_link(node.node.inputs.get(spec.id))
+                and type(literal_value(node.node.inputs.get(spec.id))) in (int, float)
+                and (widget := _number_widget(spec)) is not None
+            ):
+                numbers.add(spec.id)
+                expressions = tuple(
+                    getattr(widget, name) for name in ("min", "max", "step", "offset")
+                )
+            reads[spec.id] = set()
+            for expression in expressions:
+                arguments = expression.args if isinstance(expression, Lookup) else (expression,)
+                for argument in arguments:
+                    if isinstance(argument, (Formula, str)):
+                        try:
+                            reads[spec.id].update(evaluator.dependencies(argument, site))
+                        except FormulaRefused:
+                            pass
+        dependencies: dict[str, set[str]] = {}
+        for input_id in numbers:
+            found: set[str] = set()
+            pending = list(reads[input_id])
+            while pending:
+                dependency = pending.pop()
+                if dependency not in found:
+                    found.add(dependency)
+                    pending.extend(reads.get(dependency, ()))
+            # A circular limit is unknown, not a reason to refuse or hold a run.
+            if input_id not in found:
+                dependencies[input_id] = found & numbers
+        for input_id, found in dependencies.items():
+            order[node.path, input_id] = {
+                (node.path, dependency) for dependency in found if dependency in dependencies
+            }
+    return TopologicalSorter(order)
+
+
+async def _resolve_numeric_corrections(
+    graph: Graph,
+    targets: Sequence[str],
+    schemas: Mapping[str, NodeSchema],
+    *,
+    ready: set[tuple[str, str]],
+    call_lookup: CallLookup | None = None,
+    automatic: Sequence[AutomaticRecord] = (),
+) -> tuple[Graph, tuple[CorrectedRecord, ...]]:
+    """Apply unanswered numeric fixes only to the run, never its source document.
+
+    Wires and absent fields stay unchanged. Unknown limits offer no correction;
+    failed hard rules still see the submitted values and cannot be repaired away.
+    """
+    nodes = _nodes(graph, schemas, targets, "")
+    candidates: list[tuple[_Node, InputSite, NumberWidget, dict[str, object]]] = []
+    calls: dict[tuple[str, LookupCall], asyncio.Future[LookupAnswer]] = {}
+    for node in nodes:
+        in_use = {
+            record.input_id: record.value for record in automatic if record.node_id == node.path
+        }
+        try:
+            flat = flatten_body(
+                node.schema.body or node.schema.inputs,
+                node.node.inputs,
+                node.node.output_members,
+                node.node.slot_variants,
+                tables=node.schema.tables,
+                derived=node.schema.derived,
+                linked=is_link,
+                literal=literal_value,
+                in_use=in_use,
+            )
+        except FlattenError:
+            continue
+        evaluator = site_evaluator(
+            node.node.inputs,
+            node.node.output_members,
+            node.node.slot_variants,
+            dict(flat.choices),
+            tables=node.schema.tables,
+            derived=node.schema.derived,
+            linked=is_link,
+            literal=literal_value,
+            in_use=in_use,
+        )
+        for site in flat.sites:
+            if (node.path, site.input.id) not in ready:
+                continue
             value = node.node.inputs.get(site.input.id)
             if is_link(value) or type(literal_value(value)) not in (int, float):
                 continue
-            widgets = (
-                tuple(item.widget for item in site.input.widget.representations)
-                if isinstance(site.input.widget, WidgetRepresentations)
-                else (site.input.widget,)
-            )
-            widget = next((widget for widget in widgets if isinstance(widget, NumberWidget)), None)
+            widget = _number_widget(site.input)
             if widget is None:
                 continue
             bounds: dict[str, object] = {}
@@ -435,11 +523,10 @@ async def resolve_run_values(
     *,
     call_lookup: CallLookup | None = None,
 ) -> tuple[Graph, tuple[AutomaticRecord, ...], tuple[CorrectedRecord, ...]]:
-    """Correct the submitted numbers, then work out the run's automatic values.
+    """Settle numeric dependencies before correcting a value, at most once.
 
-    Limits may read automatic fields, so first work those out without storing
-    them in the submitted graph. Lookups share one answer for the whole run;
-    automatic formulas are recomputed over the corrected inputs.
+    Circular limits stay unknown. Automatic fields read the settled values;
+    lookups share one answer and one deadline for the whole run.
     """
     answers: dict[tuple[str, LookupCall], asyncio.Task[LookupAnswer]] = {}
     deadline = time.monotonic() + LOOKUP_TIME_LIMIT
@@ -460,8 +547,21 @@ async def resolve_run_values(
             return Failed("lookup-timeout")
 
     _, preview = await resolve_automatic(graph, targets, schemas, call_lookup=answer)
-    graph, corrected = await resolve_numeric_corrections(
-        graph, targets, schemas, call_lookup=answer, automatic=preview
-    )
+    order = _correction_order(graph, targets, schemas, preview)
+    order.prepare()
+    corrected: list[CorrectedRecord] = []
+    while order.is_active():
+        ready = order.get_ready()
+        graph, records = await _resolve_numeric_corrections(
+            graph, targets, schemas, ready=set(ready), call_lookup=answer, automatic=preview
+        )
+        corrected.extend(records)
+        order.done(*ready)
+        if order.is_active():
+            _, preview = await resolve_automatic(graph, targets, schemas, call_lookup=answer)
     graph, automatic = await resolve_automatic(graph, targets, schemas, call_lookup=answer)
-    return graph, automatic, corrected
+    return (
+        graph,
+        automatic,
+        tuple(sorted(corrected, key=lambda record: (record.node_id, record.input_id))),
+    )

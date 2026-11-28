@@ -39,6 +39,7 @@ from .body import (
     Use,
     choice_scope_rows,
     formula_names,
+    formula_reads,
     option_rows,
     scope_rows,
     shared_rows,
@@ -83,6 +84,8 @@ class SiteEvaluator:
     """The picked file of the file field a lookup argument names: its stored
     wire form, None when no file is picked, unknown when a wire feeds it or
     its row is not chosen. ``NOT_A_FILE`` when the name is not a file field."""
+    dependencies: Callable[[Formula | str, InputSite], set[str]]
+    """Flattened input ids read by a formula or lookup argument at the site."""
 
 
 NOT_A_FILE = object()
@@ -120,6 +123,7 @@ def site_evaluator(
     return SiteEvaluator(
         lambda formula, site: flattener.evaluate(formula, site.frames),
         lambda name, site: flattener.file(name, site.frames),
+        lambda formula, site: flattener.dependencies(formula, site.frames),
     )
 
 
@@ -512,6 +516,29 @@ class _Flattener:
                     else:
                         held.discard(name)
         return names, where, inputs, unknown, files
+
+    def dependencies(self, formula: Formula | str, frames: Sequence[_Frame]) -> set[str]:
+        names, where, inputs, unknown, files = self.names_at(frames)
+        if isinstance(formula, str) and formula in files:
+            return {where[formula]} if formula not in unknown else set()
+        scope = FormulaScope(
+            names=names,
+            inputs=frozenset(inputs),
+            tables=self.tables,
+            derived=self.derived,
+            in_member=any(frame.index is not None for frame in frames),
+        )
+        reads: set[str] = set()
+        for name in formula_reads(Formula(formula) if isinstance(formula, str) else formula, scope):
+            if name not in where or name in unknown:
+                continue
+            flat_id = where[name]
+            if names[name].endswith("[]"):
+                group, row = flat_id.rsplit(".", 1)
+                reads.update(f"{group}.{key}.{row}" for key in self.discovered(group))
+            else:
+                reads.add(flat_id)
+        return reads
 
     def file(self, name: str, frames: Sequence[_Frame]) -> object:
         """The stored wire form of the file field ``name`` names in the scope

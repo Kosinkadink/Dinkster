@@ -431,6 +431,70 @@ def test_unanswered_numeric_fix_uses_and_keeps_only_the_runs_corrected_value(
     run_scenario(scenario())
 
 
+def test_circular_numeric_limit_is_unknown_and_other_limits_settle_first() -> None:
+    received: list[tuple[int, int, int, int]] = []
+
+    class DependentLimits(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.dependent_limits",
+                output_node=True,
+                body=(
+                    Input("amount", INT, default=1, widget=NumberWidget(max=Formula("cap"))),
+                    Input("cap", INT, default=2, automatic=Formula("amount - 1")),
+                    Input("dependent", INT, default=1, widget=NumberWidget(max=Formula("other"))),
+                    Input("other", INT, default=1, widget=NumberWidget(max=4)),
+                    Output("out", INT),
+                ),
+            )
+
+        @classmethod
+        def execute(
+            cls, *, amount: int, cap: int, dependent: int, other: int
+        ) -> Mapping[str, object]:
+            received.append((amount, cap, dependent, other))
+            return cls.outputs(out=amount)
+
+    schemas = build_schemas([DependentLimits])
+
+    def engine(on_event: object = None) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types([DependentLimits]), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,  # type: ignore[arg-type]
+        )
+
+    async def scenario() -> None:
+        original = Graph(
+            {"n": GraphNode("test.dependent_limits", {"amount": 7, "dependent": 6, "other": 7})}
+        )
+        async with TestClient(TestServer(create_app(engine, schemas))) as client:
+            response = await client.post("/api/jobs", json=_submit(original, "circular"))
+            assert response.status == 202, await response.text()
+            job = await _finished(client, "circular")
+            assert job["state"] == "completed", job
+            assert received == [(7, 6, 4, 4)]
+            assert job["automaticValues"] == [
+                {"nodeId": "n", "inputId": "cap", "value": 6, "source": "worked-out"}
+            ]
+            assert job["correctedValues"] == [
+                {"nodeId": "n", "inputId": name, "value": 4, "source": "number-outside-limits"}
+                for name in ("dependent", "other")
+            ]
+            assert original.nodes["n"].inputs == {  # type: ignore[union-attr]
+                "amount": 7,
+                "dependent": 6,
+                "other": 7,
+            }
+
+    run_scenario(scenario())
+
+
 def test_only_nodes_of_the_requested_run_are_worked_out() -> None:
     graph = Graph(
         {

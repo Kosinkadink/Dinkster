@@ -139,7 +139,9 @@ class _WorkingOut:
         answers: Mapping[LookupCall, LookupAnswer],
     ) -> None:
         self.evaluator = SiteEvaluator(
-            lambda _formula, _site: UNKNOWN, lambda _name, _site: UNKNOWN
+            lambda _formula, _site: UNKNOWN,
+            lambda _name, _site: UNKNOWN,
+            lambda _formula, _site: set(),
         )
         self.sites = sites
         self.answers = answers
