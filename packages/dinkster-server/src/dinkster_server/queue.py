@@ -49,7 +49,7 @@ from dinkster_engine import (
     GraphValidationError,
     RunResult,
 )
-from dinkster_engine.automatic import AutomaticRecord
+from dinkster_engine.automatic import AutomaticRecord, CorrectedRecord
 from dinkster_graph import Graph, graph_to_wire, lower_selectors
 from dinkster_protocol import (
     AttentionPolicyConfig,
@@ -136,6 +136,8 @@ class Job:
     automatic: tuple[AutomaticRecord, ...] = ()
     """Each automatic field the run uses: the value written into ``graph`` and
     whether it was worked out or was the field's default."""
+    corrected: tuple[CorrectedRecord, ...] = ()
+    """Stored numeric fields corrected in the run, not in its source document."""
     attempt: int = 1
     """Engine-side execution attempt for this jobRef. Retry plumbing is not
     implemented yet, so every current job has exactly one attempt."""
@@ -294,6 +296,7 @@ class JobQueue:
         single_job_multi_gpu: SingleJobMultiGpuConfig | None = None,
         cache_enabled: bool = True,
         automatic: tuple[AutomaticRecord, ...] = (),
+        corrected: tuple[CorrectedRecord, ...] = (),
     ) -> Job:
         """Queue a lowered graph under an optional pre-pinned execution."""
         if self._closed:
@@ -395,6 +398,7 @@ class JobQueue:
             single_job_multi_gpu=single_job_multi_gpu,
             cache_enabled=cache_enabled,
             automatic=automatic,
+            corrected=corrected,
         )
         if self._store is not None:
             # Durability before acknowledgment: if the accepted-job record
