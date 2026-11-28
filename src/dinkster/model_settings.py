@@ -136,16 +136,21 @@ class ModelLocation:
             )
         folders = dict(MODEL_FOLDERS)
         # Unrecognized folders use the open kind vocabulary: custom_model -> model/custom-model.
+        present: set[str] | None = None
         try:
             children = sorted(self.path.iterdir())
         except OSError:
+            # Failed root reads still declare grants so scanning exposes the failure.
             children = []
+        else:
+            if self.mode == "read":
+                present = {child.name for child in children}
         known = {*folders.values(), *MODEL_FOLDER_ALIASES}
         for child in children:
             kind = f"model/{child.name.replace('_', '-')}"
             if child.is_dir() and child.name not in known and is_asset_kind(kind):
                 folders.setdefault(kind, child.name)
-        return (
+        mounts = (
             *(
                 MountDef(
                     f"{self.id}-{kind.split('/')[1]}",
@@ -167,6 +172,7 @@ class ModelLocation:
                 for folder, kind in MODEL_FOLDER_ALIASES.items()
             ),
         )
+        return tuple(mount for mount in mounts if present is None or mount.path.name in present)
 
 
 @dataclass(frozen=True)

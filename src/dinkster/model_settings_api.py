@@ -49,6 +49,7 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
             project, service.mount_ids(settings=True), modes=service.model_modes(settings=True)
         )
         document = settings.to_wire()
+        live_settings = service.model_settings()
         live_modes = service.model_modes()
         saved_modes = service.model_modes(settings=True)
         for row, location in zip(
@@ -57,11 +58,15 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
             mounts = location.mounts(0)
             row["mounts"] = [mount.id for mount in mounts]
             row["enabled"] = all(mount.id in selected for mount in mounts)
-            row["active"] = all(
-                service.table.get(mount.id) is not None
-                and service.table.get(mount.id) == service.settings_table.get(mount.id)
-                and live_modes.get(mount.id) == saved_modes.get(mount.id)
-                for mount in mounts
+            row["active"] = (
+                live_settings is not None
+                and location in live_settings.locations
+                and all(
+                    service.table.get(mount.id) is not None
+                    and service.table.get(mount.id) == service.settings_table.get(mount.id)
+                    and live_modes.get(mount.id) == saved_modes.get(mount.id)
+                    for mount in mounts
+                )
             )
             row["space"] = filesystem_space(location.path)
         return web.json_response(
