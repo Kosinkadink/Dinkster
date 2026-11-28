@@ -22,6 +22,161 @@ from tests.fixtures.environments.build import KEYS, build
 
 @pytest.mark.usefixtures("signed_channels")
 @pytest.mark.parametrize("opened", [False, True])
+def test_installation_check_reports_drift_and_cancels_without_changing_engine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opened: bool
+) -> None:
+    from dinkster_supervisor.environment_runtime import engine_status, stop_engine
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    monkeypatch.setattr(home_setup, "RELEASE_MIRROR", fixture["mirror"])
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "library"))
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    root = tmp_path / "installation"
+    cancel = False
+    registered = True
+    launch = asyncio.create_subprocess_exec
+
+    async def signed_process(executable: str, *arguments: str, **kwargs: Any):
+        if arguments[:3] == ("-I", "-m", "dinkster_supervisor.environment"):
+            script = (
+                "from dinkster_supervisor import environment, environment_channel_signatures; "
+                f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}\n"
+            )
+            if cancel and "doctor" in arguments:
+                script += """
+import sys, time
+from pathlib import Path
+from dinkster_supervisor import environment_state
+observe = environment_state.preparation_progress
+def progress(stage, completed=0, total=0):
+    observe(stage, completed, total)
+    if stage == 'checking-unexpected-files':
+        marker = Path(sys.argv[sys.argv.index('--progress') + 1])
+        marker.with_suffix('.boundary').touch()
+        deadline = time.monotonic() + 30
+        while not marker.with_name(marker.name + '.cancel').exists():
+            if time.monotonic() > deadline:
+                raise ValueError('test did not cancel the check')
+            time.sleep(0.01)
+        observe(stage, completed, total)
+environment_state.preparation_progress = progress
+"""
+            arguments = ("-I", "-c", script + "environment.main()", *arguments[3:])
+        return await launch(executable, *arguments, **kwargs)
+
+    monkeypatch.setattr(home_setup.asyncio, "create_subprocess_exec", signed_process)
+
+    async def scenario() -> None:
+        nonlocal cancel, registered
+        installed = await home_setup.environment_command(
+            root,
+            "setup",
+            "--channel",
+            "nightly",
+            "--variant",
+            "fixture-cpu",
+            "--data",
+            str(tmp_path / "store"),
+            "--port",
+            str(free_port()),
+            "--yes",
+        )
+        assert installed["current"] == 1
+        await asyncio.to_thread(stop_engine, root, "main")
+        home = Home(installations=lambda: frozenset({root}) if registered else frozenset())
+        path = "/supervisor/installations/check"
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            if opened:
+                await home.open(root, "main")
+                for _ in range(600):
+                    if home.link.state == "ready":
+                        break
+                    await asyncio.sleep(0.05)
+                assert home.link.state == "ready", home.link.detail
+            before = {
+                name: (root / name).read_bytes()
+                for name in ("current", "environment.json", "builds/1/build.json")
+            }
+            before_engines = engine_status(root)
+            before_link = home.link.status_wire()
+            before_target = home.target
+            changed = root / "builds/1/constraints.txt"
+            original = changed.read_bytes()
+            for params, status in (
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unknown")}, 404),
+                ({"root": str(root), "host": "wsl"}, 400),
+            ):
+                assert (await client.get(path, params=params)).status == status
+            response = await client.get(path, params={"root": str(root)})
+            assert response.status == 200, await response.text()
+            plan_id = (await response.json())["plan"]["id"]
+            registered = False
+            assert (await client.post(path, json={"planId": plan_id})).status == 409
+            registered = True
+            for other in (
+                "/supervisor/setup",
+                "/supervisor/installations/update",
+                "/supervisor/installations/restore",
+            ):
+                assert (await client.post(other, json={"planId": plan_id})).status == 404
+            assert (
+                await client.post(path, json={"planId": plan_id, "root": str(root)})
+            ).status == 400
+            for expected in ("clean", "drift", "cancelled", "clean", "error"):
+                cancel = expected == "cancelled"
+                changed.write_bytes(original + b"\n" if expected == "drift" else original)
+                if expected == "error":
+                    (root / "current").write_text("invalid\n")
+                response = await client.post(path, json={"planId": plan_id})
+                assert response.status == 202, await response.text()
+                job = await response.json()
+                job_path = "/supervisor/installations/jobs/" + job["id"]
+                progress = home_setup.dinkster_home() / "setup-jobs" / (job["id"] + ".json")
+                requested = False
+                for _ in range(600):
+                    job = await (await client.get(job_path)).json()
+                    if cancel and not requested and progress.with_suffix(".boundary").exists():
+                        assert job["progress"]["stage"] == "checking-unexpected-files"
+                        assert (await client.post(path, json={"planId": plan_id})).status == 409
+                        assert (
+                            await client.post("/supervisor/setup", json={"planId": plan_id})
+                        ).status == 409
+                        assert (await client.delete(job_path)).status == 202
+                        requested = True
+                    if job["state"] not in {"running", "cancelling"}:
+                        break
+                    await asyncio.sleep(0.05)
+                if expected == "cancelled":
+                    assert requested and job["state"] == "cancelled", job
+                elif expected == "error":
+                    assert job["state"] == "failed" and "current" in job["error"]["message"], job
+                    (root / "current").write_bytes(before["current"])
+                else:
+                    assert job["state"] == "completed" and job["result"]["status"] == expected, job
+                    assert job["result"]["changes"] == (
+                        ["modified: constraints.txt"] if expected == "drift" else []
+                    )
+                assert (
+                    not progress.exists()
+                    and not progress.with_name(progress.name + ".cancel").exists()
+                )
+                assert {name: (root / name).read_bytes() for name in before} == before
+                assert changed.read_bytes() == (
+                    original + b"\n" if expected == "drift" else original
+                )
+                assert engine_status(root) == before_engines
+                assert home.link.status_wire() == before_link and home.target == before_target
+
+    try:
+        run_scenario(scenario())
+    finally:
+        stop_engine(root, "main")
+
+
+@pytest.mark.usefixtures("signed_channels")
+@pytest.mark.parametrize("opened", [False, True])
 @pytest.mark.parametrize("operation", ["update", "restore"])
 def test_installation_job_binds_review_and_cancels_real_cli_without_opening_stopped_installation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opened: bool, operation: str

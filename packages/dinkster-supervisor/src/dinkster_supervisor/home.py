@@ -80,7 +80,11 @@ Mutations persist without restarting; Home restart rebuilds engine authority.
 
 ``GET /supervisor/installations/update`` reviews a registered root's channel
 update without changing the installation. ``POST`` accepts only its retained
-``planId`` and refuses a changed selection or target. Setup and update share
+``planId`` and refuses a changed selection or target. ``GET`` on
+``/supervisor/installations/check`` retains a registered target; its ``POST``
+accepts only that ``planId`` and checks the current selection without opening
+or restarting its engine. Clean and drift reports are completed job ``result``
+values; diagnostic drift is not a failed job. Setup, update, restore and check share
 one process-owned job slot. ``GET/DELETE /supervisor/installations/jobs/{id}``
 observes or cooperatively cancels that job, including its cleanup. Update
 preserves engine assignments and never opens a stopped installation.
@@ -1145,6 +1149,19 @@ async def _handle_update_plan(request: web.Request) -> web.Response:
         )
 
 
+async def _handle_check_plan(request: web.Request) -> web.Response:
+    root, _ = await _installation_fields(request, {"root"})
+    try:
+        jobs = request.app[SETUP_KEY]
+        plan = await jobs.plan_check(root)
+        return web.json_response({"plan": plan, "activeJob": jobs.active_job})
+    except (OSError, ValueError) as error:
+        return web.json_response(
+            {"error": getattr(error, "code", "check-unavailable"), "message": str(error)},
+            status=409 if isinstance(error, SetupRefused) else 503,
+        )
+
+
 async def _handle_restore_plan(request: web.Request) -> web.Response:
     root, fields = await _installation_fields(request, {"root", "entry"})
     try:
@@ -1581,6 +1598,8 @@ def create_home_app(
     app.router.add_get("/supervisor/setup", handle_plan)
     app.router.add_get("/supervisor/installations/update", _handle_update_plan)
     app.router.add_post("/supervisor/installations/update", handle_start)
+    app.router.add_get("/supervisor/installations/check", _handle_check_plan)
+    app.router.add_post("/supervisor/installations/check", handle_start)
     app.router.add_get("/supervisor/installations/restore", _handle_restore_plan)
     app.router.add_post("/supervisor/installations/restore", handle_start)
     app.router.add_post("/supervisor/setup", handle_start)
