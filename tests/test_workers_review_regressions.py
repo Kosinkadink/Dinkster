@@ -279,7 +279,7 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
     from dinkster_api.v1 import SecretRejected
     from dinkster_schema import report_log, report_progress
     from dinkster_values import Value, ValueMeta
-    from dinkster_workers.boundary import ValueCodec, decode_result, encode_result
+    from dinkster_workers.boundary import ValueCodec, encode_result, error_from_wire
 
     secret = "synthetic-invocation-credential"
     mode = "safe"
@@ -421,8 +421,10 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
                 assert not result.error.traceback
                 codec = ValueCodec(registry, use_shm=False)
                 header, blobs, segments = encode_result(codec, result, "refused", 0)
-                decoded, _ = decode_result(codec, header, blobs, segments)
-                assert decoded.error == result.error
+                error_wire = header["error"]
+                assert isinstance(error_wire, dict)
+                assert error_from_wire(error_wire) == result.error
+                assert not blobs and not segments
             requests.clear()
             lazy = await worker.check_lazy_status(
                 LazyStatusInvocation(

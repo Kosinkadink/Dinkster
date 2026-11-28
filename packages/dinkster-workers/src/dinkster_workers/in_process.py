@@ -509,6 +509,10 @@ class InProcessWorker:
                     control = PreparedRunContext(invocation.run_control, prepare_values)
                     invocation = replace(invocation, run_control=control)
                 result = await self._invoke_in_context(invocation, on_event)
+                if private_output_active() and result.error is not None:
+                    return InvocationResult(
+                        error=private_node_error(result.error, invocation.effective_schema)
+                    )
                 result = self._prepare_private_result(result)
                 if result.outputs is not None and result.saved_artifact_claims:
                     outputs = await _run_sync(
