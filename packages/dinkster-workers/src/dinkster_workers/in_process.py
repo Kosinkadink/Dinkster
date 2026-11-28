@@ -664,7 +664,7 @@ class InProcessWorker:
                     invocation.node_type,
                     f"lazy-hook-failed: {exc}",
                     traceback=traceback.format_exc(),
-                    hints=hints_for(exc),
+                    hints=hints_for(exc, invocation.effective_schema),
                 )
             )
 
@@ -861,7 +861,7 @@ class InProcessWorker:
                     node_type=invocation.node_type,
                     message=str(exc),
                     traceback=traceback.format_exc(),
-                    hints=hints_for(exc),
+                    hints=hints_for(exc, invocation.effective_schema),
                 )
             )
         else:

@@ -461,6 +461,60 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
     assert "public-after-secret-invocations" in captured.out
 
 
+def test_public_node_cannot_request_secret_replacement_for_arbitrary_inputs() -> None:
+    from dinkster_api.v1 import SecretRejected
+
+    class PublicConsumer(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            string = TypeExpr.concrete(CORE_STRING)
+            return NodeSchema(
+                node_type="test.public_secret_rejection",
+                body=(Input("text", string), Output("text", string)),
+            )
+
+        @classmethod
+        def execute(cls, *, text: str) -> Mapping[str, object]:
+            raise SecretRejected(text)
+
+        @classmethod
+        def check_lazy_status(cls, *, text: str) -> list[str]:
+            raise SecretRejected(text)
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        worker = InProcessWorker(build_node_types((PublicConsumer,)), registry)
+        schema = PublicConsumer.schema()
+        for rejected_id in ("text", "/home/user/private/path"):
+            inputs = {"text": registry.wrap(CORE_STRING, rejected_id)}
+            result = await worker.invoke(
+                Invocation(
+                    invocation_id="public-rejection",
+                    node_id="consumer",
+                    node_type=schema.node_type,
+                    inputs=inputs,
+                    effective_schema=schema,
+                )
+            )
+            assert result.error is not None
+            assert not result.error.hints
+            lazy = await worker.check_lazy_status(
+                LazyStatusInvocation(
+                    request_id="public-rejection-lazy",
+                    node_id="consumer",
+                    node_type=schema.node_type,
+                    available_inputs=inputs,
+                    connected_undemanded_inputs=(),
+                    effective_schema=schema,
+                )
+            )
+            assert lazy.error is not None
+            assert not lazy.error.hints
+
+    run_scenario(scenario())
+
+
 def test_private_node_returns_refuse_literal_secrets_before_wrapping() -> None:
     from dinkster_assets.privacy import protect_secret_outputs
 

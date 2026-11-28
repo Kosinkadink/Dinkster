@@ -222,9 +222,15 @@ def _hints_for(exc: BaseException, interpreters: Sequence[Interpreter]) -> tuple
     return tuple(hints[:3])
 
 
-def hints_for(exc: BaseException) -> tuple[ErrorHint, ...]:
+def hints_for(exc: BaseException, schema: NodeSchema | None = None) -> tuple[ErrorHint, ...]:
     """Return up to three confident interpretations without ever raising."""
     if isinstance(exc, SecretRejected):
+        if (
+            schema is None
+            or type(exc.input_id) is not str
+            or not any(spec.secret and spec.id == exc.input_id for spec in schema.inputs)
+        ):
+            return ()
         return (
             ErrorHint("secret-rejected", "The service refused this secret.", input_id=exc.input_id),
         )
