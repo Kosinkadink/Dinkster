@@ -1258,6 +1258,24 @@ async def _handle_installation_space(request: web.Request) -> web.Response:
         return web.json_response({"error": "space-unavailable", "message": str(error)}, status=503)
 
 
+async def _handle_installation_folder(request: web.Request) -> web.Response:
+    opener = request.app[OPEN_FOLDER_KEY]
+    if opener is None or not _can_open_folder(request):
+        return web.json_response(
+            {"error": "no-file-manager", "message": "no file manager on this machine"}, status=404
+        )
+    root, _ = await _installation_fields(request, {"root"})
+    if not await asyncio.to_thread(root.is_dir):
+        return web.json_response(
+            {"error": "no-folder", "message": "the installation folder does not exist"}, status=404
+        )
+    try:
+        await opener(root)
+    except OSError as error:
+        return web.json_response({"error": "folder-unavailable", "message": str(error)}, status=503)
+    return web.json_response({"folder": str(root)})
+
+
 async def _handle_installation_history(request: web.Request) -> web.Response:
     from .environment_history import history
     from .environment_state import read_current
@@ -1628,6 +1646,7 @@ def create_home_app(
     app.router.add_get("/supervisor/installations", _handle_installations)
     app.router.add_get("/supervisor/installations/facts", _handle_installation_facts)
     app.router.add_get("/supervisor/installations/space", _handle_installation_space)
+    app.router.add_post("/supervisor/installations/folder", _handle_installation_folder)
     app.router.add_get("/supervisor/installations/history", _handle_installation_history)
     app.router.add_get("/supervisor/installations/packs", _handle_installation_packs)
     app.router.add_get("/supervisor/installations/sandbox", _handle_installation_sandbox)
