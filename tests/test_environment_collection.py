@@ -325,6 +325,13 @@ def test_cleanup_policy_persists_without_collecting_or_changing_software(tmp_pat
     default = {"automatic": True, "previousSuccessfulActivations": 1, "minimumAgeSeconds": 0}
     code, preview = _run(tmp_path, "cleanup", "--plan")
     assert code == 0 and preview["cleanup"]["policy"] == default, preview
+    progress = tmp_path.parent / f"{tmp_path.name}-cleanup-progress.json"
+    for policy_flags in (("--automatic", "off"), ("--keep-previous", "2")):
+        code, refused = _run(
+            tmp_path, "cleanup", *policy_flags, "--progress", str(progress), "--yes"
+        )
+        assert code == 1 and "cannot change retention policy" in refused["error"], refused
+        assert not (tmp_path / "cleanup.json").exists()
     for flags in (("--plan",), ()):
         code, planned = _run(tmp_path, "cleanup", "--automatic", "off", *flags)
         assert code == 0 and planned["status"] == "planned", planned
@@ -789,8 +796,9 @@ def test_cleanup_publishes_only_completed_activation_history(
     "blocked",
     [None, "history", "unreadable-history", "generation", "runtime", "payload", "disabled", "busy"],
 )
+@pytest.mark.parametrize("progress_enabled", [False, True])
 def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
-    cleanup_project: Path, blocked: str | None
+    cleanup_project: Path, blocked: str | None, progress_enabled: bool
 ):
     from contextlib import nullcontext
 
@@ -840,9 +848,13 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         if p.is_file()
     }
     protected[tmp_path / "current"] = (tmp_path / "current").read_bytes()
+    progress = tmp_path.parent / f"{tmp_path.name}-cleanup-progress.json"
+    arguments = ("--progress", str(progress)) if progress_enabled else ()
     with writer_lock(tmp_path) if blocked == "busy" else nullcontext():
-        code, result = _run(tmp_path, "cleanup", "--yes")
+        code, result = _run(tmp_path, "cleanup", *arguments, "--yes")
     assert code == 0, result
+    if progress_enabled:
+        assert json.loads(progress.read_text())["stage"] == "cleaned-old-versions"
     expected = (
         "disabled"
         if blocked == "disabled"
@@ -887,6 +899,69 @@ def test_generation_cleanup_retry_preserves_history_user_data_and_shared_caches(
         assert code == 0 and retried["status"] == "complete", retried
         assert sorted(p.name for p in (tmp_path / "builds").iterdir()) == ["1", "3"]
         assert {p: p.read_bytes() for p in preserved} == preserved
+
+
+@pytest.mark.parametrize(
+    ("stage", "completed"),
+    [
+        ("planning-cleanup", 0),
+        ("recovering-cleanup", 0),
+        ("capturing-cleanup-history", 0),
+        ("quarantining-old-versions", 1),
+        ("committing-cleanup", 2),
+        ("deleting-old-versions", 0),
+    ],
+)
+def test_cleanup_cancellation_preserves_uncommitted_versions_and_finishes_committed_deletion(
+    cleanup_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    stage: str,
+    completed: int,
+):
+    from dinkster_supervisor import environment, environment_collection
+
+    root = cleanup_project
+    progress = root.parent / f"{root.name}-cleanup-progress.json"
+    cancellation = progress.with_name(progress.name + ".cancel")
+    protected = {
+        path: path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_relative_to(root / "journal")
+    }
+    observe = environment_collection.preparation_progress
+
+    def request_cancel(observed: str, done: int = 0, total: int = 0) -> None:
+        if (observed, done) == (stage, completed):
+            cancellation.touch()
+        observe(observed, done, total)
+
+    monkeypatch.setattr(environment_collection, "preparation_progress", request_cancel)
+    monkeypatch.setattr(environment, "preparation_progress", request_cancel)
+    args = environment.argument_parser().parse_args(
+        ["--root", str(root), "cleanup", "--yes", "--progress", str(progress), "--json"]
+    )
+    code = environment.run(args)
+    result = json.loads(capsys.readouterr().out)
+    committed = stage == "deleting-old-versions"
+    assert cancellation.exists()
+    assert code == (0 if committed else 1), result
+    assert result["status"] == ("complete" if committed else "cancelled"), result
+    for number in (2, 7):
+        assert (root / "builds" / str(number)).exists() != committed
+    retained = {
+        path: data
+        for path, data in protected.items()
+        if not committed
+        or not any(path.is_relative_to(root / "builds" / str(number)) for number in (2, 7))
+    }
+    assert {path: path.read_bytes() for path in retained} == retained
+    assert not any(Journal.read(path).incomplete for path in (root / "journal").glob("*.json"))
+    cancellation.unlink()
+    code, retried = _run(root, "cleanup", "--yes", "--progress", str(progress))
+    assert code == 0 and retried["status"] == "complete", retried
+    assert sorted(path.name for path in (root / "builds").iterdir()) == ["1", "3"]
+    assert json.loads(progress.read_text())["stage"] == "cleaned-old-versions"
 
 
 def test_generation_cleanup_coalesces_and_does_not_stop_pending_launches(cleanup_project: Path):

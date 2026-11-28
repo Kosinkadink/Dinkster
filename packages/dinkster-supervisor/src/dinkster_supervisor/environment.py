@@ -1706,10 +1706,13 @@ def _cleanup(args: argparse.Namespace, result: dict[str, object]) -> int:
     if args.keep_previous is not None and not 1 <= args.keep_previous <= 100:
         raise EnvironmentError("previous snapshot count must be an integer from 1 to 100")
     changing_policy = args.automatic is not None or args.keep_previous is not None
+    if changing_policy and args.progress is not None:
+        raise EnvironmentError("cleanup progress cannot change retention policy")
     if not changing_policy and args.yes:
         attempt = retry_generation_collection(root)
         result.update(cleanupAttempt=attempt, status=attempt["status"], current=read_current(root))
         result["cleanup"] = collection_preview(root)
+        preparation_progress("cleaned-old-versions", 1, 1)
         return 0
     preview = collection_preview(root)
     plan = [
@@ -2783,6 +2786,11 @@ def argument_parser(operation: str | None = None) -> argparse.ArgumentParser:
         type=int,
         help="keep 1-100 previous snapshots besides current (default 1)",
     )
+    cleanup.add_argument(
+        "--progress",
+        type=Path,
+        help="observe progress; sibling .cancel cancels before deletion commits",
+    )
     move = commands.add_parser(
         "move", help="relocate an environment and validate retained snapshots"
     )
@@ -2915,7 +2923,7 @@ def _run(args: argparse.Namespace) -> int:
                 "restore-previous",
                 "rollback",
             }
-            or (args.operation == "doctor" and args.progress is not None)
+            or (args.operation in {"doctor", "cleanup"} and args.progress is not None)
             or (args.operation == "security" and args.security_action in {"fix-one", "fix-all"})
         ):
             sequence = 0
@@ -2926,7 +2934,15 @@ def _run(args: argparse.Namespace) -> int:
                 nonlocal sequence, last_write, last_stage
                 sequence += 1
                 if args.progress is not None:
-                    if args.progress.with_name(args.progress.name + ".cancel").exists():
+                    # Committed cleanup cannot restore disposable trees once deletion starts.
+                    cancellable = args.operation != "cleanup" or stage not in {
+                        "deleting-old-versions",
+                        "cleaned-old-versions",
+                    }
+                    if (
+                        cancellable
+                        and args.progress.with_name(args.progress.name + ".cancel").exists()
+                    ):
                         if args.operation in {"packs-plan", "security"}:
                             raise EnvironmentError("pack preparation cancelled")
                         raise PreparationCancelled(f"{args.operation} cancelled")
@@ -2964,6 +2980,9 @@ def _run(args: argparse.Namespace) -> int:
                     preparation_progress("planning-doctor")
                     code = _query(args, result)
                     preparation_progress("checked-software", 1, 1)
+                elif args.operation == "cleanup":
+                    preparation_progress("planning-cleanup")
+                    code = _cleanup(args, result)
                 else:
                     result.update(
                         plan_pack_install(
