@@ -1552,11 +1552,13 @@ def test_installation_facts_read_selected_records_without_starting_or_migrating(
             facts = await response.json()
             assert facts == {
                 "root": str(nightly),
+                "host": {"kind": "local"},
                 "current": 2,
                 "build": {
                     "version": "0.4.2",
                     "release": "sha256:" + "b" * 64,
                     "variant": "linux-cuda128",
+                    "label": "linux-cuda128",
                     "baseId": "sha256:" + "a" * 64,
                     "source": "source",
                 },
@@ -1573,8 +1575,10 @@ def test_installation_facts_read_selected_records_without_starting_or_migrating(
             other = await (await client.get(endpoint, params={"root": str(stable)})).json()
             assert other["current"] == 1 and other["build"]["version"] == "0.3.1"
             assert other["build"]["variant"] == "linux-cpu" and other["engines"] == []
+            assert other["build"]["label"] == "CPU only"
             assert await (await client.get(endpoint, params={"root": str(empty)})).json() == {
                 "root": str(empty),
+                "host": {"kind": "local"},
                 "current": None,
                 "build": None,
                 "engines": [],
