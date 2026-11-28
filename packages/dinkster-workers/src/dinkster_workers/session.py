@@ -861,9 +861,14 @@ class BoundarySession:
         header, _ = frame
         protocol = header.get("protocol")
         if type(protocol) is not int or protocol != PROTOCOL_VERSION:
+            reason = (
+                "; this worker cannot receive linked record declarations; update the worker"
+                if protocol == 14
+                else ""
+            )
             raise RuntimeError(
                 f"{self._role} '{self._pack}' protocol mismatch: "
-                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}"
+                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}{reason}"
             )
         self._pack = str(header.get("pack", self._pack))
         declarations = PackDeclarations(header, role=self._role, pack=self._pack)

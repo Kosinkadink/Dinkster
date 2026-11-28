@@ -420,7 +420,9 @@ def test_group_launched_child_keeps_handler_present_and_absent_members_distinct(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("worker_protocol", (PROTOCOL_VERSION, PROTOCOL_VERSION + 1))
+@pytest.mark.parametrize(
+    "worker_protocol", (PROTOCOL_VERSION - 1, PROTOCOL_VERSION, PROTOCOL_VERSION + 1)
+)
 def test_separately_shipped_worker_negotiates_protocol(
     monkeypatch: pytest.MonkeyPatch, worker_protocol: int
 ) -> None:
@@ -461,8 +463,10 @@ def test_separately_shipped_worker_negotiates_protocol(
                 assert session.alive
                 await session.send({"type": "shutdown"}, [])
             else:
-                with pytest.raises(RuntimeError, match="protocol mismatch"):
+                with pytest.raises(RuntimeError, match="protocol mismatch") as error:
                     await session.begin(reader, writer, timeout=2)
+                if worker_protocol == 14:
+                    assert "cannot receive linked record declarations" in str(error.value)
                 assert not session.alive
         finally:
             await session.close()
