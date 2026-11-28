@@ -84,7 +84,12 @@ update without changing the installation. ``POST`` accepts only its retained
 ``/supervisor/installations/check`` retains a registered target; its ``POST``
 accepts only that ``planId`` and checks the current selection without opening
 or restarting its engine. Clean and drift reports are completed job ``result``
-values; diagnostic drift is not a failed job. Setup, update, restore and check share
+values; diagnostic drift is not a failed job. ``GET/POST`` on
+``/supervisor/installations/cleanup`` reviews/runs narrow old-version cleanup by
+the same retained-target contract. Completed ``result`` preserves complete,
+deferred and disabled outcomes. Cancellation rolls back quarantine before commit;
+after commit it finishes deletion rather than claiming rollback. It does not edit
+retention policy, collect shared caches or stop engines. These operations share
 one process-owned job slot. ``GET/DELETE /supervisor/installations/jobs/{id}``
 observes or cooperatively cancels that job, including its cleanup. Update
 preserves engine assignments and never opens a stopped installation.
@@ -1149,15 +1154,16 @@ async def _handle_update_plan(request: web.Request) -> web.Response:
         )
 
 
-async def _handle_check_plan(request: web.Request) -> web.Response:
+async def _handle_maintenance_plan(request: web.Request) -> web.Response:
     root, _ = await _installation_fields(request, {"root"})
+    operation = "cleanup" if request.path.endswith("/cleanup") else "check"
     try:
         jobs = request.app[SETUP_KEY]
-        plan = await jobs.plan_check(root)
+        plan = await jobs.plan_maintenance(root, operation=operation)
         return web.json_response({"plan": plan, "activeJob": jobs.active_job})
     except (OSError, ValueError) as error:
         return web.json_response(
-            {"error": getattr(error, "code", "check-unavailable"), "message": str(error)},
+            {"error": getattr(error, "code", f"{operation}-unavailable"), "message": str(error)},
             status=409 if isinstance(error, SetupRefused) else 503,
         )
 
@@ -1598,8 +1604,10 @@ def create_home_app(
     app.router.add_get("/supervisor/setup", handle_plan)
     app.router.add_get("/supervisor/installations/update", _handle_update_plan)
     app.router.add_post("/supervisor/installations/update", handle_start)
-    app.router.add_get("/supervisor/installations/check", _handle_check_plan)
+    app.router.add_get("/supervisor/installations/check", _handle_maintenance_plan)
     app.router.add_post("/supervisor/installations/check", handle_start)
+    app.router.add_get("/supervisor/installations/cleanup", _handle_maintenance_plan)
+    app.router.add_post("/supervisor/installations/cleanup", handle_start)
     app.router.add_get("/supervisor/installations/restore", _handle_restore_plan)
     app.router.add_post("/supervisor/installations/restore", handle_start)
     app.router.add_post("/supervisor/setup", handle_start)

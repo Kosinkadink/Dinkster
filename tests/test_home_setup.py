@@ -14,10 +14,159 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_supervisor import home_setup
 from dinkster_supervisor.environment_state import write_document
 from dinkster_supervisor.home import Home, create_home_app
+from test_environment_collection import cleanup_project as cleanup_project
 from test_environment_runtime import free_port
 
 from tests.async_scenarios import run_scenario
 from tests.fixtures.environments.build import KEYS, build
+
+
+@pytest.mark.parametrize(
+    "outcome", ["complete", "disabled", "deferred", "cancelled", "late", "error"]
+)
+def test_installation_cleanup_keeps_cli_outcome_and_transaction_cancellation(
+    cleanup_project: Path, monkeypatch: pytest.MonkeyPatch, outcome: str
+) -> None:
+    root = cleanup_project
+    if outcome == "disabled":
+        write_document(root / "cleanup.json", {"format": "dinkster.cleanup/1", "automatic": False})
+    elif outcome == "deferred":
+        binding = root / "runtime/2/old.json"
+        binding.parent.mkdir(parents=True)
+        binding.write_text("invalid runtime binding")
+    elif outcome == "error":
+        (root / "current").write_text("invalid current")
+    protected = {
+        path: path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+        and not any(path.is_relative_to(root / "builds" / str(number)) for number in (2, 7))
+    }
+    launch = asyncio.create_subprocess_exec
+    commands: list[tuple[str, ...]] = []
+    registered = True
+
+    async def process(executable: str, *arguments: str, **kwargs: Any):
+        commands.append(arguments)
+        if outcome in {"cancelled", "late"}:
+            boundary = (
+                "quarantining-old-versions" if outcome == "cancelled" else "deleting-old-versions"
+            )
+            completed = 1 if outcome == "cancelled" else 0
+            script = f"""
+import sys, time
+from pathlib import Path
+from dinkster_supervisor import environment, environment_collection
+observe = environment_collection.preparation_progress
+def progress(stage, completed=0, total=0):
+    if stage == {boundary!r} and completed == {completed}:
+        marker = Path(sys.argv[sys.argv.index('--progress') + 1])
+        marker.with_suffix('.boundary').touch()
+        deadline = time.monotonic() + 30
+        while not marker.with_name(marker.name + '.cancel').exists():
+            if time.monotonic() > deadline:
+                raise ValueError('test did not cancel cleanup')
+            time.sleep(0.01)
+    observe(stage, completed, total)
+environment_collection.preparation_progress = progress
+environment.main()
+"""
+            arguments = ("-I", "-c", script, *arguments[3:])
+        return await launch(executable, *arguments, **kwargs)
+
+    monkeypatch.setattr(home_setup.asyncio, "create_subprocess_exec", process)
+
+    async def scenario() -> None:
+        nonlocal registered
+        home = Home(installations=lambda: frozenset({root}) if registered else frozenset())
+        path = "/supervisor/installations/cleanup"
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            before_link = home.link.status_wire()
+            for params, expected in (
+                ({"root": "relative"}, 400),
+                ({"root": str(root.parent / "unknown")}, 404),
+                ({"root": str(root), "automatic": "off"}, 400),
+                ({"root": str(root), "host": "wsl"}, 400),
+            ):
+                assert (await client.get(path, params=params)).status == expected
+            response = await client.get(path, params={"root": str(root)})
+            assert response.status == 200, await response.text()
+            plan = (await response.json())["plan"]
+            assert commands == []
+            assert {p: p.read_bytes() for p in protected} == protected
+            registered = False
+            assert (await client.post(path, json={"planId": plan["id"]})).status == 409
+            registered = True
+            for other in (
+                "/supervisor/setup",
+                "/supervisor/installations/check",
+                "/supervisor/installations/update",
+            ):
+                assert (await client.post(other, json={"planId": plan["id"]})).status == 404
+            for extra in ({"root": str(root)}, {"automatic": False}, {"argv": ["gc"]}):
+                assert (await client.post(path, json={"planId": plan["id"], **extra})).status == 400
+            response = await client.post(path, json={"planId": plan["id"]})
+            assert response.status == 202, await response.text()
+            job = await response.json()
+            job_path = "/supervisor/installations/jobs/" + job["id"]
+            progress = home_setup.dinkster_home() / "setup-jobs" / (job["id"] + ".json")
+            cancelled = False
+            for _ in range(600):
+                job = await (await client.get(job_path)).json()
+                if (
+                    outcome in {"cancelled", "late"}
+                    and not cancelled
+                    and progress.with_suffix(".boundary").exists()
+                ):
+                    assert job["progress"]["stage"] in {
+                        "quarantining-old-versions",
+                        "committing-cleanup",
+                    }
+                    assert (await client.post(path, json={"planId": plan["id"]})).status == 409
+                    assert (await client.delete(job_path)).status == 202
+                    cancelled = True
+                if job["state"] not in {"running", "cancelling"}:
+                    break
+                await asyncio.sleep(0.05)
+            if outcome == "cancelled":
+                assert cancelled and job["state"] == "cancelled", job
+            elif outcome == "error":
+                assert job["state"] == "failed" and "current" in job["error"]["message"], job
+            else:
+                assert job["state"] == "completed", job
+                assert job["result"]["status"] == ("complete" if outcome == "late" else outcome), (
+                    job
+                )
+                if outcome == "late":
+                    assert cancelled
+            assert (
+                not progress.exists() and not progress.with_name(progress.name + ".cancel").exists()
+            )
+            for number in (2, 7):
+                retained = outcome in {"disabled", "cancelled", "error"} or (
+                    outcome == "deferred" and number == 2
+                )
+                assert (root / "builds" / str(number)).exists() == retained
+            assert {p: p.read_bytes() for p in protected} == protected
+            assert home.target is None and home.link.status_wire() == before_link
+            if outcome == "cancelled":
+                monkeypatch.setattr(home_setup.asyncio, "create_subprocess_exec", launch)
+                response = await client.post(path, json={"planId": plan["id"]})
+                assert response.status == 202
+                retry = await response.json()
+                for _ in range(600):
+                    retry = await (
+                        await client.get("/supervisor/installations/jobs/" + retry["id"])
+                    ).json()
+                    if retry["state"] not in {"running", "cancelling"}:
+                        break
+                    await asyncio.sleep(0.05)
+                assert retry["state"] == "completed" and retry["result"]["status"] == "complete", (
+                    retry
+                )
+                assert sorted(p.name for p in (root / "builds").iterdir()) == ["1", "3"]
+
+    run_scenario(scenario())
 
 
 @pytest.mark.usefixtures("signed_channels")
