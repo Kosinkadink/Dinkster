@@ -15,7 +15,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import Any, cast
 
 from dinkster_store import StorePathError, relative_path
 
@@ -157,7 +157,39 @@ def relative_file(value: object) -> str:
 
 def read_document(path: Path) -> dict[str, object]:
     try:
-        value: object = json.loads(path.read_text(encoding="utf-8"))
+        if os.name == "nt":
+            import ctypes
+            import msvcrt
+            from ctypes import wintypes
+
+            win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
+            kernel: Any = win_dll("kernel32", use_last_error=True)
+            kernel.CreateFileW.argtypes = [
+                wintypes.LPCWSTR,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.LPVOID,
+                wintypes.DWORD,
+                wintypes.DWORD,
+                wintypes.HANDLE,
+            ]
+            kernel.CreateFileW.restype = wintypes.HANDLE
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            # A rename needs DELETE access, including while its new name is readable.
+            handle = kernel.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x80, None)
+            if handle == ctypes.c_void_p(-1).value:
+                error = getattr(ctypes, "get_last_error")()  # noqa: B009 - Linux stubs omit it
+                raise getattr(ctypes, "WinError")(error)  # noqa: B009 - Linux stubs omit it
+            try:
+                fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+            except BaseException:
+                kernel.CloseHandle(handle)
+                raise
+            with os.fdopen(fd, "r", encoding="utf-8") as stream:
+                text = stream.read()
+        else:
+            text = path.read_text(encoding="utf-8")
+        value: object = json.loads(text)
     except (OSError, ValueError) as exc:
         raise EnvironmentError(f"cannot read {path.name}: {exc}") from exc
     if not isinstance(value, dict):
