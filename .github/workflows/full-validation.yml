@@ -17,8 +17,8 @@ permissions:
 env:
   # Additive wire changes land backend-first; move this pin in a routine PR.
   # Removed, renamed or retyped fields require a wire-version bump and frontend-first landing.
-  FRONTEND_REF: dc60f8aff61ea077e4906d8cc2506fa8f477eaa9
-  DEFAULT_PACKS_REF: 99da4d54d260ec72fef944f358f006846f2383ef
+  FRONTEND_REF: 7306206ecdf993d70e1ed58a80e11c749e725c60
+  DEFAULT_PACKS_REF: 82c7b978e6c1847f9c45c66cb3e22dddc9e90f79
   # Jobs already run in parallel; shared catalogs and process-state fixtures require serial shards.
   PYTEST_ADDOPTS: "-n0"
 
