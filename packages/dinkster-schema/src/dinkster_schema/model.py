@@ -2161,6 +2161,35 @@ def _validate_applies_against_combos(
             )
 
 
+def schema_type_atoms(schema: NodeSchema) -> set[str]:
+    """Concrete atoms in every body alternative, including constrained variables."""
+    from .body import Described, State, TypeChoice, all_rows
+
+    atoms: set[str] = set()
+
+    def visit(expr: TypeExpr) -> None:
+        atoms.update(expr.types)
+        if expr.element is not None:
+            visit(expr.element)
+        for position in expr.elements:
+            visit(position)
+
+    for spec in (*schema.inputs, *schema.outputs):
+        visit(spec.type)
+    for row in all_rows(schema.body):
+        if isinstance(row, (Input, Output, State)):
+            visit(row.type)
+        elif isinstance(row, TypeChoice):
+            if row.type is not None:
+                visit(row.type)
+            for variant in row.variants or ():
+                visit(variant.type)
+        elif isinstance(row, Described):
+            for kind in row.kinds:
+                visit(kind.type)
+    return atoms
+
+
 class _BodyRows[T](tuple[T, ...]):
     """The top-level rows a NodeSchema derives from its body."""
 
