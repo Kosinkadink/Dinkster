@@ -23,6 +23,57 @@ from dinkster_supervisor.environment_state import (
 )
 
 
+@pytest.mark.parametrize("suffix_length", range(4))
+def test_document_reads_coexist_with_replacement_and_keep_complete_snapshots(
+    tmp_path: Path, suffix_length: int
+):
+    from dinkster_supervisor.environment_state import read_document, write_document
+
+    path = tmp_path / ("state" + "x" * suffix_length + ".json")
+    before = {"index": 7, "message": "old snapshot"}
+    after = {"index": 19, "message": "new snapshot with different length"}
+    write_document(path, before)
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
+        kernel = win_dll("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        ]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        # Rename opens with DELETE access; hold that access without relying on timing.
+        handle = kernel.CreateFileW(str(path), 0x80010000, 7, None, 3, 0x80, None)
+        assert handle != ctypes.c_void_p(-1).value
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except BaseException:
+            kernel.CloseHandle(handle)
+            raise
+        snapshot = os.fdopen(fd, "r", encoding="utf-8")
+    else:
+        snapshot = path.open(encoding="utf-8")
+    with writer_lock(tmp_path), snapshot:
+        assert read_document(path) == before
+        write_document(path, after)
+        assert read_document(path) == after
+        assert json.load(snapshot) == before
+    with pytest.raises(EnvironmentError, match="cannot read missing.json"):
+        read_document(tmp_path / "missing.json")
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(EnvironmentError, match="expected a JSON object"):
+        read_document(path)
+
+
 def test_writer_lock_serializes_processes_and_survives_owner_exit(tmp_path: Path):
     command = [
         sys.executable,
