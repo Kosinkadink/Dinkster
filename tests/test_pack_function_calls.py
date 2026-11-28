@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
@@ -475,8 +476,10 @@ async def uses_secret(ctx: CallContext, first: str, second: str, mode: str) -> d
     raise ValueError("Unresolved name")
 
 
+@pytest.mark.parametrize("execution_available", [False, True])
 def test_secret_calls_use_the_pressers_account_without_reporting_or_returning_keys(
     capsys: Any,
+    execution_available: bool,
 ) -> None:
     schema = NodeSchema(
         "test.secret_call",
@@ -494,7 +497,7 @@ def test_secret_calls_use_the_pressers_account_without_reporting_or_returning_ke
 
     async def scenario() -> None:
         app = web.Application()
-        store = SecretStore()
+        store = SecretStore(execution_available=execution_available)
         app[SECRETS_KEY] = store
         people = {
             name: Principal(name, grants={"local": frozenset({"jobs:submit"})})
@@ -534,7 +537,9 @@ def test_secret_calls_use_the_pressers_account_without_reporting_or_returning_ke
             header, blobs = sent[-1]
             return PackFunctionAnswer.from_reply(header, blobs, request)
 
-        capabilities = install_pack_functions(app, dispatch, CallBudget())
+        capabilities = install_pack_functions(
+            app, dispatch, CallBudget(), schemas=lambda: {schema.node_type: schema}
+        )
         install_auth(app, StaticBearerAuthenticator(people), route_capabilities=capabilities)
         async with TestClient(TestServer(app)) as client:
             for account in people:
@@ -548,6 +553,22 @@ def test_secret_calls_use_the_pressers_account_without_reporting_or_returning_ke
                         ("result",),
                     )
                     status, lines, _ = await _call(client, request.to_wire())
+                    if not execution_available:
+                        assert status == 409
+                        assert lines == [
+                            {
+                                "error": "secret-channel-unavailable",
+                                "message": (
+                                    "This base uses worker protocol 14 "
+                                    "and does not support secret execution"
+                                ),
+                            }
+                        ]
+                        assert len(seen) == before
+                        assert store.status(people[account], "caption")["set"] == (
+                            account != "outsider"
+                        )
+                        continue
                     assert status == 200
                     assert len(seen) == before + 1
                     if account != "outsider" and mode == "safe":

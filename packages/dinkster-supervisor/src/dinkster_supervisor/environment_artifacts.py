@@ -104,6 +104,19 @@ def artifact_rows(
     return tuple(rows)
 
 
+def supports_base_protocol(engine: dict[str, object], base: dict[str, object]) -> bool:
+    """Base dependency compatibility does not change the engine's worker wire protocol."""
+    protocols = engine.get("baseWorkerProtocols", [engine.get("workerProtocol")])
+    if (
+        not isinstance(protocols, list)
+        or not protocols
+        or any(type(item) is not int or item < 1 for item in cast("list[object]", protocols))
+        or engine.get("workerProtocol") not in protocols
+    ):
+        raise EnvironmentError("engine baseWorkerProtocols must include its workerProtocol")
+    return base.get("workerProtocol") in protocols
+
+
 def validate_manifest(
     data: bytes, expected: str, variant: str | None, *, allow_source: bool = False
 ) -> dict[str, object]:
@@ -113,6 +126,7 @@ def validate_manifest(
     if type(protocol) is not int or protocol < 1:
         raise EnvironmentError("manifest workerProtocol must be a positive integer")
     if variant is None:
+        supports_base_protocol(document, document)
         if document.get("format") != "dinkster.engine/1":
             raise EnvironmentError("unsupported engine manifest format")
         capabilities = document.get("capabilities", [])
@@ -449,7 +463,7 @@ def discover(
                 raise
             errors.append(f"base {variant} {channel.base_for(variant)}: {exc}")
             continue
-        if engine is not None and base["workerProtocol"] != engine["workerProtocol"]:
+        if engine is not None and not supports_base_protocol(engine, base):
             raise EnvironmentError("base and engine workerProtocol mismatch")
         bases[variant], sources[variant] = base, roots
     if errors:

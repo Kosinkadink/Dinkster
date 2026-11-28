@@ -31,6 +31,7 @@ from .environment_artifacts import (
     discover,
     engine_constraints,
     parse_metadata,
+    supports_base_protocol,
     trusted_metadata,
     validate_dependency_base,
     validate_manifest,
@@ -714,7 +715,7 @@ def _local_missing_inputs(
         or base.get("id") != base_record["id"]
         or base.get("variant") != base_record["variant"]
         or engine.get("workerProtocol") != snapshot.get("workerProtocol")
-        or base.get("workerProtocol") != snapshot.get("workerProtocol")
+        or not supports_base_protocol(engine, base)
     ):
         raise EnvironmentError("local snapshot software identities disagree")
     missing: list[dict[str, object]] = []
@@ -979,6 +980,8 @@ def _engine_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]
             candidate["metadata"] = candidate_metadata
             # A replacement engine may require a base the historical engine cannot use.
             alternatives.extend(_base_alternatives(candidate))
+            if not supports_base_protocol(engine, base):
+                continue
             if "dependencies" in engine:
                 selection = provenance.get("inference") or cast(
                     "dict[str, object]", engine["dependencies"]
@@ -1054,7 +1057,7 @@ def _base_alternatives(snapshot: dict[str, object]) -> list[dict[str, object]]:
             identity == recorded_base["id"]
             or base.get("platform") != original.get("platform")
             or base.get("python") != original.get("python")
-            or base.get("workerProtocol") != snapshot.get("workerProtocol")
+            or not supports_base_protocol(engine, base)
         ):
             continue
         try:

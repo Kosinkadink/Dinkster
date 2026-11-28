@@ -962,7 +962,10 @@ def test_host_node_unavailability_is_visible_and_refused_before_queueing() -> No
     run_scenario(scenario())
 
 
-def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_rows() -> None:
+@pytest.mark.parametrize("execution_available", [False, True])
+def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_rows(
+    execution_available: bool,
+) -> None:
     class SecretConsumer(Node):
         @classmethod
         def define_schema(cls) -> NodeSchema:
@@ -1026,6 +1029,7 @@ def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_r
             engine,
             schemas,
             authenticator=MappingAuthenticator({"alice": alice, "bob": bob, "admin": admin}),
+            secret_execution_available=execution_available,
         )
         app[STATE_KEY].queue.pause()
         graph = Graph(
@@ -1044,6 +1048,53 @@ def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_r
                     json=submit_body(document, list(document.nodes), jobId=str(sequence)),
                     headers={"Authorization": "Bearer " + who},
                 )
+
+            if not execution_available:
+                plain = Graph(
+                    nodes={
+                        "consumer": GraphNode(
+                            "test.secret_consumer", slot_variants={"mode": "plain"}
+                        )
+                    }
+                )
+                assert (await submit("alice", plain)).status == 202
+                optional = Graph(
+                    nodes={
+                        "consumer": GraphNode(
+                            "test.secret_consumer", slot_variants={"mode": "optional"}
+                        )
+                    }
+                )
+                assert (await submit("alice", optional)).status == 202
+                saved = await client.put(
+                    "/api/secrets/service_key",
+                    json={"value": "synthetic-unavailable-base-key"},
+                    headers={"Authorization": "Bearer alice"},
+                )
+                assert saved.status == 200
+                for document in (graph, optional):
+                    refused = await submit("alice", document)
+                    assert refused.status == 409
+                    payload = await refused.json()
+                    assert payload["error"] == "secrets-not-ready"
+                    assert payload["problems"] == [
+                        {
+                            "code": "secret-channel-unavailable",
+                            "message": (
+                                "This base uses worker protocol 14 "
+                                "and does not support secret execution"
+                            ),
+                            "nodeId": "consumer",
+                            "inputId": "mode.key" if document is graph else "mode.optional_key",
+                        }
+                    ]
+                    assert app[STATE_KEY].queue.get("c1", str(sequence)) is None
+                presence = await client.get(
+                    "/api/secrets/service_key", headers={"Authorization": "Bearer alice"}
+                )
+                assert (await presence.json())["set"] is True
+                assert (await submit("alice", plain)).status == 202
+                return
 
             missing = await submit("alice")
             assert missing.status == 409

@@ -2692,6 +2692,13 @@ def _serve(
                 choice_owners=composition.choice_owners,
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
+                secret_execution_available=(
+                    args.generation is None
+                    or json.loads(
+                        (args.generation / "base-manifest.json").read_text(encoding="utf-8")
+                    )["workerProtocol"]
+                    >= 15
+                ),
                 secrets_root=Path(
                     os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")
                 ).expanduser()

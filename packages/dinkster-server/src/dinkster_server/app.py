@@ -3761,7 +3761,7 @@ async def handle_submit(request: web.Request) -> web.Response:
         secret_store = request.app[SECRETS_KEY]
 
         def resolve_secret(name: str) -> str | None:
-            return secret_store.resolve(principal, name)[0]
+            return secret_store.resolve_for_execution(principal, name)
 
         execution = replace(
             execution,
@@ -4825,6 +4825,7 @@ def create_app(
     settings: RuntimeSettings | None = None,
     pack_settings_root: Path | LibraryClient | None = None,
     secrets_root: Path | None = None,
+    secret_execution_available: bool = True,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
     applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
@@ -5168,7 +5169,12 @@ def create_app(
         app, lambda: state.engine.extension_snapshot, pack_route_dispatch, frontend_module_read
     )
     route_capabilities.update(
-        install_pack_functions(app, pack_function_dispatch, app[CALL_BUDGETS_KEY]["press"])
+        install_pack_functions(
+            app,
+            pack_function_dispatch,
+            app[CALL_BUDGETS_KEY]["press"],
+            schemas=lambda: state.schemas,
+        )
     )
     route_capabilities.update(
         install_lookups(
@@ -5245,7 +5251,9 @@ def create_app(
     app.router.add_post("/api/queue/resume", handle_queue_resume)
     app.router.add_post("/api/queue/clear", handle_queue_clear)
     app.router.add_get("/api/events", handle_events)
-    add_secret_routes(app, SecretStore(secrets_root))
+    add_secret_routes(
+        app, SecretStore(secrets_root, execution_available=secret_execution_available)
+    )
     add_settings_routes(app, state.settings)
     app.router.add_get("/memory/status", handle_memory_status)
     app.router.add_post("/memory/reset-peak", handle_memory_reset_peak)

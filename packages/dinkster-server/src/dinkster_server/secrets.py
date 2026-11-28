@@ -38,7 +38,8 @@ class SecretStore:
     A root of None is an ephemeral store for embedded servers.
     """
 
-    def __init__(self, root: Path | None = None) -> None:
+    def __init__(self, root: Path | None = None, *, execution_available: bool = True) -> None:
+        self.execution_available = execution_available
         self._root = root
         self._memory: dict[tuple[str, str], str] = {}
         self._lock = threading.Lock()
@@ -200,6 +201,12 @@ class SecretStore:
             except (OSError, sqlite3.Error, InvalidToken, ValueError):
                 raise SecretStoreError("Cannot read private secret storage") from None
 
+    def resolve_for_execution(self, principal: Principal, name: str) -> str | None:
+        value = self.resolve(principal, name)[0]
+        if value is not None and not self.execution_available:
+            raise SecretStoreError("This base does not support secret execution")
+        return value
+
     def names(self, principal: Principal) -> list[str]:
         """List only entries this account may resolve, without reading values."""
         owners = ["account:" + principal.principal_id]
@@ -267,6 +274,20 @@ class SecretStore:
                             {
                                 "code": "invalid-secret-name",
                                 "message": "Choose a secret name; secret inputs cannot be wired",
+                                "nodeId": path,
+                                "inputId": spec.id,
+                            }
+                        )
+                    elif not self.execution_available and (
+                        spec.required or self.status(principal, cast("str", name))["set"]
+                    ):
+                        problems.append(
+                            {
+                                "code": "secret-channel-unavailable",
+                                "message": (
+                                    "This base uses worker protocol 14 "
+                                    "and does not support secret execution"
+                                ),
                                 "nodeId": path,
                                 "inputId": spec.id,
                             }

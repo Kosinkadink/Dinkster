@@ -17,6 +17,7 @@ from .environment_artifacts import (
     acquire,
     acquire_sources,
     artifact_rows,
+    supports_base_protocol,
     validate_manifest,
 )
 from .environment_downloads import fetch_artifact
@@ -448,7 +449,7 @@ def restore_entry(
                 protocol = snapshot.get("workerProtocol")
                 if (
                     type(protocol) is not int
-                    or protocol != base["workerProtocol"]
+                    or not supports_base_protocol(engine, base)
                     or protocol != engine["workerProtocol"]
                 ):
                     raise EnvironmentError("snapshot worker protocols disagree")
