@@ -2418,12 +2418,12 @@ class _LimitScope:
     formula: FormulaScope
     own_names: set[str]
     parent: _LimitScope | None
-    bindings: dict[str, int] = field(default_factory=dict[str, int])
+    bindings: dict[str, list[int]] = field(default_factory=dict[str, list[int]])
 
-    def resolve(self, name: str) -> int | None:
+    def resolve(self, name: str) -> list[int]:
         if name in self.own_names:
-            return self.bindings.get(name)
-        return None if self.parent is None else self.parent.resolve(name)
+            return self.bindings.get(name, [])
+        return [] if self.parent is None else self.parent.resolve(name)
 
 
 def numeric_limit_diagnostics(schema: NodeSchema) -> list[dict[str, object]]:
@@ -2432,11 +2432,24 @@ def numeric_limit_diagnostics(schema: NodeSchema) -> list[dict[str, object]]:
     Every group member is checked as a template. Separate variant scopes keep
     identically named fields in mutually exclusive variants from sharing edges.
     """
+    from .flatten import apply_use
+
     check = _FormulaCheck(schema.tables, {key: value.text for key, value in schema.derived.items()})
     sites: list[tuple[Input | State | Choice, str, _LimitScope]] = []
     conditions: list[dict[str, str]] = []
     limits: list[tuple[int, str, Formula | Lookup, dict[str, str]]] = []
     widgets: list[tuple[int, object, dict[str, str]]] = []
+
+    def placed(rows: tuple[BodyRow | Use, ...], shared: dict[str, BodyRow]) -> tuple[BodyRow, ...]:
+        result: list[BodyRow] = []
+        for row in rows:
+            if isinstance(row, Use):
+                result.append(apply_use(shared[row.id], row))
+            elif isinstance(row, (Section, Row)):
+                result.append(replace(row, rows=placed(row.rows, shared)))
+            else:
+                result.append(row)
+        return tuple(result)
 
     def collect(
         rows: tuple[BodyRow | Use, ...],
@@ -2444,85 +2457,66 @@ def numeric_limit_diagnostics(schema: NodeSchema) -> list[dict[str, object]]:
         prefix: str,
         in_member: bool,
         active: dict[str, str],
-        option_rows: dict[int, dict[str, str]] | None = None,
+        declared: tuple[BodyRow | Use, ...] | None = None,
     ) -> _LimitScope:
-        option_rows = option_rows or {}
+        declared = rows if declared is None else declared
         scope = _LimitScope(
             check.scope(
-                rows, None if parent is None else parent.formula, in_member, check_rows=False
+                declared, None if parent is None else parent.formula, in_member, check_rows=False
             ),
-            set(formula_names(rows).names),
+            set(formula_names(declared).names),
             parent,
         )
         for row in scope_rows(rows):
             if isinstance(row, (Input, State, Choice)):
-                scope.bindings[row.id] = len(sites)
+                scope.bindings[row.id] = [len(sites)]
                 sites.append((row, prefix + row.id, scope))
-                conditions.append(option_rows.get(id(row), active))
+                conditions.append(active)
         for row in scope_rows(rows):
-            inner: _LimitScope | None = None
-            row_active = option_rows.get(id(row), active)
+            children: list[_LimitScope] = []
             if isinstance(row, Group):
-                inner = collect(
-                    row.member if row.member is not None else (cast("BodyRow", row.value),),
-                    scope,
-                    f"{prefix}{row.id}.<member>.",
-                    True,
-                    row_active,
+                children.append(
+                    collect(
+                        row.member if row.member is not None else (cast("BodyRow", row.value),),
+                        scope,
+                        f"{prefix}{row.id}.<member>.",
+                        True,
+                        active,
+                    )
                 )
             elif isinstance(row, Choice):
-                guarded: dict[int, dict[str, str]] = {}
-
-                def guard(
-                    rows: tuple[BodyRow | Use, ...],
-                    selected: dict[str, str],
-                    guarded: dict[int, dict[str, str]],
-                ) -> None:
-                    for child in rows:
-                        guarded[id(child)] = selected
-                        if isinstance(child, (Section, Row)):
-                            guard(child.rows, selected, guarded)
-                        elif isinstance(child, Use):
-                            guard(child.inside, selected, guarded)
-
                 for option in row.options:
-                    guard(option.rows, {**row_active, prefix + row.id: option.key}, guarded)
-                inner = collect(
-                    choice_scope_rows(row),
-                    scope,
-                    f"{prefix}{row.id}.",
-                    in_member,
-                    row_active,
-                    guarded,
-                )
-            elif isinstance(row, TypeChoice):
-                inner = collect(row.rows, scope, f"{prefix}{row.id}.", in_member, row_active)
-                for variant in row.variants or ():
-                    collect(
-                        variant.rows,
-                        inner,
-                        f"{prefix}{row.id}[{variant.key}].",
-                        in_member,
-                        {**row_active, prefix + row.id: variant.key},
+                    children.append(
+                        collect(
+                            placed(option.rows, shared_rows(row)),
+                            scope,
+                            f"{prefix}{row.id}.",
+                            in_member,
+                            {**active, prefix + row.id: option.key},
+                            choice_scope_rows(row),
+                        )
                     )
-            if inner is not None and isinstance(row, (Group, Choice, TypeChoice)):
-                for name, site in inner.bindings.items():
-                    qualified = f"{row.id}.{name}"
-                    if qualified in scope.own_names:
-                        scope.bindings[qualified] = site
-
-        def overrides(rows: tuple[BodyRow | Use, ...], prefix: str = "") -> None:
-            for row in rows:
-                if isinstance(row, (Section, Row)):
-                    overrides(row.rows, prefix)
-                elif isinstance(row, Use):
-                    name = prefix + row.id
-                    site = scope.resolve(name)
-                    if site is not None and row.widget is not UNSET:
-                        widgets.append((site, row.widget, option_rows.get(id(row), active)))
-                    overrides(row.inside, name + ".")
-
-        overrides(rows)
+            elif isinstance(row, TypeChoice):
+                if row.variants is None:
+                    children.append(
+                        collect(row.rows, scope, f"{prefix}{row.id}.", in_member, active)
+                    )
+                for variant in row.variants or ():
+                    children.append(
+                        collect(
+                            (*row.rows, *variant.rows),
+                            scope,
+                            f"{prefix}{row.id}.",
+                            in_member,
+                            {**active, prefix + row.id: variant.key},
+                        )
+                    )
+            if isinstance(row, (Group, Choice, TypeChoice)):
+                for inner in children:
+                    for name, bindings in inner.bindings.items():
+                        qualified = f"{row.id}.{name}"
+                        if qualified in scope.own_names:
+                            scope.bindings.setdefault(qualified, []).extend(bindings)
         return scope
 
     collect(schema.body, None, "", False, {})
@@ -2537,9 +2531,7 @@ def numeric_limit_diagnostics(schema: NodeSchema) -> list[dict[str, object]]:
                     derived = compiled.derived[name]
                     visit(derived.tree, derived)
                 elif name not in compiled.scope.tables:
-                    target = scope.resolve(name)
-                    if target is not None:
-                        found.add(target)
+                    found.update(scope.resolve(name))
                 return
             if isinstance(node, ast.Call):
                 if isinstance(node.func, ast.Name) and node.func.id in {"linked", "linked_type"}:
@@ -2558,9 +2550,7 @@ def numeric_limit_diagnostics(schema: NodeSchema) -> list[dict[str, object]]:
                 if isinstance(argument, Formula):
                     found |= reads(argument, scope)
                 else:
-                    target = scope.resolve(argument)
-                    if target is not None:
-                        found.add(target)
+                    found.update(scope.resolve(argument))
         return found
 
     edges: dict[int, list[tuple[int, dict[str, str]]]] = {}

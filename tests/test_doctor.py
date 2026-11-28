@@ -522,6 +522,30 @@ def test_schema_problems_and_duplicates_are_errors(tmp_path: Path) -> None:
             "{}",
             (),
         ),
+        (
+            'Choice("mode", shared=(Input("amount", INT, pin=False, '
+            'widget=NumberWidget(max=Formula("amount - 1"))),), options=('
+            'Option("on", rows=(Use("amount", widget=NumberWidget(max=20)),)),)),',
+            "{}",
+            (),
+        ),
+        (
+            'Choice("outer", shared=(Choice("inner", shared=(Input("amount", INT, '
+            'pin=False, widget=NumberWidget(max=Formula("amount - 1"))),), options=('
+            'Option("on", rows=(Use("amount"),)),)),), options=('
+            'Option("on", rows=(Use("inner", inside=(Use("amount", '
+            "widget=NumberWidget(max=20)),)),)),)),",
+            "{}",
+            (),
+        ),
+        (
+            'Choice("outer", shared=(Choice("inner", shared=(Input("amount", INT, '
+            'pin=False),), options=(Option("on", rows=(Use("amount"),)),)),), options=('
+            'Option("on", rows=(Use("inner", inside=(Use("amount", '
+            'widget=NumberWidget(max=Formula("inner.amount - 1"))),)),)),)),',
+            "{}",
+            ("outer.inner.amount", "outer.inner.amount"),
+        ),
     ],
     ids=[
         "direct",
@@ -534,6 +558,9 @@ def test_schema_problems_and_duplicates_are_errors(tmp_path: Path) -> None:
         "use",
         "exclusive-fields",
         "exclusive-overrides",
+        "replaced-widget",
+        "nested-replaced-widget",
+        "nested-circular-override",
     ],
 )
 def test_circular_numeric_limits_are_advisory(
