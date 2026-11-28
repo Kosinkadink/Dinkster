@@ -625,6 +625,36 @@ class BoundarySession:
             return None
         return True
 
+    def _secret_channel_unavailable(
+        self,
+        schema: NodeSchema,
+        inputs: Mapping[str, Value],
+        resolve_secret: Callable[[str], str | None] | None,
+    ) -> bool:
+        if self.secret_execution_available is True:
+            return False
+        for spec in schema.inputs:
+            if not spec.secret:
+                continue
+            if spec.required:
+                return True
+            named = inputs.get(spec.id)
+            if named is None:
+                continue
+            try:
+                name = named.resolve()
+                if name is None:
+                    continue
+                if (
+                    type(name) is not str
+                    or resolve_secret is None
+                    or resolve_secret(name) is not None
+                ):
+                    return True
+            except Exception:  # noqa: BLE001 - unavailable storage must fail closed
+                return True
+        return False
+
     @property
     def instance_token(self) -> str | None:
         """The peer's process-lifetime token from the hello handshake
@@ -1636,9 +1666,8 @@ class BoundarySession:
         invocation: Invocation,
         on_event: OnInvocationEvent | None = None,
     ) -> InvocationResult:
-        if (
-            any(spec.secret for spec in invocation.effective_schema.inputs)
-            and self.secret_execution_available is not True
+        if self._secret_channel_unavailable(
+            invocation.effective_schema, invocation.inputs, invocation.resolve_secret
         ):
             return InvocationResult(
                 error=NodeError(
@@ -1965,9 +1994,8 @@ class BoundarySession:
         on_event: OnInvocationEvent | None = None,
     ) -> LazyStatusResult:
         del on_event
-        if (
-            any(spec.secret for spec in invocation.effective_schema.inputs)
-            and self.secret_execution_available is not True
+        if self._secret_channel_unavailable(
+            invocation.effective_schema, invocation.available_inputs, invocation.resolve_secret
         ):
             return LazyStatusResult(
                 error=NodeError(

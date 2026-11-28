@@ -488,15 +488,22 @@ def test_separately_shipped_worker_negotiates_protocol(
 
 
 @pytest.mark.parametrize("trusted", (False, True))
+@pytest.mark.parametrize("secret_set", (False, True))
+@pytest.mark.parametrize("required", (False, True))
 def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
     trusted: bool,
+    secret_set: bool,
+    required: bool,
 ) -> None:
     async def scenario() -> None:
         registry = core_registry()
         string = TypeExpr.concrete(CORE_STRING)
         schema = NodeSchema(
             node_type="test.secret_channel",
-            body=(Input("credential", string, secret=True, pin=False), Input("label", string)),
+            body=(
+                Input("credential", string, secret=True, pin=False, required=required),
+                Input("label", string),
+            ),
         )
         secret = "synthetic-channel-only-value"
         peer_done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
@@ -514,7 +521,7 @@ def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
                     [],
                 )
                 frame = await read_frame(reader)
-                if not trusted:
+                if not trusted and (required or secret_set):
                     assert frame is None
                     peer_done.set_result(None)
                     return
@@ -525,7 +532,7 @@ def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
                         ("unknown", "credential", False),
                         ("active", "label", False),
                         ("active", "missing", False),
-                        ("active", "credential", trusted),
+                        ("active", "credential", trusted and secret_set),
                     )
                 ):
                     await write_frame(
@@ -590,9 +597,9 @@ def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
             trusted_secret_channel=trusted,
         )
 
-        def resolve(name: str) -> str:
-            assert trusted and name == "service_key"
-            return secret
+        def resolve(name: str) -> str | None:
+            assert name == "service_key"
+            return secret if secret_set else None
 
         try:
             await session.begin(reader, writer, timeout=2)
@@ -610,7 +617,7 @@ def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
                 )
             )
             assert result.error is not None
-            if trusted:
+            if trusted or (not required and not secret_set):
                 assert result.error.message == "finished"
             else:
                 assert result.error.message == "This worker does not support secret execution"
