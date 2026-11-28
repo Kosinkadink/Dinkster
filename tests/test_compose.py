@@ -1416,6 +1416,17 @@ def test_sibling_execution_ownership_and_reload(tmp_path: Path, hosting: str) ->
                     composer.composition._registry.type_owners()["multipart.plain_value"]
                     == "multipart~plain"
                 )
+                async with TestClient(
+                    TestServer(
+                        create_app(
+                            composer.composition.make_engine,
+                            composer.composition.schemas,
+                        )
+                    )
+                ) as client:
+                    owners = (await (await client.get("/api/nodes")).json())["typeOwners"]
+                    assert owners["multipart.main_value"] == "multipart"
+                    assert owners["multipart.plain_value"] == "multipart"
                 engine = composer.composition.make_engine(lambda _event: None)
                 result = await engine.run(
                     Graph(

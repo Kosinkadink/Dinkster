@@ -104,41 +104,6 @@ def _cuda_initialized() -> bool:
         return False
 
 
-def _atoms_of(expr: Any) -> set[str]:
-    """Atom type ids referenced by a TypeExpr, recursing through lists.
-
-    Wildcards and the variable's own template id contribute nothing; a
-    variable's allowed-atoms constraint does.
-    """
-    atoms: set[str] = set(expr.types)
-    if expr.element is not None:
-        atoms |= _atoms_of(expr.element)
-    for position in expr.elements:
-        atoms |= _atoms_of(position)
-    return atoms
-
-
-def _schema_atoms(schema: Any) -> set[str]:
-    from dinkster_schema import Input, Output
-    from dinkster_schema.body import Described, State, TypeChoice, all_rows
-
-    atoms: set[str] = set()
-    for spec in (*schema.inputs, *schema.outputs):
-        atoms |= _atoms_of(spec.type)
-    for row in all_rows(schema.body):
-        if isinstance(row, (Input, Output, State)):
-            atoms |= _atoms_of(row.type)
-        elif isinstance(row, TypeChoice):
-            if row.type is not None:
-                atoms |= _atoms_of(row.type)
-            for variant in row.variants or ():
-                atoms |= _atoms_of(variant.type)
-        elif isinstance(row, Described):
-            for kind in row.kinds:
-                atoms |= _atoms_of(kind.type)
-    return atoms
-
-
 def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     from dinkster_protocol import EXTENSION_SCOPES
 
@@ -212,6 +177,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     report["cuda_initialized_on_import"] = _cuda_initialized()
 
     from dinkster_schema import Node, NodeSchema, claim_covers, validate_replacement_references
+    from dinkster_schema.model import schema_type_atoms
 
     if not isinstance(nodes_obj, (list, tuple)):
         report["nodes_entry_problem"] = (
@@ -250,7 +216,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
         else:
             seen_types[schema.node_type] = cls_name
             pack_schemas[schema.node_type] = schema
-        atoms |= _schema_atoms(schema)
+        atoms |= schema_type_atoms(schema)
         report["nodes"].append(
             {
                 "node_type": schema.node_type,
