@@ -1259,6 +1259,28 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
                 while (await events.receive_json())["type"] != "library_changed":
                     pass
 
+            installation_folder = "/supervisor/installations/folder"
+            root.mkdir()
+            for body, expected_status in (
+                ({"root": str(renders)}, 404),
+                ({"root": "relative"}, 400),
+                ({"root": str(root), "folder": str(renders)}, 400),
+            ):
+                refused = await process.post(installation_folder, json=body)
+                assert refused.status == expected_status
+            for client, headers in ((headless, {}), (process, {"X-Test-Peer": "192.0.2.7"})):
+                refused = await client.post(
+                    installation_folder, json={"root": str(root)}, headers=headers
+                )
+                assert (refused.status, (await refused.json())["error"]) == (404, "no-file-manager")
+            shown = await process.post(installation_folder, json={"root": str(root)})
+            assert (shown.status, await shown.json()) == (200, {"folder": str(root.resolve())})
+            assert opened == [renders, renders, root.resolve()]
+            root.rmdir()
+            gone = await process.post(installation_folder, json={"root": str(root)})
+            assert (gone.status, (await gone.json())["error"]) == (404, "no-folder")
+            assert opened == [renders, renders, root.resolve()]
+
     run_scenario(scenario())
 
 
