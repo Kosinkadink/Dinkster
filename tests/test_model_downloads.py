@@ -2519,6 +2519,25 @@ def test_read_only_model_root_exposes_present_kinds_and_keeps_real_failures(
             assert str(invalid) in failure["error"]
             assert not (root / "loras").exists()
 
+            (root / "checkpoints").rename(tmp_path / "kept-checkpoints")
+            response = await client.put(
+                "/api/models/locations/studio/projects/default", json={"enabled": False}
+            )
+            assert response.status == 200, await response.text()
+            disabled = (await response.json())["locations"][0]
+            assert disabled["mounts"] == []
+            assert disabled["enabled"] is False
+            (tmp_path / "kept-checkpoints").rename(root / "checkpoints")
+            state = await (await client.get("/api/models/settings")).json()
+            assert state["locations"][0]["enabled"] is False
+            rows = (await (await client.get("/api/mounts")).json())["mounts"]
+            assert {row["id"] for row in rows} == {"invalid-vae"}
+            response = await client.put(
+                "/api/models/locations/studio/projects/default", json={"enabled": True}
+            )
+            assert response.status == 200, await response.text()
+            assert (await response.json())["locations"][0]["enabled"] is True
+
             (root / "clip").mkdir()
             (root / "clip" / "encoder.bin").write_bytes(b"alias bytes")
             (root / "custom_model").mkdir()

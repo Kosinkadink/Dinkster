@@ -297,11 +297,7 @@ class ProjectFolders:
                 excluded = self._excluded.get(project, [])
                 for group in groups:
                     if set(group).intersection(selected):
-                        selected.extend(
-                            mount_id
-                            for mount_id in group
-                            if mount_id in mount_ids and mount_id not in selected
-                        )
+                        selected.extend(mount_id for mount_id in group if mount_id not in selected)
                         excluded[:] = [mount_id for mount_id in excluded if mount_id not in group]
                     elif set(group).intersection(excluded):
                         excluded.extend(mount_id for mount_id in group if mount_id not in excluded)
@@ -326,6 +322,7 @@ class ProjectFolders:
         input_mount: str | None = None,
         required: tuple[str, ...] = (),
         groups: tuple[tuple[str, ...], ...] = (),
+        group_choice: tuple[tuple[str, ...], bool] | None = None,
         grant_revision: int | None = None,
         preserve_output: bool = False,
     ) -> None:
@@ -340,7 +337,7 @@ class ProjectFolders:
         ordered = self._mount_ids(mounts)
         for group in groups:
             included = set(group).intersection(ordered)
-            if included and included != set(group):
+            if included and included != set(group).intersection(available):
                 raise MountsError("enable or disable the complete model location")
         if set(required) - set(ordered):
             raise MountsError("always-on model folders cannot be disabled for a project")
@@ -354,8 +351,23 @@ class ProjectFolders:
         if preserve_output and output is None and self._outputs.get(project) is not None:
             raise MountsError("select a replacement output folder for the project")
         state = self._state()
+        # Remember whole-location choices even while some category folders are absent.
+        excluded = [mount_id for mount_id in self._shared if mount_id not in ordered]
+        for group in groups:
+            if set(group).intersection(ordered):
+                ordered.extend(mount_id for mount_id in group if mount_id not in ordered)
+            elif not set(group).intersection(available):
+                ordered.extend(
+                    mount_id for mount_id in group if mount_id in self._projects.get(project, ())
+                )
+        excluded = [mount_id for mount_id in excluded if mount_id not in ordered]
+        if group_choice is not None:
+            group, enabled = group_choice
+            ordered = [mount_id for mount_id in ordered if mount_id not in group]
+            excluded = [mount_id for mount_id in excluded if mount_id not in group]
+            (ordered if enabled else excluded).extend(group)
         self._projects[project] = ordered
-        self._excluded[project] = [mount_id for mount_id in self._shared if mount_id not in ordered]
+        self._excluded[project] = excluded
         self._outputs[project] = output
         if selected_input is not None:
             self._inputs[project] = selected_input

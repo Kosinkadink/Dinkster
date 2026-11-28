@@ -45,9 +45,6 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
             if service.table.source(mount_id) == "shared-models":
                 service.scan_soon(app, mount_id)
         settings = ModelSettings.load(service.library)
-        selected = service.projects.ordered(
-            project, service.mount_ids(settings=True), modes=service.model_modes(settings=True)
-        )
         document = settings.to_wire()
         live_settings = service.model_settings()
         live_modes = service.model_modes()
@@ -57,7 +54,11 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
         ):
             mounts = location.mounts(0)
             row["mounts"] = [mount.id for mount in mounts]
-            row["enabled"] = all(mount.id in selected for mount in mounts)
+            choices = tuple(mount.id for mount in location.mounts(0, include_absent=True))
+            selected = service.projects.ordered(
+                project, choices, modes=dict.fromkeys(choices, location.visibility)
+            )
+            row["enabled"] = len(selected) == len(choices)
             row["active"] = (
                 live_settings is not None
                 and location in live_settings.locations
@@ -106,7 +107,8 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
                 raise MountsError("expected model settings and revision")
             settings = replace(ModelSettings.from_wire(body["settings"]), library=service.library)
             desired = {mount.id: mount for mount in settings.mounts()}
-            for mount_id in desired:
+            for mount in settings.mounts(include_absent=True):
+                mount_id = mount.id
                 if service.settings_table.source(mount_id) not in {None, "shared-models"}:
                     raise MountsError("model location conflicts with an existing filesystem grant")
             for row in service.settings_table.descriptors():
@@ -159,6 +161,8 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
             )
             if location is None:
                 return web.json_response({"error": "unknown model location"}, status=404)
+            if location.visibility == "always-on" and not body["enabled"]:
+                raise MountsError("always-on model folders cannot be disabled for a project")
             selected = list(
                 service.projects.ordered(
                     project,
@@ -171,7 +175,15 @@ def add_model_settings_routes(app: web.Application, service: MountService) -> No
             if body["enabled"]:
                 selected.extend(mount.id for mount in location.mounts(0))
             output = service.projects.output(project, service.settings_table.output_mount)
-            service.update_project(project, selected, output)
+            service.update_project(
+                project,
+                selected,
+                output,
+                group_choice=(
+                    tuple(mount.id for mount in location.mounts(0, include_absent=True)),
+                    body["enabled"],
+                ),
+            )
             service.publish(app, mount_ids=service.mount_ids())
             return response(project)
         except ModelSettingsConflict as exc:
