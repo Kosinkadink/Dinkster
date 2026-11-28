@@ -206,6 +206,7 @@ GOLDEN_V1_SURFACE = (
     "MultiComboWidget",
     "Node",
     "NodeOutputError",
+    "SecretRejected",
     "NodeSchema",
     "NumberWidget",
     "OutputFamilyMapping",

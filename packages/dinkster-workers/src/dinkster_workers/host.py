@@ -148,6 +148,7 @@ from .boundary import (
     release_segment,
     write_frame,
 )
+from .error_hints import private_node_error
 from .execution import (
     ExecutionContext,
     SourceStagingProvider,
@@ -1780,9 +1781,7 @@ async def serve_connection(
                     result = await selected_worker.invoke(invocation, on_event=on_event)
                     if private and result.error is not None:
                         result = InvocationResult(
-                            error=NodeError(
-                                invocation.node_id, invocation.node_type, "Secret execution failed"
-                            )
+                            error=private_node_error(result.error, invocation.effective_schema)
                         )
                     check_secret_data(result)
                 except BaseException as error:
@@ -2128,11 +2127,30 @@ async def serve_connection(
                 raise ValueError("lazy-dispatch-unsupported: alternate body arm")
             result = await cast("LazyStatusWorker", worker).check_lazy_status(invocation)
             if result.error is not None:
+                error = (
+                    private_node_error(result.error, invocation.effective_schema)
+                    if private
+                    else result.error
+                )
+                check_secret_data(error)
                 reply["error"] = {
-                    "nodeId": result.error.node_id,
-                    "nodeType": result.error.node_type,
-                    "message": "Secret execution failed" if private else result.error.message,
-                    "traceback": "" if private else result.error.traceback,
+                    "nodeId": error.node_id,
+                    "nodeType": error.node_type,
+                    "message": error.message,
+                    "traceback": error.traceback,
+                    "hints": [
+                        {
+                            "code": hint.code,
+                            "message": hint.message,
+                            **(
+                                {"suggestion": hint.suggestion}
+                                if hint.suggestion is not None
+                                else {}
+                            ),
+                            **({"inputId": hint.input_id} if hint.input_id is not None else {}),
+                        }
+                        for hint in error.hints
+                    ],
                 }
             else:
                 check_secret_data(result)

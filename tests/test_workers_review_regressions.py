@@ -276,8 +276,10 @@ def test_secret_names_cannot_be_wired_or_executed_without_a_trusted_resolver() -
 def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    from dinkster_api.v1 import SecretRejected
     from dinkster_schema import report_log, report_progress
     from dinkster_values import Value, ValueMeta
+    from dinkster_workers.boundary import ValueCodec, decode_result, encode_result
 
     secret = "synthetic-invocation-credential"
     mode = "safe"
@@ -318,6 +320,8 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
             report_progress(2, 7, text=credential)
             if mode == "throw":
                 raise RuntimeError(credential)
+            if mode in ("rejected", "bad-rejected"):
+                raise SecretRejected("credential" if mode == "rejected" else secret)
             if mode == "echo":
                 return cls.outputs(text=credential)
             if mode in ("deferred", "snapshot"):
@@ -334,6 +338,8 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
             credential = kwargs["credential"]
             if mode == "throw":
                 raise RuntimeError(credential)
+            if mode in ("rejected", "bad-rejected"):
+                raise SecretRejected("credential" if mode == "rejected" else secret)
             return [str(credential)] if mode == "echo" else []
 
     async def scenario() -> None:
@@ -368,6 +374,8 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
         for mode in (
             "safe",
             "throw",
+            "rejected",
+            "bad-rejected",
             "echo",
             "deferred",
             "snapshot",
@@ -402,8 +410,19 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
             else:
                 assert result.outputs is None
                 assert result.error is not None
-                assert result.error.message == "Secret execution failed"
+                assert result.error.message == (
+                    "The service refused this secret."
+                    if mode == "rejected"
+                    else "Secret execution failed"
+                )
+                assert [(hint.code, hint.input_id) for hint in result.error.hints] == (
+                    [("secret-rejected", "credential")] if mode == "rejected" else []
+                )
                 assert not result.error.traceback
+                codec = ValueCodec(registry, use_shm=False)
+                header, blobs, segments = encode_result(codec, result, "refused", 0)
+                decoded, _ = decode_result(codec, header, blobs, segments)
+                assert decoded.error == result.error
             requests.clear()
             lazy = await worker.check_lazy_status(
                 LazyStatusInvocation(
@@ -422,7 +441,14 @@ def test_trusted_secret_invocations_keep_values_out_of_results_and_reports(
                 assert lazy.requested_inputs == ()
             else:
                 assert lazy.error is not None
-                assert lazy.error.message == "Secret execution failed"
+                assert lazy.error.message == (
+                    "The service refused this secret."
+                    if mode == "rejected"
+                    else "Secret execution failed"
+                )
+                assert [(hint.code, hint.input_id) for hint in lazy.error.hints] == (
+                    [("secret-rejected", "credential")] if mode == "rejected" else []
+                )
                 assert not lazy.error.traceback
         assert inputs["credential"].resolve() == "service_key"
 

@@ -142,6 +142,7 @@ from .node import (
     AbsentOutput,
     Node,
     NodeOutputError,
+    SecretRejected,
     build_node_types,
     build_schemas,
 )
@@ -296,6 +297,7 @@ __all__ = [
     "MappingSource",
     "Node",
     "NodeOutputError",
+    "SecretRejected",
     "NodeSchema",
     "NumberWidget",
     "OutputFamilyMapping",

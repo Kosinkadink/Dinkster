@@ -108,7 +108,7 @@ from dinkster_values import (
 )
 
 from .boundary import ValueCodec, decode_result, encode_result
-from .error_hints import hints_for
+from .error_hints import hints_for, private_node_error
 from .execution import ExecutionContext, current_execution_context, use_execution_context
 from .media import apply_alpha_policy, coercion_drops_alpha, media_input_value, prepare_media_output
 from .preview_artifacts import capture_saved_file_previews
@@ -431,6 +431,12 @@ class InProcessWorker:
                 invocation.effective_schema, invocation.inputs, invocation.resolve_secret
             ) as resolve:
                 result = await self._invoke(replace(invocation, resolve_secret=resolve), on_event)
+                if result.error is not None:
+                    result = InvocationResult(
+                        error=private_node_error(result.error, invocation.effective_schema)
+                    )
+                    check_secret_data(result)
+                    return result
                 return self._prepare_private_result(result)
         except Exception:  # noqa: BLE001 - private failures never expose node-controlled text
             return InvocationResult(
@@ -551,9 +557,11 @@ class InProcessWorker:
                 result = await self._check_lazy_status(
                     replace(invocation, resolve_secret=resolve), on_event
                 )
-                if result.error is not None or any(
-                    type(name) is not str for name in result.requested_inputs or ()
-                ):
+                if result.error is not None:
+                    result = LazyStatusResult(
+                        error=private_node_error(result.error, invocation.effective_schema)
+                    )
+                elif any(type(name) is not str for name in result.requested_inputs or ()):
                     raise InputCoercionError("Secret execution failed")
                 check_secret_data(result)
                 return result
@@ -652,6 +660,7 @@ class InProcessWorker:
                     invocation.node_type,
                     f"lazy-hook-failed: {exc}",
                     traceback=traceback.format_exc(),
+                    hints=hints_for(exc),
                 )
             )
 

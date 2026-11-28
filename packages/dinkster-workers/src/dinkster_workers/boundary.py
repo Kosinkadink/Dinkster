@@ -1239,6 +1239,7 @@ def encode_result(
                     "code": hint.code,
                     "message": hint.message,
                     **({"suggestion": hint.suggestion} if hint.suggestion is not None else {}),
+                    **({"inputId": hint.input_id} if hint.input_id is not None else {}),
                 }
                 for hint in result.error.hints
             ],
@@ -1512,7 +1513,12 @@ def _outcome_to_document(
             "kind": "error",
             "error": {
                 "hints": [
-                    {"code": h.code, "message": h.message, "suggestion": h.suggestion}
+                    {
+                        "code": h.code,
+                        "message": h.message,
+                        "suggestion": h.suggestion,
+                        **({"input_id": h.input_id} if h.input_id is not None else {}),
+                    }
                     for h in error.hints
                 ],
                 "message": error.message,
@@ -1894,12 +1900,20 @@ def _document_to_outcome(
         ):
             raise ValueError("invalid error primitives")
         hints = tuple(
-            ErrorHint(**_exact(item, {"code", "message", "suggestion"})) for item in error["hints"]
+            ErrorHint(
+                **_exact(
+                    item,
+                    {"code", "message", "suggestion"}
+                    | ({"input_id"} if isinstance(item, dict) and "input_id" in item else set()),
+                )
+            )
+            for item in error["hints"]
         )
         if not all(
             type(h.code) is str
             and type(h.message) is str
             and (h.suggestion is None or type(h.suggestion) is str)
+            and (h.input_id is None or type(h.input_id) is str)
             for h in hints
         ):
             raise ValueError("invalid hints")
@@ -2035,6 +2049,7 @@ def error_from_wire(wire: Mapping[str, Any]) -> NodeError:
             code=str(hint.get("code", "")),
             message=str(hint.get("message", "")),
             suggestion=(str(hint["suggestion"]) if hint.get("suggestion") is not None else None),
+            input_id=(str(hint["inputId"]) if hint.get("inputId") is not None else None),
         )
         for hint in cast("Sequence[Mapping[str, Any]]", wire.get("hints", ()))
     )

@@ -536,6 +536,7 @@ class ErrorHint:
     code: str
     message: str
     suggestion: str | None = None
+    input_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -673,6 +673,7 @@ class JobQueue:
                     {
                         "code": hint.code,
                         "message": self._clean(hint.message),
+                        **({"inputId": hint.input_id} if hint.input_id is not None else {}),
                         **(
                             {"suggestion": self._clean(hint.suggestion)}
                             if hint.suggestion is not None
