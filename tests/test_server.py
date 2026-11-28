@@ -1281,6 +1281,7 @@ def test_secret_results_are_reused_only_within_the_paying_account() -> None:
         "alice-first-key": "alice result",
         "alice-rotated-key": "new alice result",
         "bob-key": "bob result",
+        "deployment-key": "deployment result",
     }
 
     class PaidResult(Node):
@@ -1289,14 +1290,14 @@ def test_secret_results_are_reused_only_within_the_paying_account() -> None:
             return NodeSchema(
                 node_type="test.paid_result",
                 body=(
-                    Input("key", STRING, secret=True, pin=False, default="service"),
+                    Input("key", STRING, required=False, secret=True, pin=False, default="service"),
                     Output("out", STRING),
                 ),
             )
 
         @classmethod
-        def execute(cls, *, key: str) -> Mapping[str, object]:
-            result = keys[key]
+        def execute(cls, *, key: str | None = None) -> Mapping[str, object]:
+            result = keys[key] if key is not None else "anonymous result"
             calls.append(result)
             return cls.outputs(out=result)
 
@@ -1318,6 +1319,13 @@ def test_secret_results_are_reused_only_within_the_paying_account() -> None:
             {
                 name: Principal(name, {"local": frozenset({"jobs:submit", "jobs:read"})})
                 for name in ("alice", "bob")
+            }
+            | {
+                "authorized": Principal(
+                    "shared", {"local": frozenset({"jobs:submit", "jobs:read", "secrets:use"})}
+                ),
+                "limited": Principal("shared", {"local": frozenset({"jobs:submit", "jobs:read"})}),
+                "admin": Principal("admin", {"local": frozenset({"settings:write"})}),
             }
         )
         app = create_app(engine, schemas, authenticator=authenticator)
@@ -1369,7 +1377,21 @@ def test_secret_results_are_reused_only_within_the_paying_account() -> None:
             await run("alice", ("paid", "public"), "alice result")
             await run("bob", ("public",), "bob result")
             await run("bob", ("paid", "public"), "bob result")
-            assert calls == ["alice result", "bob result"]
+            response = await client.put(
+                "/api/secrets/service",
+                json={"scope": "deployment", "value": "deployment-key"},
+                headers={"Authorization": "Bearer admin"},
+            )
+            assert response.status == 200
+            await run("authorized", ("public",), "deployment result")
+            response = await client.get(
+                "/api/secrets/service", headers={"Authorization": "Bearer limited"}
+            )
+            assert (await response.json())["set"] is False
+            await run("limited", ("public",), "anonymous result")
+            await run("limited", ("paid", "public"), "anonymous result")
+            await run("authorized", ("paid", "public"), "deployment result")
+            assert calls == ["alice result", "bob result", "deployment result", "anonymous result"]
 
     run_scenario(scenario())
 

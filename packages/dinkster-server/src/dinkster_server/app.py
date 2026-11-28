@@ -3763,7 +3763,11 @@ async def handle_submit(request: web.Request) -> web.Response:
         def resolve_secret(name: str) -> str | None:
             return secret_store.resolve(principal, name)[0]
 
-        execution = replace(execution, resolve_secret=resolve_secret)
+        execution = replace(
+            execution,
+            resolve_secret=resolve_secret,
+            secret_deployment_allowed=principal.is_operator or principal.allows("secrets:use"),
+        )
         try:
             job = state.queue.submit(
                 client_id,

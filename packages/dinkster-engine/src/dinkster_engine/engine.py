@@ -293,6 +293,8 @@ class ExecutionRuntime:
     """Host-side validator for external references in a cached result."""
     secret_account_id: str | None = None
     """Host-authenticated account partition for secret-node results, never a credential."""
+    secret_deployment_allowed: bool = False
+    """Deployment authority at admission, so limited callers cannot reuse its results."""
     resolve_secret: Callable[[str], str | None] | None = field(
         default=None, compare=False, repr=False
     )
@@ -1221,6 +1223,7 @@ class Engine:
                     runtime.secret_account_id.encode("utf-8")
                     if runtime.secret_account_id is not None
                     else uuid.uuid4().bytes,
+                    b"deployment-allowed" if runtime.secret_deployment_allowed else b"account-only",
                 )
             )
         if runtime.require_image_document_publication:
