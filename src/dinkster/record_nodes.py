@@ -21,24 +21,11 @@ from dinkster_values import CORE_COMBO, RecordPayload, Value, is_absent, make_re
 
 
 def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
-    records: dict[str, TypeExpr] = {}
+    declarations: dict[str, list[TypeExpr]] = {}
 
     def visit(expression: TypeExpr) -> None:
         if expression.kind == "record":
-            identity = expression.types[0]
-            previous = records.setdefault(identity, expression)
-            known = {field.id: field for field in previous.fields}
-            if any(
-                field.id in known
-                and (field.name, field.optional, field.default)
-                != (known[field.id].name, known[field.id].optional, known[field.id].default)
-                for field in expression.fields
-            ):
-                raise ValueError(f"Record {identity!r} has conflicting declarations")
-            if expression.record_connection_problem(previous) is not None:
-                if previous.record_connection_problem(expression) is not None:
-                    raise ValueError(f"Record {identity!r} has conflicting declarations")
-                records[identity] = expression
+            declarations.setdefault(expression.types[0], []).append(expression)
             for field in expression.fields:
                 visit(field.type)
         if expression.element is not None:
@@ -50,6 +37,28 @@ def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
         for row in (*schema.inputs, *schema.outputs, *all_rows(schema.body)):
             if isinstance(row, (Input, Output)):
                 visit(row.type)
+    records: dict[str, TypeExpr] = {}
+    for identity, candidates in declarations.items():
+        known = {}
+        for candidate in candidates:
+            for field in candidate.fields:
+                metadata = (field.name, field.optional, field.default)
+                if field.id in known and known[field.id] != metadata:
+                    raise ValueError(f"Record {identity!r} has conflicting declarations")
+                known[field.id] = metadata
+        complete = next(
+            (
+                candidate
+                for candidate in candidates
+                if all(
+                    required.record_connection_problem(candidate) is None for required in candidates
+                )
+            ),
+            None,
+        )
+        if complete is None:
+            raise ValueError(f"Record {identity!r} has conflicting declarations")
+        records[identity] = complete
     return {
         **{f"{identity}.make": _maker(expression) for identity, expression in records.items()},
         **{f"{identity}.read": _reader(expression) for identity, expression in records.items()},
