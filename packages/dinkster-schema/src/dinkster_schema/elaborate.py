@@ -248,7 +248,8 @@ def _elaborate_body(
             selection = (
                 selector.default if values is None else values.get(selector.id, selector.default)
             )
-            if record_selection(source.type, selection)[2] is not None:
+            path, _, problem = record_selection(source.type, selection)
+            if not path or problem is not None:
                 projected_inputs[index] = replace(projected_inputs[index], required=False)
     outputs = [
         replace(output, type=_project_output_type(output.type, flat.inputs, values))

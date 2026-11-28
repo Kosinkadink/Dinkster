@@ -46,6 +46,10 @@ def record_selection(
             raise ValueError("saved record selection requires a resolved type")
         name = cast(str, saved["name"])
         selection = saved.get("path")
+    if selection == [] and saved_type is None and record.kind == "record":
+        if not record.fields:
+            return (), TypeExpr.wildcard(), None
+        selection = [min(record.fields, key=lambda field: field.id).id]
     if (
         not isinstance(selection, list)
         or not selection

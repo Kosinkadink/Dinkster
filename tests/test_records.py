@@ -947,6 +947,98 @@ def test_change_rebinds_absent_foreign_fields_without_reusing_cached_assignment(
     run_scenario(scenario())
 
 
+def test_empty_record_helpers_run_without_a_field_and_preserve_removed_selections() -> None:
+    from dinkster.record_nodes import record_helpers
+
+    async def scenario() -> None:
+        record = TypeExpr.record_of("test.empty")
+        declaration = NodeSchema("test.declaration", body=(Output("record", record),))
+        helpers = record_helpers((declaration,))
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = {
+            identity: schema_from_wire(schema_to_wire(schema))
+            for identity, schema in build_schemas(helpers.values()).items()
+        }
+        engine = Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types(helpers.values()), registry),
+            cache=MemoryLRUCache(),
+        )
+        graph = Graph(
+            nodes={
+                "make": GraphNode("test.empty.make"),
+                "read": GraphNode("test.empty.read", {"record": Link("make", "record")}),
+                "change": GraphNode("test.empty.change", {"record": Link("make", "record")}),
+            }
+        )
+        fresh = await engine.run(graph, list(graph.nodes))
+        assert fresh.diagnostics == ()
+        assert is_absent(fresh.outputs["read"]["value"])
+        assert (
+            fresh.outputs["change"]["record"].fingerprint
+            == fresh.outputs["make"]["record"].fingerprint
+        )
+        snapshot = json.dumps(
+            {"path": ["seed"], "name": "seed", "type": type_expr_to_wire(INTEGER)}
+        )
+        stale_graph = replace(
+            graph,
+            nodes={
+                **graph.nodes,
+                "read": GraphNode(
+                    "test.empty.read", {"record": Link("make", "record"), "field": snapshot}
+                ),
+                "change": GraphNode(
+                    "test.empty.change", {"record": Link("make", "record"), "field": snapshot}
+                ),
+            },
+        )
+        stale = await engine.run(stale_graph, list(stale_graph.nodes))
+        assert {d.node_id for d in stale.diagnostics} == {"read", "change"}
+        assert all(d.severity == "warning" and "removed" in d.message for d in stale.diagnostics)
+        assert is_absent(stale.outputs["read"]["value"])
+        assert stale.outputs["read"]["value"].meta.entries["absent.standsFor"] == "INT"
+        assert (
+            stale.outputs["change"]["record"].fingerprint
+            == stale.outputs["make"]["record"].fingerprint
+        )
+        populated = TypeExpr.record_of(
+            "test.empty",
+            RecordField("z", "last", INTEGER, default=19),
+            RecordField("A", "first", INTEGER, default=31),
+        )
+        populated_helpers = record_helpers(
+            (replace(declaration, body=(Output("record", populated),)),)
+        )
+        populated_engine = Engine(
+            schemas=build_schemas(populated_helpers.values()),
+            registry=registry,
+            worker=InProcessWorker(build_node_types(populated_helpers.values()), registry),
+            cache=MemoryLRUCache(),
+        )
+        populated_graph = replace(
+            graph,
+            nodes={
+                **graph.nodes,
+                "read": GraphNode(
+                    "test.empty.read", {"record": Link("make", "record"), "field": "[]"}
+                ),
+                "change": GraphNode(
+                    "test.empty.change",
+                    {"record": Link("make", "record"), "field": "[]", "value": 47},
+                ),
+            },
+        )
+        resumed = await populated_engine.run(populated_graph, list(populated_graph.nodes))
+        assert resumed.diagnostics == ()
+        assert resumed.outputs["read"]["value"].resolve() == 31
+        assert resumed.outputs["change"]["record"].resolve() == {"last": 19, "first": 47}
+
+    run_scenario(scenario())
+
+
 def test_saved_record_selection_keeps_old_wires_without_retargeting() -> None:
     from dinkster.record_nodes import record_helpers
 

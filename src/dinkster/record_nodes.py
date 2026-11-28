@@ -158,7 +158,7 @@ def _reader(expression: TypeExpr) -> type[Node]:
             current = input_values["record"]
             declaration = expression
             path, _, problem = record_selection(expression, field)
-            if problem is not None:
+            if not path or problem is not None:
                 return cls.outputs(value=ABSENT)
             for identity in path:
                 selected = next(item for item in declaration.fields if item.id == identity)
@@ -252,7 +252,7 @@ def _changer(expression: TypeExpr) -> type[Node]:
 
             current = input_values["record"]
             path, _, problem = record_selection(expression, field)
-            if problem is not None:
+            if not path or problem is not None:
                 return cls.outputs(record=current)
             source = input_types.get("record")
             if source is None:

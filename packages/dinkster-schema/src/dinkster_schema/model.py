@@ -760,10 +760,6 @@ class ComboWidget:
             raise ValueError("combo widget options_input requires editable options")
         if self.remote_route:
             _remote_choice_id(self.remote_route)
-        if not self.options and not self.remote_route and not self.editable_options:
-            raise ValueError(
-                "combo widget needs static options, a remote route, or editable options"
-            )
         if self.refresh_button and not self.remote_route:
             raise ValueError(
                 "combo widget refresh button requires a remote route "
