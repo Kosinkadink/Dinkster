@@ -1261,13 +1261,13 @@ def test_a_projects_output_folder_is_listed_and_opened_only_on_this_machine(
 
             installation_folder = "/supervisor/installations/folder"
             root.mkdir()
-            for body, status in (
+            for body, expected_status in (
                 ({"root": str(renders)}, 404),
                 ({"root": "relative"}, 400),
                 ({"root": str(root), "folder": str(renders)}, 400),
             ):
                 refused = await process.post(installation_folder, json=body)
-                assert refused.status == status
+                assert refused.status == expected_status
             for client, headers in ((headless, {}), (process, {"X-Test-Peer": "192.0.2.7"})):
                 refused = await client.post(
                     installation_folder, json={"root": str(root)}, headers=headers
