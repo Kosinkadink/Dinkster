@@ -5319,6 +5319,68 @@ def test_folder_reading_waits_for_all_local_runs_but_download_hashing_does_not(
         assert json.loads(output.read_text())["model.bin"]["digest"] == digest_bytes(content)
 
 
+def test_scan_pauses_between_files_when_execution_starts_mid_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import digest_bytes
+    from dinkster_library.reading import executing_workflow
+    from filelock import FileLock
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    root = tmp_path / "models"
+    root.mkdir()
+    contents = {"a.bin": b"already admitted file", "b.bin": b"next file waits"}
+    for name, data in contents.items():
+        (root / name).write_bytes(data)
+    first_open, second_open = tmp_path / "first-open", tmp_path / "second-open"
+    gate = tmp_path / "read-gate.lock"
+    output = tmp_path / "index.json"
+    command = f"""
+import os, runpy, sys
+from pathlib import Path
+from filelock import FileLock
+
+def observe(event, arguments):
+    if event != "open" or not isinstance(arguments[0], (str, os.PathLike)):
+        return
+    path = Path(arguments[0])
+    if path == Path({str(root / "a.bin")!r}):
+        Path({str(first_open)!r}).touch()
+        with FileLock({str(gate)!r}, timeout=15):
+            pass
+    elif path == Path({str(root / "b.bin")!r}):
+        Path({str(second_open)!r}).touch()
+
+sys.addaudithook(observe)
+runpy.run_module("dinkster_library", run_name="__main__")
+"""
+    with LibraryClient(tmp_path / "library", command=[sys.executable, "-c", command]) as helper:
+        with FileLock(gate) as held:
+            result = helper.call("index.scan", root=str(root), output=str(output))
+            deadline = time.monotonic() + 15
+            while not first_open.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert first_open.exists()
+            with executing_workflow():
+                held.release()
+                while result["state"] != "waiting" and time.monotonic() < deadline:
+                    result = helper.call("index.progress", id=result["id"])
+                    assert result["state"] not in ("complete", "failed"), result
+                    time.sleep(0.01)
+                assert result["state"] == "waiting", result
+                assert result["filesDone"] == result["hashed"] == 1
+                assert not second_open.exists()
+        deadline = time.monotonic() + 15
+        while result["state"] != "complete" and time.monotonic() < deadline:
+            result = helper.call("index.progress", id=result["id"])
+            time.sleep(0.01)
+        assert result["state"] == "complete", result
+        assert result["hashed"] == 2
+        assert {name: row["digest"] for name, row in json.loads(output.read_text()).items()} == {
+            name: digest_bytes(data) for name, data in contents.items()
+        }
+
+
 def test_helper_scan_wait_keeps_requests_live_and_resumes_committed_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

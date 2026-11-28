@@ -1342,6 +1342,12 @@ def test_folder_scan_waits_only_during_http_job_execution(
 
     async def scenario() -> None:
         reset_sleeper()
+        preparing = asyncio.Event()
+        finish_preparing = asyncio.Event()
+
+        async def prepare(_project: str) -> None:
+            preparing.set()
+            await finish_preparing.wait()
 
         async def scan_state(helper: LibraryClient, identifier: object, expected: str) -> None:
             async with asyncio.timeout(10):
@@ -1352,7 +1358,10 @@ def test_folder_scan_waits_only_during_http_job_execution(
                     assert result["state"] != "failed", result
                     await asyncio.sleep(0.01)
 
-        client = await make_client()
+        client = TestClient(
+            TestServer(create_app(make_engine, SCHEMAS, prepare_project_run=prepare))
+        )
+        await client.start_server()
         with LibraryClient(tmp_path / "library") as helper:
             try:
                 assert (await client.post("/api/queue/pause")).status == 200
@@ -1368,6 +1377,13 @@ def test_folder_scan_waits_only_during_http_job_execution(
                 )
                 await scan_state(helper, first["id"], "complete")
                 assert (await client.post("/api/queue/resume")).status == 200
+                async with asyncio.timeout(10):
+                    await preparing.wait()
+                prerequisite = await asyncio.to_thread(
+                    helper.call, "index.scan", root=str(root), output=str(output)
+                )
+                await scan_state(helper, prerequisite["id"], "complete")
+                finish_preparing.set()
                 async with asyncio.timeout(10):
                     await Sleeper.entered.wait()
                 second = await asyncio.to_thread(
@@ -1387,6 +1403,7 @@ def test_folder_scan_waits_only_during_http_job_execution(
                 await scan_state(helper, second["id"], "complete")
                 assert json.loads(output.read_text())["model.bin"]["size"] == len(b"model bytes")
             finally:
+                finish_preparing.set()
                 Sleeper.gate.set()
                 await client.close()
 

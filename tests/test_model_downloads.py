@@ -2652,8 +2652,12 @@ def test_model_settings_report_each_location_space_without_changing_settings(
 def test_model_management_shares_locations_without_deleting_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandboxed: bool, helper_storage: bool
 ) -> None:
-    from dinkster_assets import MountTable
+    import asyncio
+    from threading import Event
+
+    from dinkster_assets import AssetScanProgress, LocalAssetLibrary, MountTable
     from dinkster_library import LibraryClient
+    from dinkster_library.reading import executing_workflow
 
     from dinkster.model_settings import ModelSettings
     from dinkster.mounts_api import MountService
@@ -2700,6 +2704,42 @@ def test_model_management_shares_locations_without_deleting_files(
         a, b = await make_client(first), await make_client(second)
         try:
             empty = await (await a.get("/api/models/settings?project=work")).json()
+            waiting = Event()
+
+            def progress(update: AssetScanProgress) -> None:
+                if update.waiting_for_run:
+                    waiting.set()
+
+            reader = LocalAssetLibrary(models, index_path=tmp_path / "reading-index.json")
+            with executing_workflow():
+                scan = asyncio.create_task(asyncio.to_thread(reader.scan, on_progress=progress))
+                assert await asyncio.to_thread(waiting.wait, 10)
+                changed = await a.put(
+                    "/api/models/settings?project=work",
+                    json={
+                        "settings": {**empty["settings"], "readFoldersWhileRunning": True},
+                        "revision": empty["revision"],
+                    },
+                )
+                assert changed.status == 200
+                updated = await changed.json()
+                assert not updated["restartRequired"]
+                assert await asyncio.wait_for(scan, 10) == 1
+                assert reader.entries()[0].digest == digest_bytes(original.read_bytes())
+            assert (await (await b.get("/api/models/settings?project=work")).json())["settings"][
+                "readFoldersWhileRunning"
+            ] is True
+            stale = await b.put(
+                "/api/models/settings?project=work",
+                json={"settings": empty["settings"], "revision": empty["revision"]},
+            )
+            assert stale.status == 409
+            reset = await a.put(
+                "/api/models/settings?project=work",
+                json={"settings": empty["settings"], "revision": updated["revision"]},
+            )
+            assert reset.status == 200
+            empty = await reset.json()
             settings = {
                 "version": 1,
                 "downloadLocation": None,
