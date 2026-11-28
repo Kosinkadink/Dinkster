@@ -297,8 +297,11 @@ from dinkster_schema import (
     SCHEMA_WIRE_VERSION,
     NodeSchema,
     ReplacementProblem,
+    TypeAcceptanceProvider,
+    TypeExpr,
     combo_choices_json_bytes,
     core_logger,
+    plan_type_equivalence,
     problem_to_wire,
     schema_signature,
     schema_to_wire,
@@ -657,6 +660,8 @@ def job_to_wire(
         wire["resultOffers"] = {node: dict(offers) for node, offers in job.result_offers.items()}
     if job.artifact_offers:
         wire["artifactOffers"] = list(job.artifact_offers)
+    if job.artifacts_published:
+        wire["artifacts"] = [_artifact_wire(artifact) for artifact in job.artifacts]
     if job.result is not None:
         wire["outputs"] = {
             node_id: {out: value_descriptor(v, registry) for out, v in outs.items()}
@@ -948,6 +953,8 @@ class PackInfo:
     """Canonical publisher id ('local' for unpublished installs)."""
     type_storage: tuple[tuple[str, str], ...] = ()
     """Borrowed type ids and the packs selected to store their values in this worker."""
+    type_storage_choices: tuple[str, ...] = ()
+    """Types with competing installed storage providers and no installed owner."""
     blueprints: tuple[PackBlueprintAsset, ...] = ()
     """Starter workflow documents the pack ships; descriptors ride the
     packs table inline, bodies ride the lazy per-pack endpoint. Never
@@ -1004,6 +1011,8 @@ class PackInfo:
             wire["publisher"] = self.publisher
         if self.type_storage:
             wire["typeStorage"] = dict(self.type_storage)
+        if self.type_storage_choices:
+            wire["typeStorageChoices"] = list(self.type_storage_choices)
         if self.icon is not None:
             # Descriptor only - bytes ride /api/packs/{packId}/icon, never
             # inline (the table would re-download on every schema refresh).
@@ -1499,9 +1508,9 @@ class ServerState:
         merged_packs = dict(self.packs)
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and replace(existing, type_storage=()) != replace(
-                info, type_storage=()
-            ):
+            if existing is not None and replace(
+                existing, type_storage=(), type_storage_choices=()
+            ) != replace(info, type_storage=(), type_storage_choices=()):
                 raise ValueError(f"announce redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type, pack_id in node_packs.items():
@@ -1817,9 +1826,9 @@ class ServerState:
         }
         for pack_id, info in packs.items():
             existing = merged_packs.get(pack_id)
-            if existing is not None and replace(existing, type_storage=()) != replace(
-                info, type_storage=()
-            ):
+            if existing is not None and replace(
+                existing, type_storage=(), type_storage_choices=()
+            ) != replace(info, type_storage=(), type_storage_choices=()):
                 raise ValueError(f"replace redeclares pack {pack_id!r} with different info")
             merged_packs[pack_id] = info
         for node_type in node_packs:
@@ -2646,6 +2655,35 @@ def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str,
         "nodes": nodes,
         "typeOwners": state.engine.registry.type_owners(),
     }
+    authority = (
+        execution.known_types if execution.known_types is not None else state.engine.registry
+    )
+    if isinstance(authority, TypeAcceptanceProvider):
+        # Equivalence is pairwise at the runtime atom, not recursively lifted
+        # through lists or other wrappers. Exact structural acceptance still
+        # comes from each port's TypeExpr; asset plans use the provider facts.
+        type_ids = sorted(authority.type_ids())
+        accepted = {type_id: [type_id] for type_id in type_ids}
+        # Composed catalogs can have several incoming counterparts even though
+        # each source has only one. Validation follows the source's lookup.
+        for source in type_ids:
+            counterpart = authority.equivalent_type(source)
+            if (
+                counterpart is not None
+                and counterpart in accepted
+                and plan_type_equivalence(source, TypeExpr.concrete(counterpart), authority)
+                is not None
+            ):
+                accepted[counterpart].append(source)
+        cast("dict[str, object]", wire["dinkster"])["typeAcceptance"] = {
+            "atoms": {type_id: sorted(sources) for type_id, sources in accepted.items()},
+            "assetDecoders": sorted(authority.asset_decoder_targets()),
+            "batchMerges": sorted(
+                type_id
+                for type_id in authority.type_ids()
+                if authority.batch_merge_for(type_id) is not None
+            ),
+        }
     if state.services is not None:
         cast("dict[str, object]", wire["dinkster"])["services"] = state.services
     if state.development_description is not None:
@@ -4889,27 +4927,28 @@ def create_app(
         except AssetError:
             return False
 
-    async def complete_result(job: Job, result: RunResult) -> RunResult:
-        for node_id, outputs in result.outputs.items():
-            if node_id not in job.result_offers:
-                await publish_outputs(job.run_id, node_id, outputs)
+    async def publish_artifacts(job: Job) -> None:
         assert library is not None
         store = library.store
-        if result.artifacts:
-            record_outputs = library.record_saved_outputs
-            result = await run_media_publication(library, lambda: record_outputs(job, result))
+        # Retention may create files before a later catalog write fails; never retry it here.
+        job.artifacts_publication_started = True
+        if job.artifacts:
+            record_artifacts = library.record_saved_artifacts
+            artifacts = await run_media_publication(
+                library, lambda: record_artifacts(job, job.artifacts)
+            )
             announce_asset_kinds(
                 app,
                 {
                     kind
-                    for artifact in result.artifacts
+                    for artifact in artifacts
                     for kind in recorded_asset_kinds("asset/file", artifact.media_type)
                 },
             )
 
             def persist_artifacts() -> list[dict[str, object]]:
                 offers: list[dict[str, object]] = []
-                for index, artifact in enumerate(result.artifacts):
+                for index, artifact in enumerate(artifacts):
                     roots = [artifact.digest]
                     if artifact.preview is not None:
                         roots.append(artifact.preview.digest)
@@ -4928,7 +4967,16 @@ def create_app(
                 return offers
 
             job.artifact_offers = await run_owned_thread(persist_artifacts)
-        return result
+            job.artifacts = artifacts
+        job.artifacts_published = True
+
+    async def complete_result(job: Job, result: RunResult) -> RunResult:
+        for node_id, outputs in result.outputs.items():
+            if node_id not in job.result_offers:
+                await publish_outputs(job.run_id, node_id, outputs)
+        job.artifacts = result.artifacts
+        await publish_artifacts(job)
+        return replace(result, artifacts=job.artifacts)
 
     async def settle_job(job: Job, terminal_state: JobState) -> None:
         from dinkster_library import LibraryError
@@ -4978,10 +5026,12 @@ def create_app(
                     "principalId": job.principal_id,
                     "principalKind": job.principal_kind,
                 },
-                artifacts_complete=job.result is not None,
+                artifacts_complete=job.artifacts_published,
             )
 
         try:
+            if not job.artifacts_publication_started:
+                await publish_artifacts(job)
             if library.scratch_root is not None:
                 scratch = library.scratch_root
                 vault = library.vault

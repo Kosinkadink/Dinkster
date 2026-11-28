@@ -1571,8 +1571,9 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
         run_scenario(scenario())
 
     @pytest.mark.parametrize("declared", [True, False])
+    @pytest.mark.parametrize("managed", [None, "selected", "empty"])
     def test_manifest_origins_grant_only_the_named_destinations(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool, managed: str | None
     ) -> None:
         from dinkster.compose import CompositionError, PackSpec, ServingComposer
 
@@ -1643,7 +1644,30 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                     "networkprobe": (f"https://operator.example.test:{port}",),
                     "different-pack": (f"https://other.example.test:{port}",),
                 },
+                sandbox_network_policy=(
+                    {
+                        "networkprobe": (
+                            [
+                                f"https://mirror.example.test:{port}",
+                                f"https://operator.example.test:{port}",
+                            ]
+                            if managed == "selected"
+                            else []
+                        ),
+                        "peerprobe": [f"https://api.example.test:{port}"],
+                    }
+                    if managed is not None
+                    else None
+                ),
             )
+            peer = tmp_path / "peer-pack"
+            peer.mkdir()
+            peer_manifest = peer / "dinkster-pack.toml"
+            peer_manifest.write_text(manifest.read_text().replace("networkprobe", "peerprobe"))
+            (peer / "network_probe.py").write_text(
+                (pack / "network_probe.py").read_text().replace("networkprobe", "peerprobe")
+            )
+            manifests = (manifest, peer_manifest)
             try:
                 if not declared:
                     ungranted = ServingComposer(sandbox_policy=SandboxPolicy())
@@ -1652,19 +1676,41 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                             await ungranted.add_pack(PackSpec(manifest))
                     finally:
                         await ungranted.close()
-                await composer.add_pack(PackSpec(manifest, env={"PYTHONPATH": str(pack)}))
-                engine = composer.composition.make_engine(lambda event: None)
-                result = await engine.run(
-                    Graph(nodes={"probe": GraphNode("networkprobe.probe", {})}), ["probe"]
-                )
-                assert result.outputs["probe"]["report"].resolve() == (
-                    (
-                        "api.example.test:200,mirror.example.test:200,"
-                        if declared
-                        else "api.example.test:403,mirror.example.test:403,"
+                for member in manifests if managed is not None else (manifest,):
+                    await composer.add_pack(
+                        PackSpec(
+                            member,
+                            env={"PYTHONPATH": os.pathsep.join((str(pack), str(peer)))},
+                            worker_group="network" if managed is not None else None,
+                            group_manifests=manifests if managed is not None else (),
+                        )
                     )
-                    + "operator.example.test:200,other.example.test:403"
+                engine = composer.composition.make_engine(lambda event: None)
+                nodes = {"probe": GraphNode("networkprobe.probe", {})}
+                if managed is not None:
+                    nodes["peer"] = GraphNode("peerprobe.probe", {})
+                result = await engine.run(Graph(nodes=nodes), list(nodes))
+                expected = (
+                    "api.example.test:403,mirror.example.test:403,"
+                    "operator.example.test:403,other.example.test:403"
+                    if managed == "empty"
+                    else (
+                        (
+                            "api.example.test:403,mirror.example.test:200,"
+                            if managed == "selected"
+                            else "api.example.test:200,mirror.example.test:200,"
+                            if declared
+                            else "api.example.test:403,mirror.example.test:403,"
+                        )
+                        + "operator.example.test:200,other.example.test:403"
+                    )
                 )
+                assert result.outputs["probe"]["report"].resolve() == expected
+                if managed is not None:
+                    assert result.outputs["peer"]["report"].resolve() == (
+                        "api.example.test:200,mirror.example.test:403,"
+                        "operator.example.test:403,other.example.test:403"
+                    )
             finally:
                 await composer.close()
                 server.close()

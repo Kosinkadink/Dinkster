@@ -1172,6 +1172,11 @@ def main(argv: list[str] | None = None) -> None:
         "origin through the host proxy; repeatable",
     )
     parser.add_argument(
+        "--sandbox-network-policy",
+        metavar="JSON",
+        help="authoritative per-pack HTTPS origin lists from the managed installation",
+    )
+    parser.add_argument(
         "--max-running-jobs",
         type=int,
         default=None,
@@ -1304,9 +1309,9 @@ def main(argv: list[str] | None = None) -> None:
         help="drop execution logs of runs that finished more than DAYS ago (default: 30)",
     )
     parser.add_argument(
-        "--limit-uploads",
+        "--no-upload-size-limit",
         action="store_true",
-        help="enforce per-kind upload size limits on a standalone engine; "
+        help="disable upload size limits on a standalone engine (off by default); "
         "managed environments use dinkster-env uploads",
     )
     parser.add_argument(
@@ -1587,10 +1592,10 @@ def _serve(
         args.no_default_packs = True
     if args.selected_packs and args.generation is None:
         parser.error("--selected-packs requires --generation")
-    if args.limit_uploads and args.generation is not None:
+    if args.no_upload_size_limit and args.generation is not None:
         parser.error("managed upload limits are configured with dinkster-env uploads")
     pack_selection: Mapping[str, object] | None = None
-    upload_limits: dict[str, int] | None = {} if args.limit_uploads else None
+    upload_limits: dict[str, int] | None = None if args.no_upload_size_limit else {}
     response_compression = False
     runtime_offline = False
     excluded_nodes: list[str] = []
@@ -1623,7 +1628,10 @@ def _serve(
                     settings.get("responseCompression", False)
                 )
                 runtime_offline = read_runtime_offline(settings.get("runtimeOffline", False))
-                upload_limits = read_upload_limits(settings.get("uploadLimits"))
+                upload_limits = read_upload_limits(
+                    settings.get("uploadLimits"),
+                    no_upload_size_limit=settings.get("noUploadSizeLimit", False),
+                )
                 excluded_nodes = read_node_exclusions(settings.get("excludedNodeTypes", []))
                 scratch_directory = read_scratch_storage(settings.get("scratchStorage", {}))
                 if scratch_directory is not None:
@@ -1944,7 +1952,11 @@ def _serve(
             "--allow-mount-changes requires a library root "
             "(granted mounts persist to <library-root>/mounts.toml)"
         )
-    if (args.sandbox_grant_gpu or args.sandbox_grant_network) and not args.sandbox_packs:
+    if (
+        args.sandbox_grant_gpu
+        or args.sandbox_grant_network
+        or args.sandbox_network_policy is not None
+    ) and not args.sandbox_packs:
         parser.error("sandbox pack grants require --sandbox-packs")
     for name in args.sandbox_grant_gpu:
         if problem := validate_name(name):
@@ -1965,6 +1977,23 @@ def _serve(
     sandbox_network_grants = {
         name: tuple(dict.fromkeys(origins)) for name, origins in mutable_network_grants.items()
     }
+    sandbox_network_policy = None
+    if args.sandbox_network_policy is not None:
+        try:
+            policy = json.loads(args.sandbox_network_policy)
+            if not isinstance(policy, dict):
+                raise ValueError("policy must map pack names to origin lists")
+            sandbox_network_policy = {}
+            for name, origins in policy.items():
+                if validate_name(name) or not isinstance(origins, list):
+                    raise ValueError("policy must map pack names to origin lists")
+                if any(not isinstance(origin, str) for origin in origins):
+                    raise ValueError("policy origins must be strings")
+                sandbox_network_policy[canonical_name(name)] = tuple(
+                    normalize_egress_origin(origin) for origin in origins
+                )
+        except ValueError as exc:
+            parser.error(f"invalid sandbox network policy: {exc}")
 
     # Roots whose absolute paths must never reach wire payloads: each
     # becomes a stable token in redacted error/log text (see PathRedactor).
@@ -2379,6 +2408,7 @@ def _serve(
             sandbox_policy=sandbox_policy,
             sandbox_gpu_grants=sandbox_gpu_grants,
             sandbox_network_grants=sandbox_network_grants,
+            sandbox_network_policy=sandbox_network_policy,
             sandbox_writable_mounts=sandbox_writable_mounts,
             pack_scratch_root=(
                 scratch_root / "packs"

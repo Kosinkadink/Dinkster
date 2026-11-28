@@ -151,6 +151,9 @@ class Job:
     node_receipts: dict[str, dict[str, str]] = field(default_factory=lambda: {})
     result_offers: dict[str, dict[str, dict[str, object]]] = field(default_factory=lambda: {})
     artifact_offers: list[dict[str, object]] = field(default_factory=lambda: [])
+    artifacts: tuple[SavedArtifact, ...] = ()
+    artifacts_publication_started: bool = False
+    artifacts_published: bool = False
     task: asyncio.Task[None] | None = None
 
 
@@ -581,6 +584,12 @@ class JobQueue:
                 await self._prepare_job(job)
             if self._job_context is not None:
                 ownership.enter_context(self._job_context(job))
+            if job.execution is not None:
+
+                def receive_artifacts(artifacts: tuple[SavedArtifact, ...]) -> None:
+                    job.artifacts = artifacts
+
+                job.execution = replace(job.execution, on_artifacts=receive_artifacts)
             job.execution_started_at = time.time()
             if job.compiled_graph is not None:
                 result = await self._engine.run_compiled(
@@ -608,7 +617,16 @@ class JobQueue:
                     cache_enabled=job.cache_enabled,
                 )
             if self._complete_result is not None:
-                result = await self._complete_result(job, result)
+                completion = asyncio.ensure_future(self._complete_result(job, result))
+                cancelled = False
+                while not completion.done():
+                    try:
+                        await asyncio.shield(completion)
+                    except asyncio.CancelledError:
+                        cancelled = True
+                result = completion.result()
+                if cancelled:
+                    raise asyncio.CancelledError
             job.result = result
         except asyncio.CancelledError:
             terminal_state = "cancelled"

@@ -30,12 +30,17 @@ non-empty scope, single-user mode is the reserved scope "local"):
                                           and never __proto__, joint
                                           pin - see _ACTOR_ID_RE),
                                           baseRevision,
-                                          patch) -> ordered envelope
+                                          patch, numericCorrections?) -> ordered envelope
                                           with server revision +
                                           timestamp; "replayed": true
                                           on idempotent resubmission;
                                           409 stale-base {revision} on
                                           a lost race (client rebases);
+                                          409 op-content-mismatch if a
+                                          retained opId changes correction
+                                          provenance; 400 numeric-corrections-invalid
+                                          for malformed provenance or an
+                                          owner without a changed number;
                                           an actorId is bound to the
                                           authenticated principal that
                                           first binds it, and another
@@ -110,8 +115,10 @@ from .sessions import (
     ActorLimitError,
     ActorPrincipalMismatchError,
     DocumentSession,
+    InvalidNumericCorrectionsError,
     InvalidSnapshotError,
     NoSessionOwnerError,
+    OpContentMismatchError,
     ResyncRequiredError,
     SessionOp,
     SessionRoleError,
@@ -323,8 +330,9 @@ def _session_wire(session: DocumentSession, request: web.Request) -> dict[str, o
 def _op_wire(session_id: str, op: SessionOp) -> dict[str, object]:
     """The pinned envelope, exactly: protocolVersion, sessionId, opId,
     actorId, baseRevision, server-assigned revision, forward patch,
-    server timestamp. Inverse patches never appear - they are client-local."""
-    return {
+    server timestamp and optional numeric correction provenance.
+    Inverse patches never appear - they are client-local."""
+    wire: dict[str, object] = {
         "protocolVersion": PROTOCOL_VERSION,
         "sessionId": session_id,
         "opId": op.op_id,
@@ -334,6 +342,9 @@ def _op_wire(session_id: str, op: SessionOp) -> dict[str, object]:
         "patch": [dict(entry) for entry in op.patch],
         "timestamp": op.timestamp,
     }
+    if op.numeric_corrections:
+        wire["numericCorrections"] = list(op.numeric_corrections)
+    return wire
 
 
 def _get_session(
@@ -604,9 +615,14 @@ async def handle_append_op(request: web.Request) -> web.Response:
             patch=cast(list[dict[str, Any]], patch),
             principal_id=_principal(request).principal_id,
             actor_kind=kind,
+            numeric_corrections=body.get("numericCorrections", ()),
         )
     except ActorPrincipalMismatchError:
         return _error(409, {"error": "actor-principal-mismatch"})
+    except OpContentMismatchError:
+        return _error(409, {"error": "op-content-mismatch"})
+    except InvalidNumericCorrectionsError as exc:
+        return _error(400, {"error": "numeric-corrections-invalid", "message": str(exc)})
     except StaleBaseError as exc:
         return _error(409, {"error": "stale-base", "revision": exc.revision})
     except WriteRefusedError as exc:
