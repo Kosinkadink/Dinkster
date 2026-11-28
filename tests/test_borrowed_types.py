@@ -368,6 +368,7 @@ def test_without_the_owner_the_first_named_user_stores_the_type(
         (("cousin", "owner", "borrower"), "owner", "isolated"),
         (("cousin", "borrower"), "borrower", "group"),
         (("cousin", "owner"), "owner", "catalog"),
+        (("cousin", "borrower"), "borrower", "catalog"),
         (("cousin",), "cousin", "parts"),
     ],
 )
@@ -424,8 +425,12 @@ def test_pack_catalog_names_the_storing_used_by_its_borrowed_values(
                 )
                 async with TestClient(TestServer(app)) as client:
                     catalog = await (await client.get("/api/nodes")).json()
+                    assert catalog["typeOwners"]["owner.thing"] == (
+                        "owner" if "owner" in names else None
+                    )
                     storage = {"owner.thing": expected}
                     if hosting == "parts" and replay < 2:
+                        assert catalog["typeOwners"]["owner.other"] is None
                         storage["owner.other"] = "cousin"
                     assert catalog["packs"]["cousin"]["typeStorage"] == storage
                     assert catalog["packs"]["cousin"].get("typeStorageChoices", []) == (

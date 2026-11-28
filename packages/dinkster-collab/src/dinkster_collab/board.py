@@ -135,7 +135,7 @@ def validate_board(document_id: str, value: object) -> str | None:
         ):
             return f"Board item '{key}' has an unknown kind"
         content = (
-            {"name", "source", "values", "controllers", "autoSize"}
+            {"name", "source", "values", "controllers", "autoSize", "continuedFrom"}
             if kind in {"workflow", "blueprint"}
             else {"text" if kind == "note" else "name" if kind == "section" else "asset"}
         )
@@ -166,6 +166,21 @@ def validate_board(document_id: str, value: object) -> str | None:
                 return f"Board card '{key}' needs a name and values object"
             if "autoSize" in item and not isinstance(item["autoSize"], bool):
                 return f"Board card '{key}' autoSize must be a boolean"
+            if "continuedFrom" in item:
+                raw_continued = item["continuedFrom"]
+                if not isinstance(raw_continued, dict):
+                    return f"Board card '{key}' needs a continuedFrom object"
+                continued = cast("dict[str, object]", raw_continued)
+                origin_item = continued.get("itemId")
+                input_key = continued.get("inputKey")
+                if (
+                    continued.keys() != {"itemId", "inputKey"}
+                    or not isinstance(origin_item, str)
+                    or not _ITEM_ID.fullmatch(origin_item)
+                    or not isinstance(input_key, str)
+                    or not input_key
+                ):
+                    return f"Board card '{key}' has an invalid continuation reference"
             if "controllers" in item:
                 controllers = item["controllers"]
                 if not isinstance(controllers, dict) or any(

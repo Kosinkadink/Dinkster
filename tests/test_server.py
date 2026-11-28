@@ -812,6 +812,7 @@ def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None
         registry = TypeRegistry()
         register_core_types(registry)
         atoms = ("compat.value", "native.value", "other.value", "incoming.value")
+        registry.claim_types("native-pack~plain", ("native",))
         pairs = {"compat.value": "native.value", "native.value": "compat.value"}
         if cold:
             authority = CatalogTypeRegistry(
@@ -866,7 +867,10 @@ def test_node_catalog_reports_run_validation_type_acceptance(cold: bool) -> None
         async with TestClient(TestServer(create_app(factory, SCHEMAS))) as client:
             response = await client.get("/api/nodes")
             assert response.status == 200
-            facts = (await response.json())["dinkster"]["typeAcceptance"]
+            catalog = await response.json()
+            assert catalog["typeOwners"]["native.value"] == "native-pack"
+            assert catalog["typeOwners"]["other.value"] is None
+            facts = catalog["dinkster"]["typeAcceptance"]
             assert facts["atoms"]["native.value"] == (
                 ["compat.value", "incoming.value", "native.value"]
                 if cold

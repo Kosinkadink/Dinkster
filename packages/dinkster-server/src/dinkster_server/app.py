@@ -309,6 +309,7 @@ from dinkster_schema import (
     validate_remote_choice_authority,
     validate_replacement_references,
 )
+from dinkster_schema.model import schema_type_atoms
 from dinkster_schema.reporting import ImageDocumentArtifact
 from dinkster_values import (
     ENGINE_EVENT_FRAME_LIMIT_BYTES,
@@ -2654,11 +2655,23 @@ def nodes_wire(state: ServerState, enabled: set[str] | None = None) -> dict[str,
             if enabled is None or pack_id in enabled
         },
         "nodes": nodes,
-        "typeOwners": state.engine.registry.type_owners(),
     }
     authority = (
         execution.known_types if execution.known_types is not None else state.engine.registry
     )
+    atoms = set(state.engine.registry.type_owners()) | set(state.engine.registry.type_ids())
+    for schema in state.schemas.values():
+        atoms.update(schema_type_atoms(schema))
+    for info in state.packs.values():
+        atoms.update(type_id for type_id, _provider in info.type_storage)
+    if isinstance(authority, TypeAcceptanceProvider):
+        atoms.update(authority.type_ids())
+    # Storage providers never own borrowed types. Claims remain authoritative
+    # even before their codecs load; execution parts share a public pack name.
+    wire["typeOwners"] = {
+        atom: owner.partition("~")[0] if (owner := state.engine.registry.owner_of(atom)) else None
+        for atom in sorted(atoms)
+    }
     if isinstance(authority, TypeAcceptanceProvider):
         # Equivalence is pairwise at the runtime atom, not recursively lifted
         # through lists or other wrappers. Exact structural acceptance still
