@@ -54,13 +54,14 @@ CAPABILITIES = frozenset(
         "cache:read",
         "training:read",
         "principals:manage",
+        "secrets:use",
     }
 )
 
 PERMISSION_CATEGORIES: Mapping[str, frozenset[str]] = MappingProxyType(
     {
         "edit": frozenset({"sessions:write"}),
-        "execute": frozenset({"jobs:submit", "jobs:cancel"}),
+        "execute": frozenset({"jobs:submit", "jobs:cancel", "secrets:use"}),
         "read": frozenset(
             {
                 "jobs:read",
@@ -1008,6 +1009,8 @@ def required_capability(method: str, path: str) -> str | object | None:
     if path == "/api/auth/ws-ticket" or path.startswith("/api/auth/delegations"):
         return _AUTHENTICATED
     if path == "/api/principals" or path.startswith("/api/principals/"):
+        return _AUTHENTICATED
+    if path == "/api/secrets" or path.startswith("/api/secrets/"):
         return _AUTHENTICATED
     if path == "/api/jobs":
         return "jobs:submit" if method == "POST" else "jobs:read"

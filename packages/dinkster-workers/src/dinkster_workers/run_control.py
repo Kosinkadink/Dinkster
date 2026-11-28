@@ -14,6 +14,7 @@ from multiprocessing.shared_memory import SharedMemory
 from types import MappingProxyType
 from typing import Any, cast
 
+from dinkster_assets.privacy import check_secret_data
 from dinkster_protocol import InvocationResult
 from dinkster_schema import RunExecutionContext
 from dinkster_values import Value
@@ -24,6 +25,7 @@ Send = Callable[[dict[str, object], Sequence[bytes], Sequence[SharedMemory]], Aw
 
 
 def _document(value: Mapping[str, object]) -> bytes:
+    check_secret_data(value)
     return json.dumps(value, default=dict, separators=(",", ":")).encode("utf-8")
 
 
@@ -74,16 +76,19 @@ class PreparedRunContext:
 
     async def publish_run_value(self, node_id: str, value: Mapping[str, Value]) -> None:
         self._check_active()
+        check_secret_data((node_id, value))
         value = await self._prepare_values(value)
         self._check_active()
         await self._context.publish_run_value(node_id, value)
 
     async def inhibit(self, node_ids: Sequence[str]) -> None:
         self._check_active()
+        check_secret_data(node_ids)
         await self._context.inhibit(node_ids)
 
     async def override_node(self, node_id: str, inputs: Mapping[str, object]) -> None:
         self._check_active()
+        check_secret_data((node_id, inputs))
         await self._context.override_node(node_id, inputs)
 
 
@@ -155,6 +160,12 @@ class BoundaryRunContext:
             for segment in segments:
                 release_segment(segment)
             raise RuntimeError("execution context is no longer active")
+        try:
+            check_secret_data((fields, blobs))
+        except Exception:
+            for segment in segments:
+                release_segment(segment)
+            raise
         request_id = f"{self._invocation_id}:control:{self._index}"
         self._index += 1
         future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
@@ -225,6 +236,7 @@ class BoundaryRunContext:
     async def publish_run_value(self, node_id: str, value: Mapping[str, Value]) -> None:
         if self._closed:
             raise RuntimeError("execution context is no longer active")
+        check_secret_data((node_id, value))
         value = await self._prepare_values(value)
         with self._codec.suspend_persistent_cas():
             encoded, blobs, segments = encode_result(

@@ -898,6 +898,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["pin"] = False
     if not spec.sent:
         entry["sent"] = False
+    if spec.secret:
+        entry["secret"] = True
     if spec.after_run is not None:
         entry["afterRun"] = spec.after_run
     if spec.visible is not True:
@@ -1502,6 +1504,7 @@ _INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "pinFirst",
     "pin",
     "sent",
+    "secret",
     "afterRun",
     "visible",
     "readOnly",
@@ -1561,6 +1564,7 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         pin_first=_expect_bool(entry.get("pinFirst", False), "input.pinFirst"),
         pin=_expect_bool(entry.get("pin", True), "input.pin"),
         sent=_expect_bool(entry.get("sent", True), "input.sent"),
+        secret=_expect_bool(entry.get("secret", False), "input.secret"),
         on_edit=_steps_from_wire(entry.get("onEdit", []), "input.onEdit", wire_version),
         visible=True
         if "visible" not in entry

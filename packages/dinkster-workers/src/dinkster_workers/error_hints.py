@@ -7,9 +7,27 @@ import os
 import re
 from collections.abc import Callable, Sequence
 
-from dinkster_protocol import ErrorHint
+from dinkster_protocol import ErrorHint, NodeError
+from dinkster_schema import NodeSchema, SecretRejected
 
 from .launch import SANDBOX_NETWORK_ENV
+
+
+def private_node_error(error: NodeError, schema: NodeSchema) -> NodeError:
+    """Retain only validated secret-row recovery, never private exception text."""
+    inputs = {spec.id for spec in schema.inputs if spec.secret}
+    hints = tuple(
+        ErrorHint("secret-rejected", "The service refused this secret.", input_id=hint.input_id)
+        for hint in error.hints
+        if hint.code == "secret-rejected" and type(hint.input_id) is str and hint.input_id in inputs
+    )
+    return NodeError(
+        error.node_id,
+        error.node_type,
+        "The service refused this secret." if hints else "Secret execution failed",
+        hints=hints,
+    )
+
 
 Interpreter = Callable[[BaseException], tuple[ErrorHint, ...]]
 
@@ -204,6 +222,16 @@ def _hints_for(exc: BaseException, interpreters: Sequence[Interpreter]) -> tuple
     return tuple(hints[:3])
 
 
-def hints_for(exc: BaseException) -> tuple[ErrorHint, ...]:
+def hints_for(exc: BaseException, schema: NodeSchema | None = None) -> tuple[ErrorHint, ...]:
     """Return up to three confident interpretations without ever raising."""
+    if isinstance(exc, SecretRejected):
+        if (
+            schema is None
+            or type(exc.input_id) is not str
+            or not any(spec.secret and spec.id == exc.input_id for spec in schema.inputs)
+        ):
+            return ()
+        return (
+            ErrorHint("secret-rejected", "The service refused this secret.", input_id=exc.input_id),
+        )
     return _hints_for(exc, INTERPRETERS)

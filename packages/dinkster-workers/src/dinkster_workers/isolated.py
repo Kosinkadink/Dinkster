@@ -183,6 +183,7 @@ class IsolatedWorker:
             produced_asset_source=resolver_from_env(self._extra_env),
             saved_preview_vault=saved_preview_vault,
             on_schema_reload=on_schema_reload,
+            trusted_secret_channel=True,
         )
         self._proc: asyncio.subprocess.Process | None = None
         self._process_watch: asyncio.Task[None] | None = None
@@ -204,6 +205,10 @@ class IsolatedWorker:
     def alive(self) -> bool:
         """Whether the child's session is currently serving."""
         return self._session.alive
+
+    @property
+    def secret_execution_available(self) -> bool | None:
+        return self._session.secret_execution_available
 
     @property
     def instance_token(self) -> str | None:
@@ -544,6 +549,10 @@ class GroupMemberWorker:
         return self._session.alive
 
     @property
+    def secret_execution_available(self) -> bool | None:
+        return self._session.secret_execution_available
+
+    @property
     def instance_token(self) -> str | None:
         return self._session.instance_token
 
@@ -790,6 +799,7 @@ class GroupIsolatedWorker:
                 produced_asset_source=resolver_from_env(self._extra_env),
                 saved_preview_vault=saved_preview_vault,
                 on_schema_reload=on_schema_reload,
+                trusted_secret_channel=True,
             )
             for m in self._manifests
         )

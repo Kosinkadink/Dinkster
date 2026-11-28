@@ -68,6 +68,8 @@ def _mirror(
     root: Path,
     *,
     protocol: int = 11,
+    engine_protocol: int = 11,
+    base_protocols: list[int] | None = None,
     damaged_archive: bool = False,
     variant: str = "fixture-cpu",
     target: tuple[str, str] | None = None,
@@ -140,7 +142,8 @@ def _mirror(
         "tag": "main-" + "d" * 40,
         "commit": "d" * 40,
         "version": "0.4.0.dev1",
-        "workerProtocol": 11,
+        "workerProtocol": engine_protocol,
+        **({"baseWorkerProtocols": base_protocols} if base_protocols is not None else {}),
         "artifacts": [
             _artifact("constraints.txt", constraints),
             _artifact("fixture_engine-2.0-py3-none-any.whl", engine_wheel),
@@ -1240,10 +1243,26 @@ def test_engine_manifest_rejects_even_identical_duplicate_artifacts(tmp_path: Pa
         environment_artifacts.validate_manifest(data, expected, None)
 
 
-def test_refuses_protocol_mismatch_before_creating_a_store(tmp_path: Path):
-    _mirror(tmp_path / "mirror", protocol=12)
-    with pytest.raises(EnvironmentError, match="workerProtocol mismatch"):
-        discover((str(tmp_path / "mirror"),), "nightly")
+@pytest.mark.parametrize(
+    ("base_protocol", "accepted", "available"),
+    [(14, None, False), (14, [14, 15], True), (15, [14, 15], True), (16, [14, 15], False)],
+)
+def test_refuses_protocol_mismatch_before_creating_a_store(
+    tmp_path: Path, base_protocol: int, accepted: list[int] | None, available: bool
+):
+    base, _, _ = _mirror(
+        tmp_path / "mirror", protocol=base_protocol, engine_protocol=15, base_protocols=accepted
+    )
+    if available:
+        catalog = discover((str(tmp_path / "mirror"),), "nightly")
+        store = tmp_path / "store"
+        acquire(catalog, "fixture-cpu", store)
+        assert (object_path(store / "bases", base["id"]) / "manifest.json").is_file()
+        assert catalog.engine["workerProtocol"] == 15
+        assert catalog.bases["fixture-cpu"]["workerProtocol"] == base_protocol
+    else:
+        with pytest.raises(EnvironmentError, match="workerProtocol mismatch"):
+            discover((str(tmp_path / "mirror"),), "nightly")
 
 
 def test_unsigned_external_channel_is_refused_before_manifest_reads(

@@ -29,7 +29,9 @@ outputs' valueDiagnostics metadata for transport and cache replay.
 
 ``publish_preview_artifact`` is a required result attachment, not an event:
 it raises outside an active invocation and only successful execution submits
-its encoded content for host-authorized publication.
+its encoded content for host-authorized publication. Private execution suppresses
+preview, saved-file and image-document attachments before capture or encoding;
+this does not prevent node code from writing files itself.
 
 Context propagation follows contextvars: the reporter is visible across
 awaits and through ``asyncio.to_thread`` / tasks (which copy context), but
@@ -80,6 +82,8 @@ def publish_image_document(data: bytes) -> None:
     Like value diagnostics, direct node calls outside execution have no host
     attachment. Worker invocations capture these independently of events.
     """
+    if private_output_active():
+        return
     artifact = ImageDocumentArtifact(data)
     sink = _image_document_sink.get()
     if sink is not None:
@@ -126,6 +130,8 @@ def attach_saved_artifact(ref: Mapping[str, object]) -> None:
     The claim is not authority: the host checks the actual mounted writer
     publication. Ordinary ASSET outputs never imply a saved-file attachment.
     """
+    if private_output_active():
+        return
     if not isinstance(cast("object", ref), Mapping) or set(ref) != {
         "digest",
         "name",
@@ -236,6 +242,8 @@ def publish_saved_file_preview(
     and its host authority remain mandatory and independent of this call.
     True means staged, not yet host-authorized or published.
     """
+    if private_output_active():
+        return False
     sink = _saved_file_preview_sink.get()
     return sink(ref, encode, name, media_type) if sink is not None else False
 
@@ -255,6 +263,8 @@ def publish_preview_artifact(data: bytes, *, name: str, media_type: str) -> None
     Publication returns digest-backed artifacts in the execution result, not a
     transient preview event. A missing invocation is an error, never a lost result.
     """
+    if private_output_active():
+        return
     if type(data) is not bytes or not data or len(data) > SAVED_ARTIFACT_LIMIT_BYTES:
         raise ValueError("preview artifact requires nonempty bounded encoded bytes")
     if (
@@ -328,6 +338,21 @@ _value_diagnostic_sink: ContextVar[Callable[[dict[str, object]], None] | None] =
 )
 
 _suppress_capture: ContextVar[bool] = ContextVar("dinkster_suppress_capture", default=False)
+_private_output: ContextVar[bool] = ContextVar("dinkster_private_output", default=False)
+
+
+@contextmanager
+def use_private_output(private: bool) -> Generator[None]:
+    """Keep node-controlled text and previews out of credential-bearing execution reports."""
+    token = _private_output.set(private or _private_output.get())
+    try:
+        yield
+    finally:
+        _private_output.reset(token)
+
+
+def private_output_active() -> bool:
+    return _private_output.get()
 
 
 @contextmanager
@@ -374,7 +399,7 @@ def report_value_diagnostic(code: str, data: Mapping[str, object] | None = None)
     except (TypeError, ValueError, RecursionError) as exc:
         raise ValueError("value diagnostic data must be JSON-representable") from exc
     sink = _value_diagnostic_sink.get()
-    if sink is not None:
+    if sink is not None and not private_output_active():
         sink(snapshot)
 
 
@@ -409,6 +434,11 @@ def use_reporter(reporter: Reporter) -> Generator[None]:
 
 
 def _emit(name: str, data: Mapping[str, object], blob: bytes | None) -> None:
+    if private_output_active():
+        if name != PROGRESS_EVENT:
+            return
+        data = {"step": data["step"], "total": data["total"]}
+        blob = None
     reporter = _reporter.get()
     if reporter is not None:
         with suppress_capture():

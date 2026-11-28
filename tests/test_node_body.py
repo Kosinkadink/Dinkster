@@ -634,17 +634,8 @@ def test_lookups_and_pack_functions_are_checked_against_the_fields_they_are_hand
         pack_function(nested)
 
 
-class Secret(str):
-    """Stands for a secret annotation, which pack functions cannot take yet."""
-
-
 @pack_function
 def with_context(context: CallContext, count: int) -> dict[str, object]:
-    return {"note": str(count)}
-
-
-@pack_function
-def with_secret(count: int, key: Secret) -> dict[str, object]:
     return {"note": str(count)}
 
 
@@ -657,7 +648,6 @@ def with_optional_label(count: int, *, label: str = "note") -> dict[str, "object
     ("parameter", "annotation", "message"),
     (
         ("return", "dict[str, 'NotDefined']", "annotations cannot be resolved"),
-        ("label", Secret, "Secrets for pack functions are not built yet"),
         ("label", None, "parameter label has no annotation"),
     ),
 )
@@ -779,8 +769,6 @@ def test_button_steps_are_checked_where_they_run() -> None:
         node(Call(missing_answer, args=("count",), writes=("note",)))
     with pytest.raises(ValueError, match="takes 1 to 1 arguments, given 2"):
         node(Call(with_context, args=("count", "count"), writes=("note",)))
-    with pytest.raises(ValueError, match="Secrets for pack functions are not built yet"):
-        node(Call(with_secret, args=("count", "folder"), writes=("note",)))
     with pytest.raises(ValueError, match="the CallContext parameter is the first one"):
         node(Call(context_second, args=("count",), writes=("note",)))
     with pytest.raises(ValueError, match="a lookup gets no CallContext"):

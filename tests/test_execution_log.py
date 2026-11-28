@@ -43,14 +43,29 @@ from dinkster_schema import (
     NodeSchema,
     Output,
     TypeExpr,
+    attach_saved_artifact,
     configure_logging,
     install_stream_capture,
+    publish_image_document,
+    publish_preview_artifact,
+    publish_saved_file_preview,
+    report_event,
     report_log,
+    report_preview,
+    report_progress,
+    report_value_diagnostic,
     use_capture_budget,
     use_reporter,
 )
 from dinkster_schema.capture import MAX_CAPTURED_RECORDS
 from dinkster_schema.log import ROOT_LOGGER_NAME
+from dinkster_schema.reporting import (
+    capture_image_documents,
+    capture_preview_artifacts,
+    capture_saved_artifacts,
+    capture_value_diagnostics,
+    use_saved_file_preview_sink,
+)
 from dinkster_values import CORE_STRING, TypeRegistry, register_core_types
 from dinkster_workers import InProcessWorker, IsolatedWorker
 
@@ -121,6 +136,66 @@ def test_stdout_and_stderr_capture_attributes_and_passes_through() -> None:
         ("info", "plain line", "stdout"),
         ("warning", "worry line", "stderr"),
     ]
+
+
+def test_private_invocation_hides_node_text_but_keeps_numeric_progress() -> None:
+    captured: list[Captured] = []
+    configured_stream = io.StringIO()
+    configure_logging("info", stream=configured_stream)
+    saved_ref = {
+        "digest": "blake3:" + "a" * 64,
+        "name": "private-credential.txt",
+        "size": 18,
+        "mediaType": "text/plain",
+        "virtualPath": "mounts/output/private-credential.txt",
+    }
+    with proxied_streams() as (out, err):
+        with (
+            use_reporter(recorder(captured)),
+            capture_value_diagnostics() as diagnostics,
+            capture_image_documents() as documents,
+            capture_preview_artifacts() as artifacts,
+            capture_saved_artifacts() as saved_claims,
+            use_saved_file_preview_sink(lambda *_: pytest.fail("private preview reached sink")),
+            use_capture_budget(private=True),
+        ):
+            sys.stdout.write("private-")
+            sys.stdout.flush()
+            sys.stdout.write("credential\n")
+            sys.stderr.write("private-credential\n")
+            try:
+                raise ValueError("private-credential")
+            except ValueError:
+                logging.getLogger("dinkster.pack.test").warning("private-credential", exc_info=True)
+            report_log("warning", "private-credential")
+            report_event("test.private-credential", {"value": "private-credential"})
+            report_preview(b"private-credential")
+            report_value_diagnostic("private-credential", {"value": "private-credential"})
+            report_progress(1, 4, text="private-credential")
+            publish_image_document(b"private-credential")
+            publish_preview_artifact(
+                b"private-credential", name="private-credential.txt", media_type="text/plain"
+            )
+            attach_saved_artifact(saved_ref)
+            assert not publish_saved_file_preview(
+                saved_ref,
+                lambda: pytest.fail("private preview encoded"),
+                name="private-credential.txt",
+                media_type="text/plain",
+            )
+            with use_capture_budget():
+                print("nested private-credential")
+            copied = contextvars.copy_context()
+            thread = threading.Thread(target=copied.run, args=(print, "private-credential"))
+            thread.start()
+            thread.join(timeout=5)
+            assert not thread.is_alive()
+            contextvars.Context().run(print, "unrelated invocation")
+        print("ordinary output")
+        assert out.getvalue() == "unrelated invocation\nordinary output\n"
+        assert err.getvalue() == configured_stream.getvalue() == ""
+    assert diagnostics == documents == artifacts == saved_claims == []
+    assert captured == [("progress", {"step": 1, "total": 4}, None)]
 
 
 def test_stream_writes_outside_an_invocation_are_not_captured() -> None:

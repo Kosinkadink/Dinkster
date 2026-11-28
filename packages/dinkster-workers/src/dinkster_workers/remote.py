@@ -188,6 +188,10 @@ class RemoteWorker:
         return self._session.alive
 
     @property
+    def secret_execution_available(self) -> bool | None:
+        return self._session.secret_execution_available
+
+    @property
     def schemas(self) -> Mapping[str, NodeSchema]:
         """The remote pack's node schemas, announced by the service's hello.
         Feed these to the Engine - this machine never imports the pack."""

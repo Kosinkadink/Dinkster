@@ -25,6 +25,7 @@ from .environment_artifacts import (
     acquire_base,
     artifact_rows,
     engine_label,
+    supports_base_protocol,
     validate_manifest,
 )
 from .environment_constraints import (
@@ -824,6 +825,7 @@ def prepare_retained_libraries(
         "engine_release": identity,
         "engine_version": manifest["version"],
         "constraints": selected,
+        "worker_protocol": manifest["workerProtocol"],
         "source_kind": "source",
     }
 
@@ -902,7 +904,15 @@ def prepare_source_engine(
     )
     protocol = (source / "packages/dinkster-workers/src/dinkster_workers/boundary.py").read_text()
     selected_protocol = re.search(r"(?m)^PROTOCOL_VERSION = ([0-9]+)$", protocol)
-    if selected_protocol is None or int(selected_protocol[1]) != base["workerProtocol"]:
+    if selected_protocol is None:
+        raise EnvironmentError("source must declare its worker protocol")
+    worker_protocol = int(selected_protocol[1])
+    base_protocols = (
+        project.get("tool", {}).get("dinkster", {}).get("base-worker-protocols", [worker_protocol])
+    )
+    if not supports_base_protocol(
+        {"workerProtocol": worker_protocol, "baseWorkerProtocols": base_protocols}, base
+    ):
         raise EnvironmentError("source worker protocol does not match the installed release base")
     with tempfile.TemporaryDirectory(dir=store, prefix=".source-engine-") as directory:
         work = Path(directory)
@@ -1015,14 +1025,15 @@ def prepare_source_engine(
             for row in wheels
         )
         validate_base_requirements(paths, base)
-        release = {
+        release: dict[str, Any] = {
             "format": "dinkster.engine/1",
             "source": "git",
             "version": project["project"]["version"],
             "capabilities": project.get("tool", {})
             .get("dinkster", {})
             .get("engine-capabilities", []),
-            "workerProtocol": base["workerProtocol"],
+            "workerProtocol": worker_protocol,
+            "baseWorkerProtocols": base_protocols,
             "libraryApi": project.get("tool", {}).get("dinkster", {}).get("library-api"),
             "libraryCapabilities": project.get("tool", {})
             .get("dinkster", {})
@@ -1073,7 +1084,7 @@ def prepare_source_engine(
             "constraints": retained,
             "engine_version": project["project"]["version"],
             "variant": variant,
-            "worker_protocol": base["workerProtocol"],
+            "worker_protocol": worker_protocol,
             "source_kind": "source",
         }
 
@@ -1146,8 +1157,8 @@ def source_missing_inputs(
         metadata["base-manifest.json"].encode("utf-8"), base_record["id"], base_record["variant"]
     )
     if (
-        manifest["workerProtocol"] != base["workerProtocol"]
-        or snapshot["workerProtocol"] != base["workerProtocol"]
+        not supports_base_protocol(manifest, base)
+        or snapshot["workerProtocol"] != manifest["workerProtocol"]
     ):
         raise EnvironmentError("source snapshot worker protocols disagree")
     provenance = json.loads(metadata["artifact-sources.json"])

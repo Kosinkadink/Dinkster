@@ -14,6 +14,7 @@ from .environment_artifacts import (
     artifact_rows,
     engine_constraints,
     parse_metadata,
+    supports_base_protocol,
     validate_dependency_base,
     validate_manifest,
 )
@@ -80,7 +81,7 @@ def write_channel(
         base = validate_manifest(base_data, base_id, variant)
         if variant in selected:
             raise EnvironmentError(f"duplicate selected base variant: {variant}")
-        if base["workerProtocol"] != engine["workerProtocol"]:
+        if not supports_base_protocol(engine, base):
             raise EnvironmentError(f"workerProtocol mismatch for selected base {variant}")
         if "dependencies" in engine:
             selection = cast("dict[str, object]", engine["dependencies"]).get(variant)

@@ -12,7 +12,8 @@ import asyncio
 import contextlib
 import json
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Final
 
 from aiohttp import web
@@ -26,11 +27,14 @@ from dinkster_protocol.pack_functions import (
     PackFunctionAnswer,
     PackFunctionRefused,
     PackFunctionRequest,
+    secret_arguments,
 )
+from dinkster_schema import NodeSchema
 from dinkster_schema.body import MAX_PACK_FUNCTION_TIME_LIMIT
 
 from .auth import principal_for
 from .call_budget import CallBudget
+from .secrets import SECRETS_KEY
 
 PackFunctionDispatch = Callable[
     [PackFunctionRequest, Callable[[float, str], None]], Awaitable[PackFunctionAnswer]
@@ -49,7 +53,11 @@ def _refusal(status: int, code: str, message: str) -> web.Response:
 
 
 def install_pack_functions(
-    app: web.Application, dispatch: PackFunctionDispatch | None, budget: CallBudget
+    app: web.Application,
+    dispatch: PackFunctionDispatch | None,
+    budget: CallBudget,
+    *,
+    schemas: Callable[[], Mapping[str, NodeSchema]] | None = None,
 ) -> dict[tuple[str, str], str]:
     """Add the call route; the result maps it to the capability a request needs."""
 
@@ -75,11 +83,30 @@ def install_pack_functions(
             call_request = PackFunctionRequest.from_wire(json.loads(data))
         except (ValueError, UnicodeError, OverflowError, RecursionError):
             return _refusal(400, "invalid", FAILED_MESSAGE)
+        store = request.app.get(SECRETS_KEY)
+        if store is not None and not store.execution_available and schemas is not None:
+            try:
+                positions = secret_arguments(schemas().get(call_request.node_type), call_request)
+            except PackFunctionRefused:
+                pass
+            else:
+                if positions:
+                    return _refusal(
+                        409,
+                        "secret-channel-unavailable",
+                        "This dependency base does not support secret execution",
+                    )
         try:
             release = budget.admit(principal.principal_id)
         except LookupCallError:
             return _refusal(429, "paused", PAUSED_MESSAGE)
         try:
+            if store is not None:
+
+                def get_credential(name: str) -> str | None:
+                    return store.resolve_for_execution(principal, name)
+
+                call_request = replace(call_request, resolve_secret=get_credential)
             return await _stream(request, call_request, dispatch)
         finally:
             release()

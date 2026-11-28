@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetRef, AssetVault, digest_bytes
@@ -31,6 +32,7 @@ from dinkster_server import Principal, StaticBearerAuthenticator, create_app
 from dinkster_server.auth import install_auth
 from dinkster_server.call_budget import CallBudget
 from dinkster_server.pack_functions import install_pack_functions
+from dinkster_server.secrets import SECRETS_KEY, SecretStore
 from dinkster_workers.pack_functions import run_pack_function
 
 from dinkster.compose import PackSpec, ServingComposer
@@ -450,3 +452,199 @@ def test_call_arguments_and_answers_keep_formula_integers_above_the_decimal_digi
                 assert refused.value.code == "wrong-shape"
 
     run_scenario(scenario())
+
+
+@pack_function
+async def uses_secret(ctx: CallContext, first: str, second: str, mode: str) -> dict[str, str]:
+    from dinkster_schema.log import pack_logger
+
+    print(first)
+    pack_logger("test").warning(second)
+    ctx.note(first)
+    ctx.progress(1.0, second)
+    await asyncio.sleep(0)
+    if mode == "raise":
+        raise RuntimeError(first)
+    if mode == "return":
+        return {"result": first}
+    if first != second:
+        raise ValueError("Secret snapshot changed")
+    if first == "synthetic-call-alice-key":
+        return {"result": "alice"}
+    if first == "synthetic-call-bob-key":
+        return {"result": "bob"}
+    raise ValueError("Unresolved name")
+
+
+@pytest.mark.parametrize("execution_available", [False, True])
+def test_secret_calls_use_the_pressers_account_without_reporting_or_returning_keys(
+    capsys: Any,
+    execution_available: bool,
+) -> None:
+    schema = NodeSchema(
+        "test.secret_call",
+        body=(
+            Input("key", TypeExpr.concrete("STRING"), secret=True, pin=False),
+            Input("mode", TypeExpr.concrete("STRING")),
+            Input("result", TypeExpr.concrete("STRING")),
+            Button(
+                "go", "Go", (Call(uses_secret, args=("key", "key", "mode"), writes=("result",)),)
+            ),
+        ),
+    )
+    credentials = {"alice": "synthetic-call-alice-key", "bob": "synthetic-call-bob-key"}
+    seen: list[str] = []
+
+    async def scenario() -> None:
+        app = web.Application()
+        store = SecretStore(execution_available=execution_available)
+        app[SECRETS_KEY] = store
+        people = {
+            name: Principal(name, grants={"local": frozenset({"jobs:submit"})})
+            for name in (*credentials, "outsider")
+        }
+        for name, value in credentials.items():
+            store.write(people[name], "caption", value)
+
+        async def dispatch(request: PackFunctionRequest, on_progress: Any) -> PackFunctionAnswer:
+            sent: list[tuple[dict[str, object], Any]] = []
+
+            async def send(header: dict[str, object], blobs: Any) -> None:
+                if header["type"] == "packFunctionProgress":
+                    on_progress(header["fraction"], header["text"])
+                else:
+                    sent.append((header, blobs))
+
+            async def get_credential(request_id: str, input_id: str) -> str | None:
+                assert request_id == "test-call"
+                assert request.resolve_secret is not None
+                name = str(request.args[int(input_id)])
+                seen.append(name)
+                return request.resolve_secret(name)
+
+            assert all(
+                value not in repr(request) + json.dumps(request.to_wire())
+                for value in credentials.values()
+            )
+            await run_pack_function(
+                {"requestId": "test-call", "call": request.to_wire()},
+                {schema.node_type: schema},
+                send,
+                threading.Event(),
+                asset=lambda value: value,
+                resolve_secret=get_credential,
+            )
+            header, blobs = sent[-1]
+            return PackFunctionAnswer.from_reply(header, blobs, request)
+
+        capabilities = install_pack_functions(
+            app, dispatch, CallBudget(), schemas=lambda: {schema.node_type: schema}
+        )
+        install_auth(app, StaticBearerAuthenticator(people), route_capabilities=capabilities)
+        async with TestClient(TestServer(app)) as client:
+            for account in people:
+                client.session.headers["Authorization"] = "Bearer " + account
+                for mode in ("safe", "return", "raise"):
+                    before = len(seen)
+                    request = PackFunctionRequest(
+                        schema.node_type,
+                        f"{__name__}.uses_secret",
+                        ("caption", "caption", mode),
+                        ("result",),
+                    )
+                    status, lines, _ = await _call(client, request.to_wire())
+                    if not execution_available:
+                        assert status == 409
+                        assert lines == [
+                            {
+                                "error": "secret-channel-unavailable",
+                                "message": "This dependency base does not support secret execution",
+                            }
+                        ]
+                        assert len(seen) == before
+                        assert store.status(people[account], "caption")["set"] == (
+                            account != "outsider"
+                        )
+                        continue
+                    assert status == 200
+                    assert len(seen) == before + 1
+                    if account != "outsider" and mode == "safe":
+                        assert lines[-1] == {"answer": {"result": account}, "notes": []}
+                    else:
+                        assert lines[-1] == {
+                            "error": "failed",
+                            "message": "The pack could not do this.",
+                        }
+                    assert all(value not in json.dumps(lines) for value in credentials.values())
+                    assert all(line.get("text", "") == "" for line in lines)
+
+    run_scenario(scenario())
+    captured = capsys.readouterr()
+    assert all(value not in captured.out + captured.err for value in credentials.values())
+
+
+secret_call_started = threading.Event()
+secret_call_release = threading.Event()
+secret_call_finished = threading.Event()
+
+
+@pack_function
+def late_secret_call(key: str) -> dict[str, str]:
+    secret_call_started.set()
+    try:
+        assert secret_call_release.wait(10)
+        print(key)
+        return {"result": key}
+    finally:
+        secret_call_finished.set()
+
+
+def test_cancelled_secret_calls_keep_the_running_thread_private(capsys: Any) -> None:
+    started, release, finished = secret_call_started, secret_call_release, secret_call_finished
+    for event in (started, release, finished):
+        event.clear()
+    credential = "synthetic-cancelled-call-key"
+    call = Call(late_secret_call, args=("key",), writes=("result",))
+    schema = NodeSchema(
+        "test.late_secret_call",
+        body=(
+            Input("key", TypeExpr.concrete("STRING"), secret=True, pin=False),
+            Input("result", TypeExpr.concrete("STRING")),
+            Button("go", "Go", (call,)),
+        ),
+    )
+    sent: list[dict[str, object]] = []
+
+    async def scenario() -> None:
+        async def send(header: dict[str, object], blobs: Any) -> None:
+            sent.append(header)
+
+        async def get_credential(request_id: str, input_id: str) -> str:
+            return credential
+
+        request = PackFunctionRequest(schema.node_type, call.name, ("caption",), ("result",))
+        task = asyncio.create_task(
+            run_pack_function(
+                {"requestId": "cancelled-call", "call": request.to_wire()},
+                {schema.node_type: schema},
+                send,
+                threading.Event(),
+                asset=lambda value: value,
+                resolve_secret=get_credential,
+            )
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 10)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        finally:
+            release.set()
+            assert await asyncio.to_thread(finished.wait, 10)
+        assert sent == []
+
+    run_scenario(scenario())
+    print("public-after-cancelled-call")
+    captured = capsys.readouterr()
+    assert credential not in captured.out + captured.err
+    assert "public-after-cancelled-call" in captured.out

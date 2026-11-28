@@ -41,7 +41,7 @@ from collections.abc import Mapping
 from typing import TextIO
 
 from .capture import forward_log_record
-from .reporting import suppress_capture
+from .reporting import private_output_active, suppress_capture
 
 ROOT_LOGGER_NAME = "dinkster"
 PACK_LOGGER_PREFIX = "dinkster.pack"
@@ -76,6 +76,8 @@ class _StandardHandler(logging.StreamHandler):  # pyright: ignore[reportMissingT
     the formatted line this handler just wrote."""
 
     def emit(self, record: logging.LogRecord) -> None:
+        if private_output_active():
+            return
         with suppress_capture():
             super().emit(record)
         try:

@@ -15,6 +15,7 @@ from dinkster_workers.catalog import (
     worker_declarations_match_catalog,
 )
 from dinkster_workers.manifest import PackManifest
+from dinkster_workers.session import WorkerProtocolMismatch
 
 
 class CatalogTypeRegistry:
@@ -84,6 +85,7 @@ class LazyWorker:
         self.declarations_changed = False
         self._owns_worker = True
         self._worker: Any = None
+        self._secret_execution_available: bool | None = None
         self._activation: asyncio.Task[Any] | None = None
         self._closing: asyncio.Task[None] | None = None
         self._closed = False
@@ -99,6 +101,12 @@ class LazyWorker:
     @property
     def alive(self) -> bool:
         return not self._closed and self._worker is not None and self._worker.alive
+
+    @property
+    def secret_execution_available(self) -> bool | None:
+        if self._worker is None:
+            return self._secret_execution_available
+        return getattr(self._worker, "secret_execution_available", None)
 
     async def start(self) -> None:
         """Publish declarations without activating the execution runtime."""
@@ -213,7 +221,9 @@ class LazyWorker:
             worker = await self._start()
             self.adopt(worker)
             return worker
-        except BaseException:
+        except BaseException as error:
+            if isinstance(error, WorkerProtocolMismatch) and type(error.protocol) is int:
+                self._secret_execution_available = False if 0 < error.protocol < 15 else None
             await self._close()
             raise
 

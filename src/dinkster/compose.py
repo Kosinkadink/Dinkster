@@ -388,6 +388,17 @@ class _ReplicaWorkerPool:
         )
 
     @property
+    def secret_execution_available(self) -> bool | None:
+        capabilities = [
+            getattr(lane.worker, "secret_execution_available", None) for lane in self.lanes
+        ]
+        if any(capability is True for capability in capabilities):
+            return True
+        if all(capability is False for capability in capabilities):
+            return False
+        return None
+
+    @property
     def alive(self) -> bool:
         return all(lane.worker.alive for lane in self.lanes)
 
@@ -4804,6 +4815,20 @@ class ServingComposer:
             self._check_worker_execution(record.worker)
             worker = record.worker
         return await worker.call_pack_function(request, on_progress)
+
+    def secret_worker_capability(
+        self, node_type: str, preferred_worker: str | None = None
+    ) -> bool | None:
+        """Only refuse early when every eligible execution arm is known incapable."""
+        arms = _provider_arms(self._topology.get(node_type, ()), preferred_worker, self._remotes)
+        capabilities = [
+            getattr(arm.execution_worker, "secret_execution_available", None) for arm in arms
+        ]
+        if any(capability is True for capability in capabilities):
+            return True
+        if capabilities and all(capability is False for capability in capabilities):
+            return False
+        return None
 
     def _lookup_worker(self, node_type: str) -> Any:
         owner = self._owners.get(node_type)
