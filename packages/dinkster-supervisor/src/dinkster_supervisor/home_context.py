@@ -144,6 +144,12 @@ def _dispatch(root: Path, operation: str, arguments: list[object]) -> object:
 
     if operation == "installations":
         return [str(path) for path in home.known_installations()]
+    if operation == "installation-facts":
+        return home.installation_facts(root)
+    if operation == "space":
+        from .environment_space import space_report
+
+        return space_report(root)
     if operation == "setup-facts":
         channel, variant, cancelled = arguments
         return home_setup.setup_facts(

@@ -1893,8 +1893,15 @@ environment.main()
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_space_report_counts_shared_allocation_once_without_changing_project(
-    cleanup_project: Path, enabled: bool
+    cleanup_project: Path, enabled: bool, monkeypatch: pytest.MonkeyPatch
 ):
+    from aiohttp.test_utils import TestClient, TestServer
+    from dinkster_supervisor import home as home_module
+    from dinkster_supervisor.home import Home, create_home_app
+    from dinkster_supervisor.home_context import WslContext, _dispatch
+
+    from tests.async_scenarios import run_scenario
+
     if sys.platform != "linux":
         pytest.skip("Linux physical extent observation")
     root = cleanup_project
@@ -1981,6 +1988,68 @@ def test_space_report_counts_shared_allocation_once_without_changing_project(
     assert "Automatic cleanup can release now:" in human
     assert "Explicit cleanup can release additionally:" in human
     assert "Models, outputs, workflows, mounts and other user data are excluded." in human
+
+    async def scenario() -> None:
+        client = TestClient(
+            TestServer(
+                create_home_app(Home(installations=lambda: frozenset({root})), frontend=None)
+            )
+        )
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/space"
+            for query, expected_status in (
+                ({}, 400),
+                ({"root": "relative"}, 400),
+                ({"root": str(root.parent / "unknown")}, 404),
+                ([("root", str(root)), ("root", str(root))], 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected_status
+            response = await client.get(endpoint, params={"root": str(root)})
+            assert response.status == 200
+            body = await response.json()
+            assert body["root"] == str(root)
+            assert body["space"]["allocatedBytes"] == expected
+            assert body["space"]["sharedAllocatedBytes"] == report["sharedAllocatedBytes"]
+            assert body["space"]["scope"] == report["scope"]
+            (root / "current").write_text("broken")
+            refused = await client.get(endpoint, params={"root": str(root)})
+            assert refused.status == 503
+            assert (await refused.json())["error"] == "space-unavailable"
+            (root / "current").write_bytes(protected[root / "current"])
+        finally:
+            await client.close()
+
+        visible = root.parent / "windows-visible-root"
+        context = WslContext("Dinkster-Desktop-0123456789ab", "/home/dinkster/tools/python3")
+        monkeypatch.setattr(
+            home_module, "installation_context", lambda path: context if path == visible else None
+        )
+        monkeypatch.setattr(
+            WslContext, "call", lambda _self, _root, operation: _dispatch(root, operation, [])
+        )
+        async with TestClient(
+            TestServer(
+                create_home_app(Home(installations=lambda: frozenset({visible})), frontend=None)
+            )
+        ) as guest_client:
+            response = await guest_client.get(endpoint, params={"root": str(visible)})
+            assert response.status == 200
+            guest = await response.json()
+            assert guest["root"] == str(visible)
+            assert guest["space"]["allocatedBytes"] == expected
+            response = await guest_client.get(
+                "/supervisor/installations/facts", params={"root": str(visible)}
+            )
+            assert response.status == 200
+            facts = await response.json()
+            assert facts["root"] == str(visible)
+            assert facts["host"] == {"kind": "wsl", "distribution": context.distribution}
+            assert facts["current"] == 3
+            assert facts["build"]["label"] == "CPU only"
+            assert not visible.exists()
+
+    run_scenario(scenario())
     assert {p: p.read_bytes() for p in root.rglob("*") if p.is_file()} == protected
 
 
