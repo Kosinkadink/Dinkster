@@ -394,6 +394,12 @@ class WorkerDied(Exception):
     """The peer is gone; the caller decides what that means."""
 
 
+class WorkerProtocolMismatch(RuntimeError):
+    def __init__(self, message: str, protocol: object) -> None:
+        super().__init__(message)
+        self.protocol = protocol
+
+
 class PackDeclarations:
     """Decode the portable subset shared by catalogs and worker announcements."""
 
@@ -906,9 +912,10 @@ class BoundarySession:
         protocol = header.get("protocol")
         self._worker_protocol = protocol if type(protocol) is int and protocol > 0 else None
         if type(protocol) is not int or protocol != PROTOCOL_VERSION:
-            raise RuntimeError(
+            raise WorkerProtocolMismatch(
                 f"{self._role} '{self._pack}' protocol mismatch: "
-                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}"
+                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}",
+                protocol,
             )
         self._pack = str(header.get("pack", self._pack))
         declarations = PackDeclarations(header, role=self._role, pack=self._pack)
