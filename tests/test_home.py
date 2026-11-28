@@ -970,6 +970,28 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
         home = Home(installations=lambda: frozenset(roots), start=start, watch_interval=0.05)
         async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
 
+            async def restarted_binding(previous: dict, child: dict) -> dict:
+                # Restart acknowledges spawning, not health. The scenario deadline
+                # bounds startup; binding assertions apply to its completed result.
+                while True:
+                    async with aiohttp.ClientSession() as session:
+                        supervisor = await (
+                            await session.get(
+                                previous["execution"]["engine"]["url"] + "/supervisor/status"
+                            )
+                        ).json()
+                    assert supervisor["engine"] == child, "another engine-child restart"
+                    assert supervisor["instance"] == previous["execution"]["engine"]["instance"]
+                    status = await (await client.get("/supervisor/status?project=film")).json()
+                    assert status["state"] in {"starting", "ready"}, status
+                    if status["execution"] and status["execution"]["filesystem"]:
+                        assert status["homeId"] == previous["homeId"]
+                        assert status["open"] == previous["open"]
+                        for field in ("project", "host", "installation", "engine"):
+                            assert status["execution"][field] == previous["execution"][field]
+                        return status
+                    await asyncio.sleep(0.02)
+
             async def opened(root: Path, engine: str = "main") -> dict:
                 nonlocal started
                 started = asyncio.Event()
@@ -1017,27 +1039,27 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
             assert other_engine["execution"]["filesystem"] != again["execution"]["filesystem"]
 
             async with aiohttp.ClientSession() as session:
-                assert (
-                    await session.post(
-                        other_engine["execution"]["engine"]["url"] + "/supervisor/engine/restart"
-                    )
-                ).status == 200
-            external_restart = await wait_for(
-                client,
-                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
-                "/supervisor/status?project=film",
-            )
+                response = await session.post(
+                    other_engine["execution"]["engine"]["url"] + "/supervisor/engine/restart"
+                )
+                assert response.status == 200
+                child = (await response.json())["engine"]
+            external_restart = await restarted_binding(other_engine, child)
             assert external_restart["execution"]["engine"] == other_engine["execution"]["engine"]
             assert (
                 external_restart["execution"]["filesystem"]
                 != other_engine["execution"]["filesystem"]
             )
             assert (await client.post("/supervisor/engine/restart")).status == 200
-            restarted = await wait_for(
-                client,
-                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
-                "/supervisor/status?project=film",
-            )
+            async with aiohttp.ClientSession() as session:
+                child = (
+                    await (
+                        await session.get(
+                            external_restart["execution"]["engine"]["url"] + "/supervisor/status"
+                        )
+                    ).json()
+                )["engine"]
+            restarted = await restarted_binding(external_restart, child)
             assert (
                 restarted["execution"]["filesystem"] != external_restart["execution"]["filesystem"]
             )

@@ -39,6 +39,7 @@ from .body import (
     Use,
     choice_scope_rows,
     formula_names,
+    formula_reads,
     option_rows,
     scope_rows,
     shared_rows,
@@ -53,9 +54,8 @@ class FlattenError(ValueError):
 
 
 @dataclass(frozen=True)
-class AutomaticSite:
-    """A field that declares ``automatic`` and has nothing stored and no wire:
-    its flattened input and the scopes a formula on it sees."""
+class InputSite:
+    """A flattened input and the scopes a formula on it sees."""
 
     input: Input
     frames: tuple[_Frame, ...]
@@ -69,20 +69,23 @@ class Flattened:
     members: list[tuple[str, tuple[str, ...]]] = field(
         default_factory=list[tuple[str, tuple[str, ...]]]
     )
-    automatic: list[AutomaticSite] = field(default_factory=list["AutomaticSite"])
+    automatic: list[InputSite] = field(default_factory=list["InputSite"])
+    sites: list[InputSite] = field(default_factory=list["InputSite"])
     rules: list[Outcome] = field(default_factory=list[Outcome])
     """The outcome of each of the ``rules`` passed in, in order."""
 
 
 @dataclass(frozen=True)
 class SiteEvaluator:
-    """Works out formulas and file arguments in the scope of an automatic site."""
+    """Works out formulas and file arguments in an input's declaration scope."""
 
-    formula: Callable[[Formula, AutomaticSite], Outcome]
-    file: Callable[[str, AutomaticSite], object]
+    formula: Callable[[Formula, InputSite], Outcome]
+    file: Callable[[str, InputSite], object]
     """The picked file of the file field a lookup argument names: its stored
     wire form, None when no file is picked, unknown when a wire feeds it or
     its row is not chosen. ``NOT_A_FILE`` when the name is not a file field."""
+    dependencies: Callable[[Formula | str, InputSite], set[str]]
+    """Flattened input ids read by a formula or lookup argument at the site."""
 
 
 NOT_A_FILE = object()
@@ -100,7 +103,7 @@ def site_evaluator(
     literal: Callable[[object], object] | None,
     in_use: Mapping[str, object],
 ) -> SiteEvaluator:
-    """Evaluates a formula in the scope of an automatic site, over the stored
+    """Evaluates a formula in an input's declaration scope, over the stored
     values, the choices ``chosen`` by a walk, and ``in_use`` for unstored
     automatic fields."""
     flattener = _Flattener(
@@ -120,6 +123,7 @@ def site_evaluator(
     return SiteEvaluator(
         lambda formula, site: flattener.evaluate(formula, site.frames),
         lambda name, site: flattener.file(name, site.frames),
+        lambda formula, site: flattener.dependencies(formula, site.frames),
     )
 
 
@@ -513,6 +517,29 @@ class _Flattener:
                         held.discard(name)
         return names, where, inputs, unknown, files
 
+    def dependencies(self, formula: Formula | str, frames: Sequence[_Frame]) -> set[str]:
+        names, where, inputs, unknown, files = self.names_at(frames)
+        if isinstance(formula, str) and formula in files:
+            return {where[formula]} if formula not in unknown else set()
+        scope = FormulaScope(
+            names=names,
+            inputs=frozenset(inputs),
+            tables=self.tables,
+            derived=self.derived,
+            in_member=any(frame.index is not None for frame in frames),
+        )
+        reads: set[str] = set()
+        for name in formula_reads(Formula(formula) if isinstance(formula, str) else formula, scope):
+            if name not in where or name in unknown:
+                continue
+            flat_id = where[name]
+            if names[name].endswith("[]"):
+                group, row = flat_id.rsplit(".", 1)
+                reads.update(f"{group}.{key}.{row}" for key in self.discovered(group))
+            else:
+                reads.add(flat_id)
+        return reads
+
     def file(self, name: str, frames: Sequence[_Frame]) -> object:
         """The stored wire form of the file field ``name`` names in the scope
         of ``frames``: None when no file is picked, unknown when a wire feeds
@@ -606,8 +633,10 @@ class _Flattener:
             if member is not None:
                 spec = replace(spec, type=scope_member_type(spec.type, member))
             self.flat.inputs.append(spec)
+            site = InputSite(spec, tuple(self.frames))
+            self.flat.sites.append(site)
             if spec.automatic is not None and self.values is not None and path not in self.values:
-                self.flat.automatic.append(AutomaticSite(spec, tuple(self.frames)))
+                self.flat.automatic.append(site)
         elif isinstance(row, Output):
             spec = replace(row, id=path)
             if member is not None:
@@ -805,7 +834,9 @@ class _Flattener:
                 except (TypeError, ValueError) as error:
                     raise FlattenError(f"described '{path}': entry {entry_id}: {error}") from error
             try:
-                self.flat.inputs.append(replace(kind, **changes))
+                spec = replace(kind, **changes)
+                self.flat.inputs.append(spec)
+                self.flat.sites.append(InputSite(spec, tuple(self.frames)))
             except (TypeError, ValueError) as error:
                 raise FlattenError(f"described '{path}': entry {entry_id}: {error}") from error
 

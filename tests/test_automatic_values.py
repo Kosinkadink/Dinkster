@@ -27,7 +27,7 @@ from dinkster_schema import (
     build_schemas,
 )
 from dinkster_schema.body import Formula, Lookup, State, lookup
-from dinkster_schema.model import AssetWidget
+from dinkster_schema.model import AssetWidget, NumberWidget
 from dinkster_server import STATE_KEY, create_app
 from dinkster_server.history import HistoryStore, record_from_job
 from dinkster_values import TypeRegistry, register_core_types
@@ -325,6 +325,172 @@ def test_a_value_that_cannot_be_worked_out_runs_with_the_default() -> None:
             job = await _finished(client, "2")
             assert job["automaticValues"][0]["reason"] == "unknown"  # type: ignore[index]
             assert FrameRate.received == [24.0, 24.0]
+
+    run_scenario(scenario())
+
+
+def test_unanswered_numeric_fix_uses_and_keeps_only_the_runs_corrected_value(
+    tmp_path: Path,
+) -> None:
+    received: list[tuple[int, int, int, int]] = []
+
+    class Limited(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.limited",
+                output_node=True,
+                body=(
+                    Input("cap", INT, default=2, automatic=Formula("4")),
+                    Input("amount", INT, default=1, widget=NumberWidget(min=1, max=Formula("cap"))),
+                    Input(
+                        "grid",
+                        INT,
+                        default=1,
+                        widget=NumberWidget(min=-5, max=12, step=4, offset=-3),
+                    ),
+                    Input("double", INT, default=0, automatic=Formula("amount * 2")),
+                    Output("out", INT),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, amount: int, grid: int, cap: int, double: int) -> Mapping[str, object]:
+            received.append((amount, grid, cap, double))
+            return cls.outputs(out=amount)
+
+    schemas = build_schemas([Limited])
+
+    def engine(on_event: object = None) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types([Limited]), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,  # type: ignore[arg-type]
+        )
+
+    async def scenario() -> None:
+        store = HistoryStore(tmp_path / "numeric-history.sqlite")
+        original = Graph({"n": GraphNode("test.limited", {"amount": 7, "grid": 3})})
+        submitted = _submit(original, "corrected")
+        expected = [
+            {"nodeId": "n", "inputId": "amount", "value": 4, "source": "number-outside-limits"},
+            {"nodeId": "n", "inputId": "grid", "value": 1, "source": "number-outside-limits"},
+        ]
+        async with TestClient(TestServer(create_app(engine, schemas, history=store))) as client:
+            response = await client.post("/api/jobs", json=submitted)
+            assert response.status == 202, await response.text()
+            accepted = await response.json()
+            assert accepted["correctedValues"] == expected
+            job = await _finished(client, "corrected")
+            assert job["state"] == "completed", job
+            assert received == [(4, 1, 4, 8)]
+            assert job["correctedValues"] == expected
+            assert job["automaticValues"] == [
+                {"nodeId": "n", "inputId": "cap", "value": 4, "source": "worked-out"},
+                {"nodeId": "n", "inputId": "double", "value": 8, "source": "worked-out"},
+            ]
+            by_ref = await (await client.get(f"/api/jobs/by-ref/{job['jobRef']}")).json()
+            assert by_ref["correctedValues"] == expected
+            assert original.nodes["n"].inputs == {"amount": 7, "grid": 3}  # type: ignore[union-attr]
+            assert submitted == _submit(original, "corrected")
+
+            # Equivalent valid input reuses the effective value's cache entry,
+            # without claiming a correction that did not occur in this run.
+            await client.post(
+                "/api/jobs",
+                json=_submit(Graph({"n": GraphNode("test.limited", {"amount": 4})}), "valid"),
+            )
+            valid = await _finished(client, "valid")
+            assert valid["state"] == "completed", valid
+            assert "correctedValues" not in valid
+            assert received == [(4, 1, 4, 8)]
+
+            await client.post(
+                "/api/jobs",
+                json=_submit(Graph({"n": GraphNode("test.limited", {"amount": -2})}), "lower"),
+            )
+            lower = await _finished(client, "lower")
+            assert lower["state"] == "completed", lower
+            assert received == [(4, 1, 4, 8), (1, 1, 4, 2)]
+            assert lower["correctedValues"] == [{**expected[0], "value": 1}]
+            run_id = job["jobRef"]
+            assert isinstance(run_id, str)
+
+        reopened = HistoryStore(tmp_path / "numeric-history.sqlite")
+        try:
+            record = reopened.get("local", run_id)
+            assert record is not None
+            assert record.to_wire()["correctedValues"] == expected
+        finally:
+            reopened.close()
+
+    run_scenario(scenario())
+
+
+def test_circular_numeric_limit_is_unknown_and_other_limits_settle_first() -> None:
+    received: list[tuple[int, int, int, int]] = []
+
+    class DependentLimits(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                "test.dependent_limits",
+                output_node=True,
+                body=(
+                    Input("amount", INT, default=1, widget=NumberWidget(max=Formula("cap"))),
+                    Input("cap", INT, default=2, automatic=Formula("amount - 1")),
+                    Input("dependent", INT, default=1, widget=NumberWidget(max=Formula("other"))),
+                    Input("other", INT, default=1, widget=NumberWidget(max=4)),
+                    Output("out", INT),
+                ),
+            )
+
+        @classmethod
+        def execute(
+            cls, *, amount: int, cap: int, dependent: int, other: int
+        ) -> Mapping[str, object]:
+            received.append((amount, cap, dependent, other))
+            return cls.outputs(out=amount)
+
+    schemas = build_schemas([DependentLimits])
+
+    def engine(on_event: object = None) -> Engine:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        return Engine(
+            schemas=schemas,
+            registry=registry,
+            worker=InProcessWorker(build_node_types([DependentLimits]), registry),
+            cache=MemoryLRUCache(),
+            on_event=on_event,  # type: ignore[arg-type]
+        )
+
+    async def scenario() -> None:
+        original = Graph(
+            {"n": GraphNode("test.dependent_limits", {"amount": 7, "dependent": 6, "other": 7})}
+        )
+        async with TestClient(TestServer(create_app(engine, schemas))) as client:
+            response = await client.post("/api/jobs", json=_submit(original, "circular"))
+            assert response.status == 202, await response.text()
+            job = await _finished(client, "circular")
+            assert job["state"] == "completed", job
+            assert received == [(7, 6, 4, 4)]
+            assert job["automaticValues"] == [
+                {"nodeId": "n", "inputId": "cap", "value": 6, "source": "worked-out"}
+            ]
+            assert job["correctedValues"] == [
+                {"nodeId": "n", "inputId": name, "value": 4, "source": "number-outside-limits"}
+                for name in ("dependent", "other")
+            ]
+            assert original.nodes["n"].inputs == {  # type: ignore[union-attr]
+                "amount": 7,
+                "dependent": 6,
+                "other": 7,
+            }
 
     run_scenario(scenario())
 

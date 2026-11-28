@@ -1781,7 +1781,7 @@ def _refuse_automatic_outside_run(row: Input, scope: FormulaScope) -> None:
                 )
 
 
-def _names_read(formula: Formula, scope: FormulaScope) -> set[str]:
+def formula_reads(formula: Formula, scope: FormulaScope) -> set[str]:
     """The names a formula reads, itself or through a derived formula."""
     names: set[str] = set()
     pending = [parse_formula(formula.text, scope)]
@@ -1805,13 +1805,13 @@ def _refuse_automatic_circle(rows: tuple[BodyRow | Use, ...], scope: FormulaScop
     reads: dict[str, set[str]] = {}
     for input_id, declared in automatic.items():
         if isinstance(declared, Formula):
-            names = _names_read(declared, scope)
+            names = formula_reads(declared, scope)
         else:
             assert isinstance(declared, Lookup)
             names = set[str]()
             for argument in declared.args:
                 if isinstance(argument, Formula):
-                    names |= _names_read(argument, scope)
+                    names |= formula_reads(argument, scope)
                 else:
                     names.add(argument)
         reads[input_id] = names & automatic.keys()

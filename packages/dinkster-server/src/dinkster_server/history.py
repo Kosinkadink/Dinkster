@@ -121,6 +121,8 @@ class HistoryRecord:
     automatic: tuple[dict[str, object], ...] = field(default=(), kw_only=True)
     """Each automatic field the run used, on its wire: the value and whether it
     was worked out or was the default."""
+    corrected: tuple[dict[str, object], ...] = field(default=(), kw_only=True)
+    """Numeric corrections applied to the run without changing its workflow."""
 
     def to_wire(self) -> dict[str, object]:
         wire: dict[str, object] = {
@@ -151,6 +153,8 @@ class HistoryRecord:
             wire["error"] = self.error
         if self.automatic:
             wire["automaticValues"] = [dict(item) for item in self.automatic]
+        if self.corrected:
+            wire["correctedValues"] = [dict(item) for item in self.corrected]
         if self.thumbnail is not None:
             wire["thumbnail"] = self.thumbnail.to_wire()
         return wire
@@ -216,6 +220,7 @@ def record_from_job(job: Job) -> HistoryRecord:
         skipped=len(job.result.skipped) if job.result is not None else 0,
         node_receipts=tuple(node_receipts),
         automatic=tuple(record.to_wire() for record in job.automatic),
+        corrected=tuple(record.to_wire() for record in job.corrected),
         thumbnail=thumbnail,
         asset_digests=tuple(sorted(references)),
     )
@@ -344,6 +349,10 @@ class HistoryStore:
                 self._conn.execute(
                     "ALTER TABLE history ADD COLUMN automatic TEXT NOT NULL DEFAULT '[]'"
                 )
+            if "corrected" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE history ADD COLUMN corrected TEXT NOT NULL DEFAULT '[]'"
+                )
             if "workflow_name" not in columns:
                 self._conn.execute(
                     "ALTER TABLE history ADD COLUMN workflow_name TEXT NOT NULL DEFAULT ''"
@@ -389,6 +398,10 @@ class HistoryStore:
             if "workflow_name" not in columns:
                 self._accepted_conn.execute(
                     "ALTER TABLE accepted ADD COLUMN workflow_name TEXT NOT NULL DEFAULT ''"
+                )
+            if "corrected" not in columns:
+                self._accepted_conn.execute(
+                    "ALTER TABLE accepted ADD COLUMN corrected TEXT NOT NULL DEFAULT '[]'"
                 )
 
     def close(self) -> None:
@@ -490,8 +503,8 @@ class HistoryStore:
             " priority, submitted,"
             " started, finished, source_document, error, executed, cached,"
             " skipped, attempt, node_receipts, asset_digests, thumbnail, automatic,"
-            " workflow_name)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " workflow_name, corrected)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(run_id) DO NOTHING",
             (
                 record.run_id,
@@ -518,6 +531,7 @@ class HistoryStore:
                 json.dumps(record.thumbnail.to_wire()) if record.thumbnail is not None else None,
                 json.dumps(record.automatic, separators=(",", ":")),
                 record.workflow_name,
+                json.dumps(record.corrected, separators=(",", ":")),
             ),
         )
         return cursor.rowcount > 0
@@ -540,8 +554,8 @@ class HistoryStore:
                 "INSERT INTO accepted"
                 " (run_id, scope, principal, principal_kind, client_id, job_id,"
                 " state, priority, submitted, started, fingerprint,"
-                " source_document, execution_identity, attempt, workflow_name)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " source_document, execution_identity, attempt, workflow_name, corrected)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     job.run_id,
                     job.scope,
@@ -558,6 +572,9 @@ class HistoryStore:
                     execution_identity,
                     job.attempt,
                     job.workflow_name,
+                    json.dumps(
+                        [record.to_wire() for record in job.corrected], separators=(",", ":")
+                    ),
                 ),
             )
 
@@ -631,6 +648,7 @@ class HistoryStore:
                     attempt=row["attempt"],
                     source_document=row["source_document"],
                     workflow_name=row["workflow_name"],
+                    corrected=tuple(json.loads(row["corrected"])),
                     error=error,
                     # A crash may follow sealed result publication but precede
                     # the history commit. Only that exact complete manifest
@@ -820,6 +838,7 @@ def _from_document(document: dict[str, object]) -> HistoryRecord:
         if "thumbnail" in document
         else None,
         automatic=tuple(cast("list[dict[str, object]]", document.get("automaticValues", []))),
+        corrected=tuple(cast("list[dict[str, object]]", document.get("correctedValues", []))),
         asset_digests=_asset_digests(document["assetDigests"])
         if document["assetDigests"] is not None
         else None,
@@ -852,6 +871,7 @@ def _from_row(row: sqlite3.Row) -> HistoryRecord:
         if row["thumbnail"] is not None
         else None,
         automatic=tuple(json.loads(row["automatic"])),
+        corrected=tuple(json.loads(row["corrected"])),
         asset_digests=_asset_digests(json.loads(row["asset_digests"]))
         if row["asset_digests"] is not None
         else None,

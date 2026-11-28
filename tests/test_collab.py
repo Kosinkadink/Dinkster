@@ -588,6 +588,14 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
         document["items"]["pack"]["controllers"] = {input_key: "randomize"}
         document["items"]["first"]["autoSize"] = True
         document["items"]["saved"]["autoSize"] = True
+        document["items"]["first"]["continuedFrom"] = {
+            "itemId": "picture",
+            "inputKey": input_key,
+        }
+        document["items"]["saved"]["continuedFrom"] = {
+            "itemId": "video",
+            "inputKey": input_key,
+        }
         document["runs"] = {"native-run-one": {"card": "first", "items": ["picture", "video"]}}
         try:
             created = await client.post(
@@ -685,6 +693,14 @@ def test_board_cards_keep_separate_inputs_across_session_restart(tmp_path: Path)
                 {"autoSize": 1},
                 {"autoSize": "true"},
                 {"autoSize": {}},
+                {"continuedFrom": None},
+                {"continuedFrom": []},
+                {"continuedFrom": {"itemId": "picture"}},
+                {"continuedFrom": {"itemId": "", "inputKey": input_key}},
+                {"continuedFrom": {"itemId": "Picture", "inputKey": input_key}},
+                {"continuedFrom": {"itemId": "picture", "inputKey": ""}},
+                {"continuedFrom": {"itemId": "picture", "inputKey": 3}},
+                {"continuedFrom": {"itemId": "picture", "inputKey": input_key, "extra": True}},
             ):
                 refused = await client.post(
                     f"/api/sessions/{sid}/ops",
