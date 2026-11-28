@@ -155,26 +155,34 @@ def relative_file(value: object) -> str:
     return value
 
 
+def _windows_file_api() -> Any:
+    import ctypes
+    from ctypes import wintypes
+
+    win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
+    kernel: Any = win_dll("kernel32", use_last_error=True)
+    kernel.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel.CreateFileW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    return kernel
+
+
 def read_document(path: Path) -> dict[str, object]:
     try:
         if os.name == "nt":
             import ctypes
             import msvcrt
-            from ctypes import wintypes
 
-            win_dll = getattr(ctypes, "WinDLL")  # noqa: B009 - Linux stubs omit it
-            kernel: Any = win_dll("kernel32", use_last_error=True)
-            kernel.CreateFileW.argtypes = [
-                wintypes.LPCWSTR,
-                wintypes.DWORD,
-                wintypes.DWORD,
-                wintypes.LPVOID,
-                wintypes.DWORD,
-                wintypes.DWORD,
-                wintypes.HANDLE,
-            ]
-            kernel.CreateFileW.restype = wintypes.HANDLE
-            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel = _windows_file_api()
             # A rename needs DELETE access, including while its new name is readable.
             handle = kernel.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x80, None)
             if handle == ctypes.c_void_p(-1).value:
@@ -280,6 +288,49 @@ def read_environment_identity(root: Path) -> str | None:
     return identity
 
 
+def _windows_replace(source: str, destination: Path) -> None:
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = _windows_file_api()
+    kernel.SetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel.SetFileInformationByHandle.restype = wintypes.BOOL
+    name = str(destination.absolute()).encode("utf-16-le", errors="surrogatepass")
+
+    class RenameInfo(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("RootDirectory", wintypes.HANDLE),
+            ("FileNameLength", wintypes.DWORD),
+            ("FileName", ctypes.c_ubyte * len(name)),
+        ]
+
+    info = RenameInfo()
+    # REPLACE_IF_EXISTS | POSIX_SEMANTICS keeps open readers on the old snapshot.
+    info.Flags = 3
+    info.FileNameLength = len(name)
+    info.FileName[:] = name
+    # DELETE access is required for rename; the flushed temporary file is closed.
+    handle = kernel.CreateFileW(source, 0x10000, 7, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        error = getattr(ctypes, "get_last_error")()  # noqa: B009 - Linux stubs omit it
+        raise getattr(ctypes, "WinError")(error)  # noqa: B009 - Linux stubs omit it
+    try:
+        # FileRenameInfoEx publishes the new name without a delete-pending interval.
+        if not kernel.SetFileInformationByHandle(
+            handle, 22, ctypes.byref(info), ctypes.sizeof(info)
+        ):
+            error = getattr(ctypes, "get_last_error")()  # noqa: B009 - Linux stubs omit it
+            raise getattr(ctypes, "WinError")(error)  # noqa: B009 - Linux stubs omit it
+    finally:
+        kernel.CloseHandle(handle)
+
+
 def atomic_write(path: Path, text: str | bytes) -> None:
     """Flush the new contents before publishing a pointer or journal stage."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +340,10 @@ def atomic_write(path: Path, text: str | bytes) -> None:
             handle.write(text.encode("utf-8") if isinstance(text, str) else text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temporary, path)
+        if os.name == "nt":
+            _windows_replace(temporary, path)
+        else:
+            os.replace(temporary, path)
         if os.name != "nt":
             directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
             try:
