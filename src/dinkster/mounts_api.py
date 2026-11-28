@@ -538,6 +538,7 @@ class MountService:
                             cast(int, result["bytesDone"]),
                             cast(int, result["bytesTotal"]),
                             cast(float, result["elapsed"]),
+                            result["state"] == "waiting",
                         )
                     )
                 if result["state"] == "complete":
@@ -561,7 +562,7 @@ class MountService:
             if pending_only and mount_id not in self.table.pending():
                 return
             loop = asyncio.get_running_loop()
-            announced_files_done = 0
+            announced_progress = (0, False)
 
             def publish_progress(progress: AssetScanProgress) -> None:
                 _log.info(
@@ -575,10 +576,11 @@ class MountService:
                 )
 
                 def announce() -> None:
-                    nonlocal announced_files_done
-                    if progress.files_done == announced_files_done:
+                    nonlocal announced_progress
+                    current = (progress.files_done, progress.waiting_for_run)
+                    if current == announced_progress:
                         return
-                    announced_files_done = progress.files_done
+                    announced_progress = current
                     self.refresh_resolution_store()
                     self.publish(app)
 

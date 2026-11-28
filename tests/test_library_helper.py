@@ -5250,6 +5250,75 @@ def test_helper_scans_share_account_hashes_and_publish_unchanged_worker_rows(
         assert json.loads(outputs[0].read_text("utf-8"))["first.bin"]["missing"] is True
 
 
+@pytest.mark.parametrize("override", (False, True))
+def test_folder_reading_waits_for_all_local_runs_but_download_hashing_does_not(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: bool
+) -> None:
+    from dataclasses import replace
+
+    from dinkster_assets import digest_bytes
+    from dinkster_library.reading import executing_workflow
+
+    from dinkster.model_settings import ModelSettings
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "account"))
+    root = tmp_path / "models"
+    root.mkdir()
+    content = b"background file that must wait for execution"
+    (root / "model.bin").write_bytes(content)
+    download = tmp_path / "download.bin"
+    download.write_bytes(b"download verification is independent")
+    output = tmp_path / "index.json"
+
+    def until(client: LibraryClient, identifier: object, expected: str) -> dict[str, object]:
+        deadline = time.monotonic() + 15
+        progress: dict[str, object] = {}
+        while time.monotonic() < deadline:
+            progress = client.call("index.progress", id=identifier)
+            if progress["state"] == expected:
+                return progress
+            assert progress["state"] != "failed", progress
+            time.sleep(0.02)
+        pytest.fail(f"scan did not reach {expected}: {progress}")
+
+    with (
+        LibraryClient(tmp_path / "library") as client,
+        LibraryClient(tmp_path / "other-library") as peer,
+    ):
+        ModelSettings((), None, library=client).save(ModelSettings.load(client).revision)
+        with executing_workflow():
+            with executing_workflow():
+                result = client.call("index.scan", root=str(root), output=str(output))
+                waiting = until(client, result["id"], "waiting")
+                assert waiting["filesDone"] == waiting["hashed"] == 0
+                assert not output.exists()
+                with pytest.raises(LibraryError) as busy:
+                    client.call("index.scan", root=str(root), output=str(output))
+                assert busy.value.code == "busy"
+                assert client.call("index.hash", path=str(download))["digest"] == digest_bytes(
+                    download.read_bytes()
+                )
+                assert client.call("projects.register", id="while-waiting")["project"] is not None
+            assert client.call("index.progress", id=result["id"])["state"] == "waiting"
+            # Use a different root so this observes execution, not the first scan's root lock.
+            other_root = tmp_path / "other-models"
+            other_root.mkdir()
+            (other_root / "second.bin").write_bytes(b"different model")
+            independent = peer.call(
+                "index.scan", root=str(other_root), output=str(tmp_path / "independent.json")
+            )
+            assert until(peer, independent["id"], "waiting")["filesDone"] == 0
+            if override:
+                settings = ModelSettings.load(client)
+                replace(settings, read_folders_while_running=True).save(settings.revision)
+                assert ModelSettings.load(client).read_folders_while_running
+                complete = until(client, result["id"], "complete")
+        complete = until(client, result["id"], "complete")
+        until(peer, independent["id"], "complete")
+        assert complete["filesDone"] == complete["hashed"] == 1
+        assert json.loads(output.read_text())["model.bin"]["digest"] == digest_bytes(content)
+
+
 def test_helper_scan_wait_keeps_requests_live_and_resumes_committed_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -181,6 +181,7 @@ class ModelSettings:
     download_location: str | None
     library: LibraryClient | None = field(default=None, compare=False, repr=False)
     _shared_revision: int | None = field(default=None, compare=False, repr=False)
+    read_folders_while_running: bool = field(default=False, compare=False)
 
     @staticmethod
     def _shared(library: LibraryClient, **changes: object) -> dict[str, object]:
@@ -213,6 +214,7 @@ class ModelSettings:
                 result = cls(
                     (ModelLocation("models", Path.home() / "Dinkster" / "Models", "readwrite"),),
                     "models",
+                    read_folders_while_running=values.get("readFoldersWhileRunning", False) is True,
                 )
             else:
                 try:
@@ -248,6 +250,7 @@ class ModelSettings:
                             "version": 1,
                             "locations": projected,
                             "downloadLocation": values.get("downloadLocation"),
+                            "readFoldersWhileRunning": values.get("readFoldersWhileRunning", False),
                         }
                     )
                 except (TypeError, ValueError) as exc:
@@ -292,7 +295,7 @@ class ModelSettings:
     @classmethod
     def from_wire(cls, raw: object) -> ModelSettings:
         try:
-            if not isinstance(raw, dict) or set(raw) != {
+            if not isinstance(raw, dict) or set(raw) - {"readFoldersWhileRunning"} != {
                 "version",
                 "downloadLocation",
                 "locations",
@@ -309,6 +312,9 @@ class ModelSettings:
             download_location = data["downloadLocation"]
             if download_location is not None and not isinstance(download_location, str):
                 raise ValueError("expected a default download location id or null")
+            read_while_running = data.get("readFoldersWhileRunning", False)
+            if not isinstance(read_while_running, bool):
+                raise ValueError("readFoldersWhileRunning must be a boolean")
             locations: list[ModelLocation] = []
             for item in cast("list[object]", rows):
                 if not isinstance(item, dict) or set(item) - {
@@ -347,7 +353,9 @@ class ModelSettings:
                         cast("str", kind),
                     )
                 )
-            result = cls(tuple(locations), download_location)
+            result = cls(
+                tuple(locations), download_location, read_folders_while_running=read_while_running
+            )
             mounts = result.mounts(include_absent=True)
             if len({mount.id for mount in mounts}) != len(mounts):
                 raise ValueError("duplicate model location ids")
@@ -366,6 +374,7 @@ class ModelSettings:
         return {
             "version": 1,
             "downloadLocation": self.download_location,
+            **({"readFoldersWhileRunning": True} if self.read_folders_while_running else {}),
             "locations": [
                 {
                     "id": location.id,
@@ -405,6 +414,7 @@ class ModelSettings:
                     "locations": locations,
                     "order": list(locations),
                     "downloadLocation": self.download_location,
+                    "readFoldersWhileRunning": self.read_folders_while_running,
                 },
                 remove=removed,
             )

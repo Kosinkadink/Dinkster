@@ -1328,6 +1328,71 @@ def test_invalid_retired_node_value_is_an_admission_error_not_a_server_error() -
     run_scenario(scenario())
 
 
+@pytest.mark.parametrize("terminal", ("completed", "failed", "cancelled"))
+def test_folder_scan_waits_only_during_http_job_execution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, terminal: str
+) -> None:
+    from dinkster_library import LibraryClient
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path / "home"))
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "model.bin").write_bytes(b"model bytes")
+    output = tmp_path / "index.json"
+
+    async def scenario() -> None:
+        reset_sleeper()
+
+        async def scan_state(helper: LibraryClient, identifier: object, expected: str) -> None:
+            async with asyncio.timeout(10):
+                while True:
+                    result = await asyncio.to_thread(helper.call, "index.progress", id=identifier)
+                    if result["state"] == expected:
+                        return
+                    assert result["state"] != "failed", result
+                    await asyncio.sleep(0.01)
+
+        client = await make_client()
+        with LibraryClient(tmp_path / "library") as helper:
+            try:
+                assert (await client.post("/api/queue/pause")).status == 200
+                nodes = {"n": GraphNode("test.sleeper", {"tag": "x"})}
+                target = "n"
+                if terminal == "failed":
+                    nodes["fail"] = GraphNode("test.boom", {"tag": Link("n", "out")})
+                    target = "fail"
+                response = await client.post("/api/jobs", json=submit_body(Graph(nodes), [target]))
+                assert response.status == 202
+                first = await asyncio.to_thread(
+                    helper.call, "index.scan", root=str(root), output=str(output)
+                )
+                await scan_state(helper, first["id"], "complete")
+                assert (await client.post("/api/queue/resume")).status == 200
+                async with asyncio.timeout(10):
+                    await Sleeper.entered.wait()
+                second = await asyncio.to_thread(
+                    helper.call, "index.scan", root=str(root), output=str(output)
+                )
+                await scan_state(helper, second["id"], "waiting")
+                if terminal == "cancelled":
+                    assert (await client.delete("/api/jobs/c1/j1")).status == 200
+                else:
+                    Sleeper.gate.set()
+                async with asyncio.timeout(10):
+                    while True:
+                        state = (await (await client.get("/api/jobs/c1/j1")).json())["state"]
+                        if state == terminal:
+                            break
+                        await asyncio.sleep(0.01)
+                await scan_state(helper, second["id"], "complete")
+                assert json.loads(output.read_text())["model.bin"]["size"] == len(b"model bytes")
+            finally:
+                Sleeper.gate.set()
+                await client.close()
+
+    run_scenario(scenario())
+
+
 def test_job_lifecycle_over_http() -> None:
     async def scenario() -> None:
         client = await make_client()

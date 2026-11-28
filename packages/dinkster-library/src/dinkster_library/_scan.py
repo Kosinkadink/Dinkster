@@ -24,6 +24,7 @@ from .index_format import (
     IgnoreRules,
     retain_missing_versions,
 )
+from .reading import wait_for_workflows
 
 
 def _rows(path: Path) -> dict[str, dict[str, object]]:
@@ -92,7 +93,7 @@ class Scans:
         with self._lock:
             previous = self._outputs.get(output)
             if previous is not None:
-                if self._jobs[previous]["state"] in ("queued", "scanning"):
+                if self._jobs[previous]["state"] in ("queued", "scanning", "waiting"):
                     raise LibraryError("busy", "a scan is already writing this output")
                 del self._jobs[previous]
             identifier = uuid.uuid4().hex
@@ -125,6 +126,15 @@ class Scans:
                 raise LibraryError("invalid", "unknown scan")
             return dict(self._jobs[identifier])
 
+    def _wait_for_execution(self, state: dict[str, object]) -> None:
+        def report(waiting: bool) -> None:
+            with self._lock:
+                state["state"] = "waiting" if waiting else "scanning"
+
+        wait_for_workflows(report)
+        with self._lock:
+            state["state"] = "scanning"
+
     def _run(
         self,
         state: dict[str, object],
@@ -141,12 +151,15 @@ class Scans:
             locks.mkdir(parents=True, exist_ok=True)
             key = hashlib.sha256(os.path.normcase(str(root)).encode("utf-8")).hexdigest()
             with FileLock(locks / f"{key}.lock"):
-                with self._lock:
-                    state["state"] = "scanning"
+                self._wait_for_execution(state)
                 rules = IgnoreRules(ignore)
                 candidates: list[tuple[Path, str, os.stat_result]] = []
-                paths = sorted(root.rglob("*")) if selected is None else [root / selected]
-                for path in paths:
+                paths = iter(root.rglob("*") if selected is None else [root / selected])
+                while True:
+                    self._wait_for_execution(state)
+                    path = next(paths, None)
+                    if path is None:
+                        break
                     relative = path.relative_to(root).as_posix()
                     if (
                         any(part.startswith(".") for part in Path(relative).parts)
@@ -162,6 +175,7 @@ class Scans:
                         candidates.append((path, relative, path.stat()))
                     except FileNotFoundError:
                         continue
+                self._wait_for_execution(state)
                 shipped = _rows(root / INDEX_NAME)
                 seeds = [_rows(path) for path in [output, *legacy]] + [shipped]
                 writes: dict[str, dict[str, object]] = {}
@@ -199,7 +213,8 @@ class Scans:
                     time.sleep(0.1)
                 last_publish = started
                 files_done = bytes_done = hashed_count = 0
-                for path, relative, metadata in candidates:
+                for path, relative, metadata in sorted(candidates):
+                    self._wait_for_execution(state)
                     try:
                         current = path.stat()
                         if (metadata.st_size, metadata.st_mtime_ns) != (
