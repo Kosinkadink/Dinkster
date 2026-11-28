@@ -962,9 +962,13 @@ def test_host_node_unavailability_is_visible_and_refused_before_queueing() -> No
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("execution_available", [False, True])
+@pytest.mark.parametrize(
+    ("execution_available", "worker_capability"),
+    [(False, True), (True, False), (True, None), (True, True)],
+)
 def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_rows(
     execution_available: bool,
+    worker_capability: bool | None,
 ) -> None:
     class SecretConsumer(Node):
         @classmethod
@@ -1030,6 +1034,7 @@ def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_r
             schemas,
             authenticator=MappingAuthenticator({"alice": alice, "bob": bob, "admin": admin}),
             secret_execution_available=execution_available,
+            secret_worker_capability=lambda node_type, preferred_worker: worker_capability,
         )
         app[STATE_KEY].queue.pause()
         graph = Graph(
@@ -1049,7 +1054,7 @@ def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_r
                     headers={"Authorization": "Bearer " + who},
                 )
 
-            if not execution_available:
+            if not execution_available or worker_capability is False:
                 plain = Graph(
                     nodes={
                         "consumer": GraphNode(
@@ -1080,7 +1085,9 @@ def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_r
                     assert payload["problems"] == [
                         {
                             "code": "secret-channel-unavailable",
-                            "message": "This dependency base does not support secret execution",
+                            "message": "This dependency base does not support secret execution"
+                            if not execution_available
+                            else "This worker does not support secret execution",
                             "nodeId": "consumer",
                             "inputId": "mode.key" if document is graph else "mode.optional_key",
                         }

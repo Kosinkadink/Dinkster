@@ -316,6 +316,10 @@ class InProcessWorker:
         return {}
 
     @property
+    def secret_execution_available(self) -> bool:
+        return True
+
+    @property
     def alive(self) -> bool:
         return True
 

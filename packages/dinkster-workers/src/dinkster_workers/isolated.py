@@ -207,6 +207,10 @@ class IsolatedWorker:
         return self._session.alive
 
     @property
+    def secret_execution_available(self) -> bool | None:
+        return self._session.secret_execution_available
+
+    @property
     def instance_token(self) -> str | None:
         """The child process's lifetime token (hello ``workerInstance``);
         the owner identity its resident envelopes carry. None before
@@ -543,6 +547,10 @@ class GroupMemberWorker:
     @property
     def alive(self) -> bool:
         return self._session.alive
+
+    @property
+    def secret_execution_available(self) -> bool | None:
+        return self._session.secret_execution_available
 
     @property
     def instance_token(self) -> str | None:

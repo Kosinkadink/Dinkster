@@ -11,13 +11,14 @@ import stat
 import subprocess
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Literal, cast
 
 from aiohttp import web
 from cryptography.fernet import Fernet, InvalidToken
 from dinkster_graph import Graph, RegionNode, elaborate_graph
+from dinkster_graph.model import top_level_node_id
 from dinkster_schema import NodeSchema
 from dinkster_schema.model import SECRET_NAME_PATTERN
 
@@ -38,8 +39,15 @@ class SecretStore:
     A root of None is an ephemeral store for embedded servers.
     """
 
-    def __init__(self, root: Path | None = None, *, execution_available: bool = True) -> None:
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        execution_available: bool = True,
+        worker_capability: Callable[[str, str | None], bool | None] | None = None,
+    ) -> None:
         self.execution_available = execution_available
+        self._worker_capability = worker_capability
         self._root = root
         self._memory: dict[tuple[str, str], str] = {}
         self._lock = threading.Lock()
@@ -241,6 +249,7 @@ class SecretStore:
         principal: Principal,
         graph: Graph,
         schemas: Mapping[str, NodeSchema],
+        placement: Mapping[str, str] | None = None,
     ) -> list[dict[str, object]]:
         """Reject missing required credentials without exporting their values.
 
@@ -278,13 +287,22 @@ class SecretStore:
                                 "inputId": spec.id,
                             }
                         )
-                    elif not self.execution_available and (
-                        spec.required or self.status(principal, cast("str", name))["set"]
-                    ):
+                    elif (
+                        not self.execution_available
+                        or (
+                            self._worker_capability is not None
+                            and self._worker_capability(
+                                node.node_type, (placement or {}).get(top_level_node_id(path))
+                            )
+                            is False
+                        )
+                    ) and (spec.required or self.status(principal, cast("str", name))["set"]):
                         problems.append(
                             {
                                 "code": "secret-channel-unavailable",
-                                "message": "This dependency base does not support secret execution",
+                                "message": "This dependency base does not support secret execution"
+                                if not self.execution_available
+                                else "This worker does not support secret execution",
                                 "nodeId": path,
                                 "inputId": spec.id,
                             }

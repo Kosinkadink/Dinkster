@@ -68,6 +68,7 @@ from dinkster_protocol import (
 from dinkster_protocol.lookups import LOOKUP_ERRORS, LookupCallError, lookup_marks_from_wire
 from dinkster_protocol.pack_functions import (
     PackFunctionAnswer,
+    PackFunctionRefused,
     PackFunctionRequest,
     secret_arguments,
 )
@@ -600,6 +601,7 @@ class BoundarySession:
         self._keepalive_task: asyncio.Task[None] | None = None
         self._last_received = 0.0
         self._alive = False
+        self._worker_protocol: int | None = None
         self._instance_token: str | None = None
         self._attention_capabilities: AttentionCapabilityEvidence | None = None
         self._attention_route_token: AttentionRouteToken | None = None
@@ -612,6 +614,16 @@ class BoundarySession:
     @property
     def alive(self) -> bool:
         return self._alive
+
+    @property
+    def secret_execution_available(self) -> bool | None:
+        if self._worker_protocol is None:
+            return None
+        if self._worker_protocol < 15 or not self._trusted_secret_channel:
+            return False
+        if not self._alive or self._rebinding:
+            return None
+        return True
 
     @property
     def instance_token(self) -> str | None:
@@ -841,6 +853,7 @@ class BoundarySession:
         self._resume_grace = resume_grace
         self._closing = False
         self._rebinding = resuming
+        self._worker_protocol = None
         self._reader = reader
         self._writer = writer
         frame = await asyncio.wait_for(read_frame(reader), timeout)
@@ -861,6 +874,7 @@ class BoundarySession:
             raise RuntimeError(f"{self._role} '{self._pack}' failed to start: no hello handshake")
         header, _ = frame
         protocol = header.get("protocol")
+        self._worker_protocol = protocol if type(protocol) is int and protocol > 0 else None
         if type(protocol) is not int or protocol != PROTOCOL_VERSION:
             raise RuntimeError(
                 f"{self._role} '{self._pack}' protocol mismatch: "
@@ -1229,6 +1243,13 @@ class BoundarySession:
         self, request: PackFunctionRequest, on_progress: Callable[[float, str], None]
     ) -> PackFunctionAnswer:
         """Run a node's declared pack function in this worker; cancelling tells the function."""
+        if (
+            secret_arguments(self.schemas.get(request.node_type), request)
+            and self.secret_execution_available is not True
+        ):
+            raise PackFunctionRefused(
+                "secret-channel-unavailable", "This worker does not support secret execution"
+            )
         if not self._alive:
             raise WorkerDied()
         request_id = f"function-{self._function_request_index}"
@@ -1615,6 +1636,17 @@ class BoundarySession:
         invocation: Invocation,
         on_event: OnInvocationEvent | None = None,
     ) -> InvocationResult:
+        if (
+            any(spec.secret for spec in invocation.effective_schema.inputs)
+            and self.secret_execution_available is not True
+        ):
+            return InvocationResult(
+                error=NodeError(
+                    invocation.node_id,
+                    invocation.node_type,
+                    "This worker does not support secret execution",
+                )
+            )
         if not self._alive:
             return self._dead_result(invocation)
         if (
@@ -1933,6 +1965,17 @@ class BoundarySession:
         on_event: OnInvocationEvent | None = None,
     ) -> LazyStatusResult:
         del on_event
+        if (
+            any(spec.secret for spec in invocation.effective_schema.inputs)
+            and self.secret_execution_available is not True
+        ):
+            return LazyStatusResult(
+                error=NodeError(
+                    invocation.node_id,
+                    invocation.node_type,
+                    "This worker does not support secret execution",
+                )
+            )
         if not self._lazy_status:
             return LazyStatusResult(
                 error=NodeError(
@@ -2382,8 +2425,7 @@ class BoundarySession:
         if invocation is None and lazy_pending is not None and not lazy_pending.done():
             invocation = self._lazy_secret_invocations.get(str(invocation_id))
         if (
-            self._trusted_secret_channel
-            and not self._rebinding
+            self.secret_execution_available
             and invocation_id not in self._cancelled_invocations
             and invocation is not None
             and invocation.resolve_secret is not None
@@ -2408,8 +2450,7 @@ class BoundarySession:
         function_pending = self._function_pending.get(str(invocation_id))
         call = self._function_secret_requests.get(str(invocation_id))
         if (
-            self._trusted_secret_channel
-            and not self._rebinding
+            self.secret_execution_available
             and function_pending is not None
             and not function_pending.done()
             and call is not None

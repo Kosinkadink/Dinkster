@@ -1602,8 +1602,9 @@ def _serve(
     scratch_root: Path | None = None
     preview_root: Path | None = None
     previous_preview_roots: tuple[Path, ...] = ()
-    secret_execution_available = args.generation is None
+    secret_base_available = True
     if args.generation is not None:
+        secret_base_available = False
         try:
             record = json.loads((args.generation / "build.json").read_bytes())
             if not isinstance(record, dict) or record.get("format") != "dinkster.generation/1":
@@ -1628,7 +1629,7 @@ def _serve(
                     or base["workerProtocol"] < 1
                 ):
                     raise ValueError("snapshot base identity or worker protocol is invalid")
-                secret_execution_available = base["workerProtocol"] >= 15
+                secret_base_available = base["workerProtocol"] >= 15
         except (OSError, ValueError) as exc:
             parser.error(f"invalid snapshot secret policy: {exc}")
     if args.generation is not None:
@@ -2721,7 +2722,8 @@ def _serve(
                 choice_owners=composition.choice_owners,
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
-                secret_execution_available=secret_execution_available,
+                secret_execution_available=secret_base_available,
+                secret_worker_capability=composer.secret_worker_capability,
                 secrets_root=Path(
                     os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")
                 ).expanduser()

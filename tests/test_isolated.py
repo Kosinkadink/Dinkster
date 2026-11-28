@@ -427,9 +427,11 @@ def test_group_launched_child_keeps_handler_present_and_absent_members_distinct(
     run_scenario(scenario())
 
 
-@pytest.mark.parametrize("worker_protocol", (PROTOCOL_VERSION, PROTOCOL_VERSION + 1))
+@pytest.mark.parametrize(
+    "worker_protocol", (PROTOCOL_VERSION, 14, None, "15", True, PROTOCOL_VERSION + 1)
+)
 def test_separately_shipped_worker_negotiates_protocol(
-    monkeypatch: pytest.MonkeyPatch, worker_protocol: int
+    monkeypatch: pytest.MonkeyPatch, worker_protocol: object
 ) -> None:
     monkeypatch.setattr(host_module, "PROTOCOL_VERSION", worker_protocol)
 
@@ -461,18 +463,23 @@ def test_separately_shipped_worker_negotiates_protocol(
             role="isolated worker",
             pack="own-environment",
             codec=ValueCodec(registry),
+            trusted_secret_channel=True,
         )
         try:
+            assert not session.secret_execution_available
             if worker_protocol == PROTOCOL_VERSION:
                 await session.begin(reader, writer, timeout=2)
                 assert session.alive
+                assert session.secret_execution_available
                 await session.send({"type": "shutdown"}, [])
             else:
                 with pytest.raises(RuntimeError, match="protocol mismatch"):
                     await session.begin(reader, writer, timeout=2)
                 assert not session.alive
+                assert not session.secret_execution_available
         finally:
             await session.close()
+            assert not session.secret_execution_available
             await asyncio.wait_for(host_task, 2)
             server.close()
             await server.wait_closed()
@@ -507,6 +514,10 @@ def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
                     [],
                 )
                 frame = await read_frame(reader)
+                if not trusted:
+                    assert frame is None
+                    peer_done.set_result(None)
+                    return
                 assert frame is not None
                 assert secret not in repr(frame)
                 for index, (invocation_id, input_id, permitted) in enumerate(
@@ -598,7 +609,12 @@ def test_secret_channel_only_serves_declared_inputs_of_live_trusted_invocations(
                     resolve_secret=resolve,
                 )
             )
-            assert result.error is not None and result.error.message == "finished"
+            assert result.error is not None
+            if trusted:
+                assert result.error.message == "finished"
+            else:
+                assert result.error.message == "This worker does not support secret execution"
+                await session.close()
             await peer_done
         finally:
             await session.close()

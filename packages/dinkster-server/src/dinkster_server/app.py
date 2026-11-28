@@ -3621,6 +3621,7 @@ async def handle_submit(request: web.Request) -> web.Response:
                 principal,
                 preflight_graph,
                 execution.schemas,
+                placement,
             )
         except SecretStoreError:
             return web.json_response(
@@ -4826,6 +4827,7 @@ def create_app(
     pack_settings_root: Path | LibraryClient | None = None,
     secrets_root: Path | None = None,
     secret_execution_available: bool = True,
+    secret_worker_capability: Callable[[str, str | None], bool | None] | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
     applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
@@ -5252,7 +5254,12 @@ def create_app(
     app.router.add_post("/api/queue/clear", handle_queue_clear)
     app.router.add_get("/api/events", handle_events)
     add_secret_routes(
-        app, SecretStore(secrets_root, execution_available=secret_execution_available)
+        app,
+        SecretStore(
+            secrets_root,
+            execution_available=secret_execution_available,
+            worker_capability=secret_worker_capability,
+        ),
     )
     add_settings_routes(app, state.settings)
     app.router.add_get("/memory/status", handle_memory_status)
