@@ -467,6 +467,10 @@ class Invocation:
     """Stable server-job identity used to fence resumable boundary work."""
     run_control: RunExecutionContext | None = field(default=None, compare=False, repr=False)
     """Host-local run binding. Worker connections relay calls, never this object."""
+    resolve_secret: Callable[[str], str | None] | None = field(
+        default=None, compare=False, repr=False
+    )
+    """Host-authenticated resolver; never encoded as an input or execution identity."""
 
     def __post_init__(self) -> None:
         if self.job_ref is not None and (type(self.job_ref) is not str or not self.job_ref):
@@ -532,6 +536,7 @@ class ErrorHint:
     code: str
     message: str
     suggestion: str | None = None
+    input_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -654,6 +659,10 @@ class LazyStatusInvocation:
     attention_route_token: AttentionRouteToken | None = None
     extension_snapshot_digest: str | None = None
     asset_folders: AssetFolderContext | None = None
+    resolve_secret: Callable[[str], str | None] | None = field(
+        default=None, compare=False, repr=False
+    )
+    """Host-authenticated resolver, subject to the same worker trust check as execution."""
 
     def __post_init__(self) -> None:
         if self.extension_snapshot_digest is not None and not is_extension_snapshot_digest(

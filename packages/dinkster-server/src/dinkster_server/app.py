@@ -379,6 +379,7 @@ from .preflight import (
 )
 from .queue import TERMINAL_STATES, Job, JobGraphAdmissionError, JobQueue, JobState
 from .redaction import PathRedactor
+from .secrets import SECRETS_KEY, SecretStore, SecretStoreError, add_secret_routes
 from .settings import SETTINGS_CATEGORIES, RuntimeSettings, add_settings_routes
 from .training_sessions import TrainingSessionStore, add_training_routes
 
@@ -3496,7 +3497,10 @@ async def handle_submit(request: web.Request) -> web.Response:
     async with state.job_admission(client_id, job_id):
         existing = state.queue.get(client_id, job_id)
         if existing is not None and existing.state not in TERMINAL_STATES:
-            if existing.fingerprint != fingerprint:
+            if (
+                existing.principal_id != principal.principal_id
+                or existing.fingerprint != fingerprint
+            ):
                 return web.json_response(
                     {
                         "error": "job-key-in-use",
@@ -3610,6 +3614,26 @@ async def handle_submit(request: web.Request) -> web.Response:
             targets = list(compiled_graph.targets)
         else:
             preflight_graph = execution_graph
+        assert execution.schemas is not None
+        try:
+            secret_problems = await asyncio.to_thread(
+                request.app[SECRETS_KEY].preflight,
+                principal,
+                preflight_graph,
+                execution.schemas,
+            )
+        except SecretStoreError:
+            return web.json_response(
+                {"error": "secrets-unavailable", "message": "Cannot check secrets. Try again"},
+                status=503,
+                headers={"Cache-Control": "no-store"},
+            )
+        if secret_problems:
+            return web.json_response(
+                {"error": "secrets-not-ready", "problems": secret_problems},
+                status=409,
+                headers={"Cache-Control": "no-store"},
+            )
         pending = [("", preflight_graph)]
         while pending:
             prefix, level = pending.pop()
@@ -3734,6 +3758,16 @@ async def handle_submit(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "assets-missing", "assets": missing_assets}, status=409
             )
+        secret_store = request.app[SECRETS_KEY]
+
+        def resolve_secret(name: str) -> str | None:
+            return secret_store.resolve(principal, name)[0]
+
+        execution = replace(
+            execution,
+            resolve_secret=resolve_secret,
+            secret_deployment_allowed=principal.is_operator or principal.allows("secrets:use"),
+        )
         try:
             job = state.queue.submit(
                 client_id,
@@ -4790,6 +4824,7 @@ def create_app(
     compat_skips: Mapping[str, Mapping[str, CompatGateDiagnostic]] | None = None,
     settings: RuntimeSettings | None = None,
     pack_settings_root: Path | LibraryClient | None = None,
+    secrets_root: Path | None = None,
     memory_headroom_changed: Callable[[int], None] | None = None,
     residency_memory_budgets: Callable[[], Mapping[str, Mapping[str, int]]] | None = None,
     applied_aimdo_policies: Callable[[], Mapping[str, str]] | None = None,
@@ -5210,6 +5245,7 @@ def create_app(
     app.router.add_post("/api/queue/resume", handle_queue_resume)
     app.router.add_post("/api/queue/clear", handle_queue_clear)
     app.router.add_get("/api/events", handle_events)
+    add_secret_routes(app, SecretStore(secrets_root))
     add_settings_routes(app, state.settings)
     app.router.add_get("/memory/status", handle_memory_status)
     app.router.add_post("/memory/reset-peak", handle_memory_reset_peak)

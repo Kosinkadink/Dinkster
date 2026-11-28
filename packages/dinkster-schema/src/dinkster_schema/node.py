@@ -18,6 +18,18 @@ from .model import NodeSchema
 from .nest import OutputShapeError, flatten_outputs
 
 
+class SecretRejected(Exception):
+    """A service refused the credential supplied to a declared secret input.
+
+    Pass the input id, never the credential or the service's response body.
+    The stored value remains available until the user replaces or removes it.
+    """
+
+    def __init__(self, input_id: str) -> None:
+        super().__init__("The service refused this secret.")
+        self.input_id = input_id
+
+
 class NodeOutputError(ValueError):
     """execute() returned outputs that do not match the declared schema."""
 

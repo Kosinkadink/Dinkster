@@ -36,6 +36,7 @@ from dataclasses import replace
 from multiprocessing.shared_memory import SharedMemory
 from pathlib import Path
 from typing import Any, NamedTuple, TypeAlias, cast
+from uuid import uuid4
 
 from dinkster_assets import (
     AssetError,
@@ -50,6 +51,7 @@ from dinkster_assets import (
 )
 from dinkster_assets.declared import use_produced_output_job
 from dinkster_assets.model import LocalAssetResolver
+from dinkster_assets.privacy import check_secret_data, protect_secret_outputs
 from dinkster_assets.scratch import hold_produced_vault
 from dinkster_memory import (
     DEFAULT_ACCELERATOR_HEADROOM_BYTES,
@@ -75,6 +77,7 @@ from dinkster_protocol import (
     CompositionMode,
     ContributionSurfaceDescriptor,
     ExtensionScope,
+    Invocation,
     InvocationEvent,
     InvocationResult,
     LazyStatusInvocation,
@@ -118,6 +121,7 @@ from dinkster_schema import (
     schema_to_wire,
     validate_name,
 )
+from dinkster_schema.reporting import PROGRESS_EVENT, use_private_output
 from dinkster_values import (
     InvalidRenditionRequest,
     RenditionUnavailable,
@@ -144,6 +148,7 @@ from .boundary import (
     release_segment,
     write_frame,
 )
+from .error_hints import private_node_error
 from .execution import (
     ExecutionContext,
     SourceStagingProvider,
@@ -1137,6 +1142,7 @@ async def serve_connection(
     # or a denial message. requestId is the invocationId, so the parent can
     # correlate leases with cancellations without extra bookkeeping.
     pending_grants: dict[str, asyncio.Future[str | None]] = {}
+    pending_secrets: dict[tuple[str, str], asyncio.Future[tuple[dict[str, Any], list[bytes]]]] = {}
     # Resource references named by results still in flight to the parent:
     # invocationId -> resource ids. Registered before the result frame is
     # sent, then cleared by the parent's validated resultAck or cancellation.
@@ -1467,6 +1473,54 @@ async def serve_connection(
     if schema_reload_task is not None:
         schema_reload_task.add_done_callback(schema_reload_done)
 
+    async def secret_values(invocation: Invocation) -> dict[str, str]:
+        values: dict[str, str] = {}
+        requested: set[str] = set()
+        for spec in invocation.effective_schema.inputs:
+            if not spec.secret:
+                continue
+            named = invocation.inputs.get(spec.id)
+            if named is None:
+                continue
+            name = named.resolve()
+            if type(name) is not str or name in requested:
+                continue
+            requested.add(name)
+            value = await read_secret(invocation.invocation_id, spec.id)
+            if value is not None:
+                values[name] = value
+        return values
+
+    async def read_secret(invocation_id: str, input_id: str) -> str | None:
+        request_id = uuid4().hex
+        key = (invocation_id, request_id)
+        future: asyncio.Future[tuple[dict[str, Any], list[bytes]]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        pending_secrets[key] = future
+        try:
+            await send(
+                {
+                    "type": "resolveSecret",
+                    "invocationId": invocation_id,
+                    "requestId": request_id,
+                    "inputId": input_id,
+                }
+            )
+            reply, payloads = await asyncio.wait_for(future, 30)
+            if reply.get("available") is True:
+                if len(payloads) != 1:
+                    raise BoundaryError("secret reply is malformed")
+                try:
+                    return payloads[0].decode("utf-8")
+                except UnicodeError:
+                    raise BoundaryError("secret reply is malformed") from None
+            if reply.get("available") is not False or payloads:
+                raise BoundaryError("secret reply is malformed")
+            return None
+        finally:
+            pending_secrets.pop(key, None)
+
     async def send_error(invocation_id: str, header: dict[str, Any], message: str) -> None:
         await send(
             {
@@ -1522,17 +1576,26 @@ async def serve_connection(
         # leaked thread after the result is sent go nowhere.
         event_tasks: list[asyncio.Task[None]] = []
         event_window_open = True
+        private = False
         event_loop = asyncio.get_running_loop()
         produced_context = contextlib.ExitStack()
+        private_context = contextlib.ExitStack()
 
         async def send_event(event: InvocationEvent) -> None:
+            data = dict(event.data)
+            if private:
+                if event.name != PROGRESS_EVENT or any(
+                    type(data.get(key)) is not int for key in ("step", "total")
+                ):
+                    return
+                data = {"step": data["step"], "total": data["total"]}
             frame: dict[str, object] = {
                 "type": "invocationEvent",
                 "invocationId": invocation_id,
                 "name": event.name,
-                "data": dict(event.data),
+                "data": data,
             }
-            event_blobs = [event.blob] if event.blob is not None else []
+            event_blobs = [event.blob] if event.blob is not None and not private else []
             with contextlib.suppress(Exception):
                 await send(frame, event_blobs)
 
@@ -1556,6 +1619,11 @@ async def serve_connection(
                 )
             consumed: list[str] = []
             invocation = decode_invocation(codec, header, blobs, consumed)
+            private = any(spec.secret for spec in invocation.effective_schema.inputs)
+            private_context.enter_context(use_private_output(private))
+            credentials = await secret_values(invocation)
+            private_context.enter_context(protect_secret_outputs(credentials.values()))
+            invocation = replace(invocation, resolve_secret=credentials.get if private else None)
             produced_context.enter_context(
                 use_produced_output_job(
                     invocation.job_ref or invocation.invocation_id, invocation.attempt_id
@@ -1711,11 +1779,18 @@ async def serve_connection(
                     await before_invocation(invocation_id)
                 try:
                     result = await selected_worker.invoke(invocation, on_event=on_event)
+                    if private and result.error is not None:
+                        result = InvocationResult(
+                            error=private_node_error(result.error, invocation.effective_schema)
+                        )
+                    check_secret_data(result)
                 except BaseException as error:
                     if after_invocation is not None:
                         await after_invocation(
                             invocation_id,
-                            f"{type(error).__name__}: {error}",
+                            "Secret execution failed"
+                            if private
+                            else f"{type(error).__name__}: {error}",
                         )
                     raise
                 if after_invocation is not None:
@@ -1811,8 +1886,10 @@ async def serve_connection(
                         error=NodeError(
                             invocation.node_id,
                             invocation.node_type,
-                            f"source staging cleanup failed: {exc}",
-                            traceback=traceback.format_exc(),
+                            "Secret execution failed"
+                            if private
+                            else f"source staging cleanup failed: {exc}",
+                            traceback="" if private else traceback.format_exc(),
                         )
                     )
                 else:
@@ -1821,7 +1898,9 @@ async def serve_connection(
                             result.error.node_id,
                             result.error.node_type,
                             result.error.message,
-                            traceback=(
+                            traceback=""
+                            if private
+                            else (
                                 result.error.traceback
                                 + "\nSource staging cleanup also failed:\n"
                                 + traceback.format_exc()
@@ -1866,8 +1945,8 @@ async def serve_connection(
             error = NodeError(
                 node_id=str(header.get("nodeId", "")),
                 node_type=str(header.get("nodeType", "")),
-                message=f"worker host error: {exc}",
-                traceback=primary_traceback + cleanup_traceback,
+                message="Secret execution failed" if private else f"worker host error: {exc}",
+                traceback="" if private else primary_traceback + cleanup_traceback,
             )
             with contextlib.suppress(Exception):
                 await send(
@@ -1884,62 +1963,65 @@ async def serve_connection(
                     }
                 )
         finally:
-            result_receipts.pop(invocation_id, None)
-            produced_context.close()
-            context = run_contexts.pop(invocation_id, None)
-            if context is not None:
-                context.close()
-            inflight_control_refs.pop(invocation_id, None)
-            if result_send_locked:
-                result_transfer_lock.release()
-            # Refuse late calls synchronously before cleanup can suspend. A
-            # disconnect may cancel this task again while to_thread is still
-            # queued, but copied execution contexts must never reopen staging.
-            staging_closed.set()
-            cleanup_task = asyncio.create_task(asyncio.to_thread(close_staging))
             try:
-                await await_task_settlement(cleanup_task)
-            except asyncio.CancelledError:
-                # The invocation remains resource-active until off-loop
-                # cleanup actually settles, even when its caller is gone.
-                if not cleanup_task.cancelled() and isinstance(
-                    (error := cleanup_task.exception()), Exception
-                ):
-                    log.warning(
-                        "source staging cleanup failed after cancellation",
-                        exc_info=error,
-                    )
-            except Exception:
-                # Normal and host-error paths already applied cleanup failure
-                # precedence above; the idempotent final attempt is best effort.
-                pass
-            # Close the event window on every exit so no orphaned send task
-            # outlives its invocation. On the normal path flush_events()
-            # already drained these; on cancellation, cancel rather than
-            # await - a frame is buffered whole before write_frame's only
-            # suspension (drain), so cancelling a send cannot tear a frame.
-            event_window_open = False
-            pending_events = [t for t in event_tasks if not t.done()]
-            for task in pending_events:
-                task.cancel()
-            if pending_events:
-                await asyncio.gather(*pending_events, return_exceptions=True)
-            if reserve_sent:
-                # Idempotent on the parent: releases a held lease, or tells a
-                # still-acquiring one to let go the moment it is granted. Sent
-                # on every exit path, including cancellation mid-grant.
-                with contextlib.suppress(Exception):
-                    await send({"type": "memoryRelease", "requestId": invocation_id})
-            cancellation_events.pop(invocation_id, None)
-            resource_tasks.discard(cast("asyncio.Task[None]", asyncio.current_task()))
-            # Invocations are what change consumer state (a loader admitted a
-            # resident): refresh the parent's snapshot after cleanup. A report
-            # drain may suspend while the parent requests full release.
-            await send_report()
-            tasks.pop(invocation_id, None)
-            terminal_invocations.discard(invocation_id)
-            if resume is not None and cancellation.is_set():
-                finish_resumable_cancellation(invocation_id)
+                result_receipts.pop(invocation_id, None)
+                produced_context.close()
+                context = run_contexts.pop(invocation_id, None)
+                if context is not None:
+                    context.close()
+                inflight_control_refs.pop(invocation_id, None)
+                if result_send_locked:
+                    result_transfer_lock.release()
+                # Refuse late calls synchronously before cleanup can suspend. A
+                # disconnect may cancel this task again while to_thread is still
+                # queued, but copied execution contexts must never reopen staging.
+                staging_closed.set()
+                cleanup_task = asyncio.create_task(asyncio.to_thread(close_staging))
+                try:
+                    await await_task_settlement(cleanup_task)
+                except asyncio.CancelledError:
+                    # The invocation remains resource-active until off-loop
+                    # cleanup actually settles, even when its caller is gone.
+                    if not cleanup_task.cancelled() and isinstance(
+                        (error := cleanup_task.exception()), Exception
+                    ):
+                        log.warning(
+                            "source staging cleanup failed after cancellation",
+                            exc_info=None if private else error,
+                        )
+                except Exception:
+                    # Normal and host-error paths already applied cleanup failure
+                    # precedence above; the idempotent final attempt is best effort.
+                    pass
+                # Close the event window on every exit so no orphaned send task
+                # outlives its invocation. On the normal path flush_events()
+                # already drained these; on cancellation, cancel rather than
+                # await - a frame is buffered whole before write_frame's only
+                # suspension (drain), so cancelling a send cannot tear a frame.
+                event_window_open = False
+                pending_events = [t for t in event_tasks if not t.done()]
+                for task in pending_events:
+                    task.cancel()
+                if pending_events:
+                    await asyncio.gather(*pending_events, return_exceptions=True)
+                if reserve_sent:
+                    # Idempotent on the parent: releases a held lease, or tells a
+                    # still-acquiring one to let go the moment it is granted. Sent
+                    # on every exit path, including cancellation mid-grant.
+                    with contextlib.suppress(Exception):
+                        await send({"type": "memoryRelease", "requestId": invocation_id})
+                cancellation_events.pop(invocation_id, None)
+                resource_tasks.discard(cast("asyncio.Task[None]", asyncio.current_task()))
+                # Invocations are what change consumer state (a loader admitted a
+                # resident): refresh the parent's snapshot after cleanup. A report
+                # drain may suspend while the parent requests full release.
+                await send_report()
+                tasks.pop(invocation_id, None)
+                terminal_invocations.discard(invocation_id)
+                if resume is not None and cancellation.is_set():
+                    finish_resumable_cancellation(invocation_id)
+            finally:
+                private_context.close()
 
     async def run_admission(header: dict[str, Any], blobs: list[bytes]) -> None:
         request_id = str(header.get("requestId", ""))
@@ -1994,7 +2076,9 @@ async def serve_connection(
             "requestId": request_id,
         }
         cancelled = False
+        private = False
         produced_context = contextlib.ExitStack()
+        private_context = contextlib.ExitStack()
         try:
             vault_root = os.environ.get("DINKSTER_ASSET_VAULT")
             if vault_root and os.access(vault_root, os.W_OK):
@@ -2005,6 +2089,10 @@ async def serve_connection(
                 raise ValueError("lazy-protocol-skew: request id mismatch")
             consumed: list[str] = []
             ordinary = decode_invocation(codec, header, blobs, consumed)
+            private = any(spec.secret for spec in ordinary.effective_schema.inputs)
+            private_context.enter_context(use_private_output(private))
+            credentials = await secret_values(ordinary)
+            private_context.enter_context(protect_secret_outputs(credentials.values()))
             if consumed:
                 await send({"type": "shmAck", "segments": consumed})
             raw_hidden = cast("object", header.get("connectedUndemandedInputs"))
@@ -2020,6 +2108,7 @@ async def serve_connection(
                 node_id=ordinary.node_id,
                 node_type=ordinary.node_type,
                 available_inputs=ordinary.inputs,
+                resolve_secret=credentials.get if private else None,
                 connected_undemanded_inputs=tuple(cast("list[str]", raw_hidden)),
                 effective_schema=ordinary.effective_schema,
                 executor=ordinary.executor,
@@ -2038,13 +2127,33 @@ async def serve_connection(
                 raise ValueError("lazy-dispatch-unsupported: alternate body arm")
             result = await cast("LazyStatusWorker", worker).check_lazy_status(invocation)
             if result.error is not None:
+                error = (
+                    private_node_error(result.error, invocation.effective_schema)
+                    if private
+                    else result.error
+                )
+                check_secret_data(error)
                 reply["error"] = {
-                    "nodeId": result.error.node_id,
-                    "nodeType": result.error.node_type,
-                    "message": result.error.message,
-                    "traceback": result.error.traceback,
+                    "nodeId": error.node_id,
+                    "nodeType": error.node_type,
+                    "message": error.message,
+                    "traceback": error.traceback,
+                    "hints": [
+                        {
+                            "code": hint.code,
+                            "message": hint.message,
+                            **(
+                                {"suggestion": hint.suggestion}
+                                if hint.suggestion is not None
+                                else {}
+                            ),
+                            **({"inputId": hint.input_id} if hint.input_id is not None else {}),
+                        }
+                        for hint in error.hints
+                    ],
                 }
             else:
+                check_secret_data(result)
                 requested_inputs: list[str] = []
                 for index, item in enumerate(result.requested_inputs or ()):
                     if not isinstance(item, str):
@@ -2068,24 +2177,29 @@ async def serve_connection(
             reply["error"] = {
                 "nodeId": str(header.get("nodeId", "")),
                 "nodeType": str(header.get("nodeType", "")),
-                "message": f"lazy-protocol-malformed: {exc}",
-                "traceback": traceback.format_exc(),
+                "message": "Secret execution failed"
+                if private
+                else f"lazy-protocol-malformed: {exc}",
+                "traceback": "" if private else traceback.format_exc(),
             }
         finally:
-            produced_context.close()
-            if not cancelled:
-                try:
-                    await send(reply)
-                except Exception:  # noqa: BLE001 - the parent must observe terminal failure
-                    # This is the sole terminal frame for the request. If it
-                    # cannot be serialized or sent, end the conversation so
-                    # the parent's read loop fails and drains its pending
-                    # lazy-status future instead of awaiting it forever.
-                    log.exception("failed to send terminal lazy-status reply")
-                    writer.close()
-                    with contextlib.suppress(Exception):
-                        await writer.wait_closed()
-            tasks.pop(request_id, None)
+            try:
+                produced_context.close()
+                if not cancelled:
+                    try:
+                        await send(reply)
+                    except Exception:  # noqa: BLE001 - the parent must observe terminal failure
+                        # This is the sole terminal frame for the request. If it
+                        # cannot be serialized or sent, end the conversation so
+                        # the parent's read loop fails and drains its pending
+                        # lazy-status future instead of awaiting it forever.
+                        log.exception("failed to send terminal lazy-status reply")
+                        writer.close()
+                        with contextlib.suppress(Exception):
+                            await writer.wait_closed()
+                tasks.pop(request_id, None)
+            finally:
+                private_context.close()
 
     async def run_asset_query(header: dict[str, Any]) -> None:
         request_id = str(header.get("requestId", ""))
@@ -2982,7 +3096,12 @@ async def serve_connection(
                 function_task = track_resource_task(
                     asyncio.create_task(
                         run_pack_function(
-                            header, schemas, send, function_cancelled, asset=call_asset
+                            header,
+                            schemas,
+                            send,
+                            function_cancelled,
+                            asset=call_asset,
+                            resolve_secret=read_secret,
                         )
                     )
                 )
@@ -3041,6 +3160,11 @@ async def serve_connection(
                 tasks[invocation_id] = track_resource_task(
                     asyncio.create_task(run_invocation(header, blobs, cancellation))
                 )
+            elif kind == "secretResult":
+                key = (str(header.get("invocationId")), str(header.get("requestId")))
+                future = pending_secrets.get(key)
+                if future is not None and not future.done():
+                    future.set_result((header, blobs))
             elif kind == "runControlResult":
                 invocation_id = header.get("invocationId")
                 if type(invocation_id) is not str:

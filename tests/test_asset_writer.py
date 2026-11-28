@@ -27,6 +27,7 @@ from dinkster_assets import (
     MOUNT_TYPE,
     AssetError,
     AssetRef,
+    AssetVault,
     AssetWriter,
     IndexedAssetResolver,
     LocalAssetLibrary,
@@ -38,6 +39,7 @@ from dinkster_assets import (
     register_mount_type,
     register_save_target_type,
 )
+from dinkster_assets.privacy import protect_secret_outputs
 from dinkster_protocol import AssetFolderContext
 from dinkster_values import TypeRegistry
 from dinkster_values.asset_folders import use_asset_folders
@@ -519,6 +521,55 @@ def test_save_bytes_rejects_hardlinked_writer_lock(tmp_path: Path) -> None:
         writer.save_bytes({"mount": "out", "prefix": "probe"}, b"payload", suffix=".bin")
     assert outside.read_bytes() == b""
     assert not (root / "probe_00001.bin").exists()
+
+
+@pytest.mark.parametrize("destination", ["mount", "vault", "vault-exclusive"])
+def test_secret_guard_refuses_content_before_managed_file_write(
+    tmp_path: Path, destination: str
+) -> None:
+    secret = "synthetic-private-service-key"
+    root = tmp_path / "output"
+    root.mkdir()
+    writer = AssetWriter(MountSnapshotWriter(one_mount_snapshot(tmp_path, root)))
+    vault = AssetVault(tmp_path / "vault")
+
+    class ChunkedSource(io.BytesIO):
+        def read(self, size: int | None = -1) -> bytes:
+            return super().read(min(size, 7) if size is not None and size >= 0 else 7)
+
+    def save(data: bytes) -> None:
+        if destination == "mount":
+            writer.save_stream(
+                SaveTarget("out", "result"), ChunkedSource(data), suffix=".bin", limit=len(data)
+            )
+        else:
+            with vault.writer(digest_bytes(data)) as ingest:
+                for offset in range(0, len(data), 7):
+                    ingest.write(data[offset : offset + 7])
+                if destination == "vault-exclusive":
+                    ingest.commit_with_result()
+                else:
+                    ingest.commit()
+
+    content = b"before-" + secret.encode() + b"-after"
+    with protect_secret_outputs([secret]):
+        with pytest.raises(AssetError, match="Secret-bearing content cannot be saved"):
+            save(content)
+        assert not [p for p in root.rglob("*") if p.is_file() and p.name.endswith(".bin")]
+        assert vault.digests() == []
+        assert not list(root.glob(".dinkster-save-*"))
+        assert not list(vault.root.glob(".ingest-*"))
+        safe = b"ordinary generated result with no credential"
+        save(safe)
+    save(content)
+    if destination != "mount":
+        safe_path = vault.resolve(digest_bytes(safe))
+        content_path = vault.resolve(digest_bytes(content))
+        assert safe_path is not None and safe_path.read_bytes() == safe
+        assert content_path is not None and content_path.read_bytes() == content
+    else:
+        assert (root / "result_00001.bin").read_bytes() == safe
+        assert (root / "result_00002.bin").read_bytes() == content
 
 
 def test_save_stream_rewinds_and_publishes_exact_bounded_bytes(tmp_path: Path) -> None:

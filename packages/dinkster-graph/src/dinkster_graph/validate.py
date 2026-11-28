@@ -30,6 +30,7 @@ from dinkster_schema import (
     plan_type_equivalence,
     resolved_type_expr,
 )
+from dinkster_schema.model import SECRET_NAME_PATTERN
 from dinkster_values import (
     ASSET_TYPE,
     CORE_BOOLEAN,
@@ -1382,6 +1383,18 @@ def _validate_graph_node(
                     input_id,
                 )
             )
+            continue
+        if spec.secret:
+            if not isinstance(value, str) or SECRET_NAME_PATTERN.fullmatch(value) is None:
+                diags.append(
+                    Diagnostic(
+                        "error",
+                        "invalid-secret-name",
+                        "A secret input accepts only a credential name, never a wire or value",
+                        where,
+                        input_id,
+                    )
+                )
             continue
         _check_input_value(
             level,

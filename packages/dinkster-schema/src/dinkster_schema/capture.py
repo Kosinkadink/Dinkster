@@ -19,9 +19,10 @@ with no handler of their own reach the log at WARNING+ through
 handlers is captured only as whatever text those handlers write to
 stdout/stderr.
 
-Capture adds forwarding, it never swallows: every captured write still
-reaches the original stream, and logging handlers keep printing to the
-terminal. Attribution rides the same contextvars as reporting itself, so
+Ordinary capture adds forwarding without swallowing terminal output.
+Private invocations instead suppress text before terminal writes or event
+forwarding; numeric progress remains visible without its text. Attribution
+rides the same contextvars as reporting itself, so
 concurrent invocations (each in its own context) capture independently and
 code outside any invocation is untouched.
 
@@ -54,7 +55,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Literal, TextIO, cast
 
-from .reporting import capture_suppressed, report_log, suppress_capture
+from .reporting import (
+    capture_suppressed,
+    private_output_active,
+    report_log,
+    suppress_capture,
+    use_private_output,
+)
 
 MAX_CAPTURED_RECORDS = 200
 """Per-invocation cap on forwarded records; the cap being hit is announced
@@ -119,25 +126,28 @@ class CaptureBudget:
 
 
 @contextmanager
-def use_capture_budget() -> Generator[None]:
+def use_capture_budget(*, private: bool = False) -> Generator[None]:
     """Scope one invocation's capture. Worker-side machinery only, installed
     alongside ``use_reporter``; on exit, unterminated stream tails are
     flushed as records (the reporter is still open - this context must exit
-    before the reporter does)."""
-    budget = CaptureBudget()
-    token = _budget.set(budget)
-    try:
-        yield
-    finally:
-        _budget.reset(token)
+    before the reporter does). Private invocations suppress node-controlled
+    text, previews and diagnostics before terminal writes or event delivery.
+    Numeric progress remains visible without its free-form text."""
+    with use_private_output(private):
+        budget = CaptureBudget()
+        token = _budget.set(budget)
         try:
-            for stream, line in budget.drain_partials():
-                if line.strip():
-                    _forward(budget, _STREAM_LEVELS[stream], line, {"origin": stream})
-        except Exception:
-            # Flushing tails is chatter: it must never fail the invocation
-            # that is ending.
-            pass
+            yield
+        finally:
+            _budget.reset(token)
+            try:
+                for stream, line in budget.drain_partials():
+                    if line.strip():
+                        _forward(budget, _STREAM_LEVELS[stream], line, {"origin": stream})
+            except Exception:
+                # Flushing tails is chatter: it must never fail the invocation
+                # that is ending.
+                pass
 
 
 def _forward(budget: CaptureBudget, level: str, message: str, data: Mapping[str, object]) -> None:
@@ -185,9 +195,9 @@ _STREAM_LEVELS = {"stdout": "info", "stderr": "warning"}
 
 
 class _CaptureStream:
-    """Pass-through stream proxy: every write reaches the original stream
-    first, then complete non-blank lines are forwarded as log records when
-    an invocation is being captured."""
+    """Stream proxy: private writes are discarded before reaching a terminal.
+    Ordinary writes pass through, then complete non-blank lines are forwarded
+    as log records when an invocation is being captured."""
 
     def __init__(self, original: TextIO, name: str) -> None:
         self._original = original
@@ -200,6 +210,8 @@ class _CaptureStream:
         self._lock = threading.RLock()
 
     def write(self, text: str) -> int:
+        if private_output_active():
+            return len(text)
         if capture_suppressed():
             return self._original.write(text)
         budget = _budget.get()
@@ -232,8 +244,8 @@ class _CaptureStream:
 
 def install_stream_capture() -> None:
     """Wrap ``sys.stdout``/``sys.stderr`` in capture proxies. Idempotent and
-    process-global; worker hosts call it at startup. Everything written
-    still reaches the real streams."""
+    process-global; worker hosts call it at startup. Ordinary writes still
+    reach the real streams; private invocation text does not."""
     if sys.stdout is not None and not isinstance(sys.stdout, _CaptureStream):
         sys.stdout = cast("TextIO", _CaptureStream(sys.stdout, "stdout"))
     if sys.stderr is not None and not isinstance(sys.stderr, _CaptureStream):

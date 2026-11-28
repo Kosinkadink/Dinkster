@@ -1116,6 +1116,7 @@ version = "0.0.18"
 source = { editable = "packages/dinkster-server" }
 dependencies = [
     { name = "aiohttp" },
+    { name = "cryptography" },
     { name = "dinkster-assets" },
     { name = "dinkster-caches" },
     { name = "dinkster-engine" },
@@ -1136,6 +1137,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
+    { name = "cryptography", specifier = ">=44" },
     { name = "dinkster-assets", editable = "packages/dinkster-assets" },
     { name = "dinkster-caches", editable = "packages/dinkster-caches" },
     { name = "dinkster-engine", editable = "packages/dinkster-engine" },

@@ -13,6 +13,7 @@ import contextlib
 import json
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import Final
 
 from aiohttp import web
@@ -31,6 +32,7 @@ from dinkster_schema.body import MAX_PACK_FUNCTION_TIME_LIMIT
 
 from .auth import principal_for
 from .call_budget import CallBudget
+from .secrets import SECRETS_KEY
 
 PackFunctionDispatch = Callable[
     [PackFunctionRequest, Callable[[float, str], None]], Awaitable[PackFunctionAnswer]
@@ -80,6 +82,13 @@ def install_pack_functions(
         except LookupCallError:
             return _refusal(429, "paused", PAUSED_MESSAGE)
         try:
+            store = request.app.get(SECRETS_KEY)
+            if store is not None:
+
+                def get_credential(name: str) -> str | None:
+                    return store.resolve(principal, name)[0]
+
+                call_request = replace(call_request, resolve_secret=get_credential)
             return await _stream(request, call_request, dispatch)
         finally:
             release()

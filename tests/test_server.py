@@ -25,7 +25,7 @@ from dinkster_engine import (
     EventListener,
     ExecutionRuntime,
 )
-from dinkster_graph import Graph, GraphNode, Link, graph_to_wire, validate
+from dinkster_graph import Graph, GraphNode, Link, RegionNode, RegionOutput, graph_to_wire, validate
 from dinkster_memory import (
     ConsumerItem,
     MemoryGovernor,
@@ -40,10 +40,12 @@ from dinkster_protocol import (
     PackSettingsSchema,
 )
 from dinkster_schema import (
+    Choice,
     Input,
     MappingSource,
     Node,
     NodeSchema,
+    Option,
     Output,
     ReplacementCase,
     ReplacementRule,
@@ -956,6 +958,440 @@ def test_host_node_unavailability_is_visible_and_refused_before_queueing() -> No
             assert rejected["message"] == reason
             assert rejected["problems"][0]["nodeId"] == "s"
             assert app[STATE_KEY].queue.get("c1", "j1") is None
+
+    run_scenario(scenario())
+
+
+def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_rows() -> None:
+    class SecretConsumer(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.secret_consumer",
+                body=(
+                    Choice(
+                        "mode",
+                        options=(
+                            Option(
+                                "required",
+                                rows=(
+                                    Input(
+                                        "key", STRING, default="service_key", secret=True, pin=False
+                                    ),
+                                ),
+                            ),
+                            Option(
+                                "optional",
+                                rows=(
+                                    Input(
+                                        "optional_key",
+                                        STRING,
+                                        default="service_key",
+                                        secret=True,
+                                        pin=False,
+                                        required=False,
+                                    ),
+                                ),
+                            ),
+                            Option("plain"),
+                        ),
+                        default="required",
+                    ),
+                    Output("out", STRING),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, **kwargs: object) -> Mapping[str, object]:
+            return cls.outputs(out="done")
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = build_schemas([SecretConsumer])
+
+        def engine(on_event: EventListener) -> Engine:
+            return Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker(build_node_types([SecretConsumer]), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        alice = Principal("alice", {"local": frozenset({"jobs:submit", "secrets:use"})})
+        bob = Principal("bob", {"local": frozenset({"jobs:submit"})})
+        admin = Principal("admin", {"local": frozenset({"settings:write"})})
+        app = create_app(
+            engine,
+            schemas,
+            authenticator=MappingAuthenticator({"alice": alice, "bob": bob, "admin": admin}),
+        )
+        app[STATE_KEY].queue.pause()
+        graph = Graph(
+            nodes={
+                "consumer": GraphNode("test.secret_consumer", slot_variants={"mode": "required"})
+            }
+        )
+        async with TestClient(TestServer(app)) as client:
+            sequence = 0
+
+            async def submit(who: str, document: Graph = graph) -> aiohttp.ClientResponse:
+                nonlocal sequence
+                sequence += 1
+                return await client.post(
+                    "/api/jobs",
+                    json=submit_body(document, list(document.nodes), jobId=str(sequence)),
+                    headers={"Authorization": "Bearer " + who},
+                )
+
+            missing = await submit("alice")
+            assert missing.status == 409
+            assert missing.headers["Cache-Control"] == "no-store"
+            absent = await missing.json()
+            assert absent == {
+                "error": "secrets-not-ready",
+                "problems": [
+                    {
+                        "code": "secret-not-set",
+                        "message": "A required secret is not set",
+                        "nodeId": "consumer",
+                        "inputId": "mode.key",
+                        "action": "Set secret",
+                        "name": "service_key",
+                    }
+                ],
+            }
+            assert app[STATE_KEY].queue.get("c1", "1") is None
+            for mode in ("optional", "plain"):
+                response = await submit(
+                    "alice",
+                    Graph(
+                        nodes={
+                            "consumer": GraphNode(
+                                "test.secret_consumer", slot_variants={"mode": mode}
+                            )
+                        }
+                    ),
+                )
+                assert response.status == 202, await response.text()
+            response = await client.put(
+                "/api/secrets/service_key",
+                json={"scope": "deployment", "value": "deployment-credential-not-public"},
+                headers={"Authorization": "Bearer admin"},
+            )
+            assert response.status == 200
+            denied = await submit("bob")
+            assert denied.status == 409
+            assert await denied.json() == absent
+            accepted = await submit("alice")
+            assert accepted.status == 202, await accepted.text()
+            duplicate_from_bob = await client.post(
+                "/api/jobs",
+                json=submit_body(graph, list(graph.nodes), jobId=str(sequence)),
+                headers={"Authorization": "Bearer bob"},
+            )
+            assert duplicate_from_bob.status == 409
+            assert (await duplicate_from_bob.json())["error"] == "job-key-in-use"
+            response = await client.put(
+                "/api/secrets/service_key",
+                json={"value": "bob-private-credential"},
+                headers={"Authorization": "Bearer bob"},
+            )
+            assert response.status == 200
+            accepted = await submit("bob")
+            assert accepted.status == 202, await accepted.text()
+            response = await client.delete(
+                "/api/secrets/service_key", headers={"Authorization": "Bearer bob"}
+            )
+            assert response.status == 200
+            nested = Graph(
+                nodes={
+                    "group": RegionNode(
+                        kind="map",
+                        body=graph,
+                        ports={"index": TypeExpr.concrete("INT")},
+                        inputs={"index": [1]},
+                        element_ports=("index",),
+                        outputs={"result": RegionOutput(Link("consumer", "out"))},
+                    )
+                }
+            )
+            missing = await submit("bob", nested)
+            assert missing.status == 409
+            assert (await missing.json())["problems"][0]["nodeId"] == "group/consumer"
+            invalid = await submit(
+                "alice",
+                Graph(
+                    nodes={
+                        "consumer": GraphNode(
+                            "test.secret_consumer",
+                            {"mode.key": Link("consumer", "out")},
+                            slot_variants={"mode": "required"},
+                        )
+                    }
+                ),
+            )
+            assert invalid.status == 409
+            assert (await invalid.json())["problems"][0]["code"] == "invalid-secret-name"
+
+    run_scenario(scenario())
+
+
+def test_secret_accounts_deployment_fallback_and_private_persistence(tmp_path: Path) -> None:
+    from dinkster_server.secrets import SECRETS_KEY
+
+    alice = Principal("alice", {"local": frozenset({"secrets:use"})})
+    bob = Principal("bob", {"local": frozenset()})
+    administrator = Principal("administrator", {"local": frozenset({"settings:write"})})
+    agent = Principal(
+        "alice", {"local": frozenset({"secrets:use", "settings:write"})}, kind="agent"
+    )
+    authenticator = MappingAuthenticator(
+        {"alice": alice, "bob": bob, "admin": administrator, "agent": agent}
+    )
+    root = tmp_path / "secrets"
+    deployment_value = "test-only-deployment-credential-271"
+    personal_value = "test-only-personal-credential-683"
+    bob_value = "test-only-bob-credential-919"
+    unset = {"name": "service_key", "set": False, "source": None, "fallback": False}
+
+    async def scenario() -> None:
+        app = create_app(make_engine, SCHEMAS, authenticator=authenticator, secrets_root=root)
+        async with TestClient(TestServer(app)) as client:
+
+            async def call(
+                method: str, who: str, path: str = "/api/secrets/service_key", **kwargs: Any
+            ) -> dict[str, Any]:
+                response = await client.request(
+                    method, path, headers={"Authorization": "Bearer " + who}, **kwargs
+                )
+                text = await response.text()
+                assert deployment_value not in text and personal_value not in text
+                assert bob_value not in text
+                assert response.headers.get("Cache-Control") == "no-store"
+                assert response.status == 200, text
+                body = await response.json()
+                assert body.pop("canManageDeployment") is (who == "admin")
+                return body
+
+            assert (await client.get("/api/secrets/service_key")).status == 401
+            for who in ("bob", "agent", "admin"):
+                assert await call("GET", who) == unset
+            await call("PUT", "admin", json={"scope": "deployment", "value": deployment_value})
+            # Existence is indistinguishable from absence without deployment permission.
+            assert await call("GET", "bob") == unset
+            assert await call("GET", "alice") == {
+                "name": "service_key",
+                "set": True,
+                "source": "deployment",
+                "fallback": False,
+            }
+            for who in ("alice", "bob", "agent"):
+                response = await client.put(
+                    "/api/secrets/service_key",
+                    json={"scope": "deployment", "value": "must-not-replace"},
+                    headers={"Authorization": "Bearer " + who},
+                )
+                assert response.status == 403
+            assert await call("PUT", "alice", json={"value": personal_value}) == {
+                "name": "service_key",
+                "set": True,
+                "source": "account",
+                "fallback": True,
+            }
+            await call("PUT", "bob", json={"value": bob_value})
+            await call("PUT", "alice", "/api/secrets/alice_only", json={"value": personal_value})
+            await call("PUT", "bob", "/api/secrets/bob_only", json={"value": bob_value})
+            await call(
+                "PUT",
+                "admin",
+                "/api/secrets/deployment_only",
+                json={"scope": "deployment", "value": deployment_value},
+            )
+            assert await call("GET", "alice", "/api/secrets") == {
+                "names": ["alice_only", "deployment_only", "service_key"]
+            }
+            assert await call("GET", "bob", "/api/secrets") == {
+                "names": ["bob_only", "service_key"]
+            }
+            assert await call("GET", "admin", "/api/secrets") == {
+                "names": ["deployment_only", "service_key"]
+            }
+            store = app[SECRETS_KEY]
+            assert store.resolve(alice, "service_key") == (personal_value, "account", True)
+            assert store.resolve(bob, "service_key") == (bob_value, "account", False)
+            for invalid in ({"value": ""}, {"value": 3}, {"value": "x", "scope": []}):
+                response = await client.put(
+                    "/api/secrets/service_key",
+                    json=invalid,
+                    headers={"Authorization": "Bearer alice"},
+                )
+                assert response.status == 400
+                assert store.resolve(alice, "service_key")[0] == personal_value
+            response = await client.put(
+                "/api/secrets/service_key",
+                json={"value": "must-not-replace"},
+                headers={"Authorization": "Bearer agent"},
+            )
+            assert response.status == 403
+
+        restarted = create_app(make_engine, SCHEMAS, authenticator=authenticator, secrets_root=root)
+        async with TestClient(TestServer(restarted)) as client:
+            store = restarted[SECRETS_KEY]
+            assert store.resolve(alice, "service_key") == (personal_value, "account", True)
+            assert store.resolve(bob, "service_key") == (bob_value, "account", False)
+            response = await client.delete(
+                "/api/secrets/service_key", headers={"Authorization": "Bearer alice"}
+            )
+            assert response.status == 200
+            assert await response.json() == {
+                "name": "service_key",
+                "set": True,
+                "source": "deployment",
+                "fallback": False,
+                "canManageDeployment": False,
+            }
+            assert store.resolve(alice, "service_key")[0] == deployment_value
+            assert store.resolve(bob, "service_key")[0] == bob_value
+            response = await client.delete(
+                "/api/secrets/service_key?scope=deployment",
+                headers={"Authorization": "Bearer admin"},
+            )
+            assert response.status == 200
+            assert store.resolve(alice, "service_key") == (None, None, False)
+            assert store.resolve(bob, "service_key")[0] == bob_value
+
+    run_scenario(scenario())
+    for path in root.iterdir():
+        if path.is_file():
+            data = path.read_bytes()
+            assert deployment_value.encode() not in data
+            assert personal_value.encode() not in data
+            assert bob_value.encode() not in data
+    if os.name != "nt":
+        assert root.stat().st_mode & 0o777 == 0o700
+        assert (root / "master.key").stat().st_mode & 0o777 == 0o600
+        assert (root / "credentials.sqlite3").stat().st_mode & 0o777 == 0o600
+
+
+def test_secret_results_are_reused_only_within_the_paying_account() -> None:
+    calls: list[str] = []
+    keys = {
+        "alice-first-key": "alice result",
+        "alice-rotated-key": "new alice result",
+        "bob-key": "bob result",
+        "deployment-key": "deployment result",
+    }
+
+    class PaidResult(Node):
+        @classmethod
+        def define_schema(cls) -> NodeSchema:
+            return NodeSchema(
+                node_type="test.paid_result",
+                body=(
+                    Input("key", STRING, required=False, secret=True, pin=False, default="service"),
+                    Output("out", STRING),
+                ),
+            )
+
+        @classmethod
+        def execute(cls, *, key: str | None = None) -> Mapping[str, object]:
+            result = keys[key] if key is not None else "anonymous result"
+            calls.append(result)
+            return cls.outputs(out=result)
+
+    async def scenario() -> None:
+        registry = TypeRegistry()
+        register_core_types(registry)
+        schemas = build_schemas([PaidResult, Echo])
+
+        def engine(on_event: EventListener) -> Engine:
+            return Engine(
+                schemas=schemas,
+                registry=registry,
+                worker=InProcessWorker(build_node_types([PaidResult, Echo]), registry),
+                cache=MemoryLRUCache(),
+                on_event=on_event,
+            )
+
+        authenticator = MappingAuthenticator(
+            {
+                name: Principal(name, {"local": frozenset({"jobs:submit", "jobs:read"})})
+                for name in ("alice", "bob")
+            }
+            | {
+                "authorized": Principal(
+                    "shared", {"local": frozenset({"jobs:submit", "jobs:read", "secrets:use"})}
+                ),
+                "limited": Principal("shared", {"local": frozenset({"jobs:submit", "jobs:read"})}),
+                "admin": Principal("admin", {"local": frozenset({"settings:write"})}),
+            }
+        )
+        app = create_app(engine, schemas, authenticator=authenticator)
+        graph = Graph(
+            nodes={
+                "paid": GraphNode("test.paid_result"),
+                "public": GraphNode("test.echo", {"text": "shared public result"}),
+            }
+        )
+        async with TestClient(TestServer(app)) as client:
+            sequence = 0
+
+            async def save(who: str, value: str) -> None:
+                response = await client.put(
+                    "/api/secrets/service",
+                    json={"value": value},
+                    headers={"Authorization": "Bearer " + who},
+                )
+                assert response.status == 200
+
+            async def run(who: str, cached: tuple[str, ...], expected: str) -> None:
+                nonlocal sequence
+                sequence += 1
+                job_id = str(sequence)
+                headers = {"Authorization": "Bearer " + who}
+                response = await client.post(
+                    "/api/jobs",
+                    json=submit_body(graph, ["paid", "public"], jobId=job_id),
+                    headers=headers,
+                )
+                assert response.status == 202, await response.text()
+                job = app[STATE_KEY].queue.get("c1", job_id)
+                assert job is not None
+                await wait_for_state(job, "completed", "failed")
+                response = await client.get(f"/api/jobs/c1/{job_id}", headers=headers)
+                status = await response.json()
+                assert status["state"] == "completed", status
+                assert job.result is not None
+                assert sorted(job.result.cached) == sorted(cached)
+                assert job.result.outputs["paid"]["out"].resolve() == expected
+                assert job.result.outputs["public"]["out"].resolve() == "shared public result"
+                assert not any(value in json.dumps(status) for value in keys)
+
+            await save("alice", "alice-first-key")
+            await save("bob", "bob-key")
+            await run("alice", (), "alice result")
+            await run("alice", ("paid", "public"), "alice result")
+            await save("alice", "alice-rotated-key")
+            await run("alice", ("paid", "public"), "alice result")
+            await run("bob", ("public",), "bob result")
+            await run("bob", ("paid", "public"), "bob result")
+            response = await client.put(
+                "/api/secrets/service",
+                json={"scope": "deployment", "value": "deployment-key"},
+                headers={"Authorization": "Bearer admin"},
+            )
+            assert response.status == 200
+            await run("authorized", ("public",), "deployment result")
+            response = await client.get(
+                "/api/secrets/service", headers={"Authorization": "Bearer limited"}
+            )
+            assert (await response.json())["set"] is False
+            await run("limited", ("public",), "anonymous result")
+            await run("limited", ("paid", "public"), "anonymous result")
+            await run("authorized", ("paid", "public"), "deployment result")
+            assert calls == ["alice result", "bob result", "deployment result", "anonymous result"]
 
     run_scenario(scenario())
 

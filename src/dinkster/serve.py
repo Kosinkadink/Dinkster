@@ -2692,6 +2692,10 @@ def _serve(
                 choice_owners=composition.choice_owners,
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
+                secrets_root=Path(
+                    os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")
+                ).expanduser()
+                / "node-secrets",
                 pack_settings_root=(
                     library_helper
                     if library_helper is not None

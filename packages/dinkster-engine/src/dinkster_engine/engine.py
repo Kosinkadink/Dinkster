@@ -291,6 +291,14 @@ class ExecutionRuntime:
     owner_alive: Callable[[str], bool] | None = None
     cache_hit_valid: Callable[[Mapping[str, Value]], bool] | None = None
     """Host-side validator for external references in a cached result."""
+    secret_account_id: str | None = None
+    """Host-authenticated account partition for secret-node results, never a credential."""
+    secret_deployment_allowed: bool = False
+    """Deployment authority at admission, so limited callers cannot reuse its results."""
+    resolve_secret: Callable[[str], str | None] | None = field(
+        default=None, compare=False, repr=False
+    )
+    """Account-scoped authority pinned at admission, separate from graph and cache data."""
     extension_snapshot: ExtensionSnapshot = ExtensionSnapshot()
     sampler_registry_snapshot: SamplerRegistrySnapshot = SamplerRegistrySnapshot()
     graph_compiler_registry: GraphCompilerRegistrySnapshot = GraphCompilerRegistrySnapshot()
@@ -1206,6 +1214,18 @@ class Engine:
         runtime = self._runtime()
         # Unpublished direct results must not satisfy a server's publication contract.
         parts: list[bytes] = [signature.encode("utf-8")]
+        if any(spec.secret for spec in schema.inputs):
+            # Coalescing uses the same key as caching, so neither can cross
+            # accounts. Without a host binding, never reuse a secret result.
+            parts.extend(
+                (
+                    b"secret-account",
+                    runtime.secret_account_id.encode("utf-8")
+                    if runtime.secret_account_id is not None
+                    else uuid.uuid4().bytes,
+                    b"deployment-allowed" if runtime.secret_deployment_allowed else b"account-only",
+                )
+            )
         if runtime.require_image_document_publication:
             parts.append(b"required-image-documents")
         if runtime.publish_image_documents is not None:
@@ -1782,6 +1802,7 @@ class Engine:
                                     name for name in lazy_links if name not in demanded
                                 ),
                                 effective_schema=schema,
+                                resolve_secret=self._runtime().resolve_secret,
                                 asset_folders=self._runtime().asset_folders,
                                 extension_snapshot_digest=(
                                     self._runtime().extension_snapshot_digest
@@ -2084,6 +2105,7 @@ class Engine:
                 node_type=node.node_type,
                 inputs=inputs,
                 effective_schema=schema,
+                resolve_secret=self._runtime().resolve_secret,
                 job_ref=run_id,
                 attempt_id=self._run_attempts[run_id],
                 connected_undemanded_inputs=connected_undemanded_inputs or (),

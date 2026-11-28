@@ -366,6 +366,8 @@ class InvocationFailure:
             _text(hint.message, "error hint message")
             if hint.suggestion is not None:
                 _text(hint.suggestion, "error hint suggestion")
+            if hint.input_id is not None:
+                _text(hint.input_id, "error hint input id")
 
 
 @dataclass(frozen=True)

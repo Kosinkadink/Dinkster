@@ -38,6 +38,7 @@ from .integrity import (
     verification_record_for_publication,
 )
 from .model import AssetResolution
+from .privacy import SecretOutputStream
 from .scratch import hold_produced_asset_read
 
 _HEX = frozenset("0123456789abcdef")
@@ -139,15 +140,17 @@ class VaultWriter:
             raise
         self._hasher = new_hasher()
         self._committed = False
+        self._secret_guard = SecretOutputStream()
 
     def write(self, chunk: bytes) -> None:
-        self._handle.write(chunk)
+        self._handle.write(self._secret_guard.write(chunk))
         self._hasher.update(chunk)
 
     def commit(self, *, before_publish: Callable[[int], None] | None = None) -> Path:
         """Verify and land the file; raises AssetError (and rolls back) if
         the bytes do not hash to the expected digest. A failed metadata
         callback raises AssetPublicationError, not a failed-source error."""
+        self._handle.write(self._secret_guard.finish())
         self._handle.flush()
         verified_stat = os.fstat(self._handle.fileno())
         self._handle.close()
@@ -194,6 +197,7 @@ class VaultWriter:
         creator. The existing ``commit()`` contract remains unchanged for
         callers that do not need creation identity.
         """
+        self._handle.write(self._secret_guard.finish())
         self._handle.flush()
         verified_stat = os.fstat(self._handle.fileno())
         self._handle.close()
@@ -241,6 +245,7 @@ class VaultWriter:
         _persist_verification_record(self._target, record)
 
     def _discard(self) -> None:
+        self._secret_guard = SecretOutputStream()
         with contextlib.suppress(OSError):
             self._handle.close()
         with contextlib.suppress(OSError):
