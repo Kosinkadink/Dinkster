@@ -41,6 +41,7 @@ from .model import (
     NumberWidget,
     Output,
     OutputKnownValue,
+    OutputListCount,
     OutputProbeSpec,
     OutputRepresents,
     SaveTargetWidget,
@@ -921,6 +922,8 @@ def _input_entry_to_wire(spec: Input, wire_version: int) -> dict[str, object]:
         entry["acceptsStream"] = True
     if spec.accepts_list:
         entry["acceptsList"] = True
+    if spec.list_count_of is not None:
+        entry["listCountOf"] = spec.list_count_of
     if spec.source_filename is not None:
         entry["sourceFilename"] = {
             "kind": spec.source_filename.kind,
@@ -960,6 +963,14 @@ def _output_entry_to_wire(out: Output, wire_version: int) -> dict[str, object]:
         if out.known_value.limits:
             known_value["limits"] = dict(out.known_value.limits)
         out_entry["knownValue"] = known_value
+    if out.list_count is not None:
+        if isinstance(out.list_count, OutputListCount):
+            count: dict[str, object] = {"input": out.list_count.input}
+            if out.list_count.group is not None:
+                count["group"] = out.list_count.group
+            out_entry["listCount"] = count
+        else:
+            out_entry["listCount"] = _formula_to_wire(out.list_count)
     return out_entry
 
 
@@ -1182,6 +1193,8 @@ def schema_signature(schema: NodeSchema) -> str:
         entry.pop("preview", None)
         entry.pop("represents", None)
         entry.pop("knownValue", None)
+        entry.pop("listCount", None)
+        entry.pop("listCountOf", None)
 
     def dynamic_prompts_identity(widget: object) -> object | None:
         if not isinstance(widget, dict):
@@ -1502,6 +1515,7 @@ _INPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "acceptsStream",
     "acceptsList",
     "sourceFilename",
+    "listCountOf",
 }
 _OUTPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "id",
@@ -1513,6 +1527,7 @@ _OUTPUT_FIELDS = _MEDIA_POLICY_FIELDS | {
     "preview",
     "represents",
     "knownValue",
+    "listCount",
 }
 
 
@@ -1565,6 +1580,9 @@ def _input_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Input:
         accepts_storage=_expect_bool(entry.get("acceptsStorage", False), "input.acceptsStorage"),
         accepts_stream=_expect_bool(entry.get("acceptsStream", False), "input.acceptsStream"),
         accepts_list=_expect_bool(entry.get("acceptsList", False), "input.acceptsList"),
+        list_count_of=None
+        if "listCountOf" not in entry
+        else _expect_str(entry["listCountOf"], "input.listCountOf"),
         **_media_policy_from_wire(entry, wire_version),
     )
 
@@ -1617,6 +1635,23 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
             input=_expect_str(data.get("input"), "output.knownValue.input"),
             limits=limits,
         )
+    list_count: int | OutputListCount | body.Formula | None = None
+    if "listCount" in entry:
+        raw_count = entry["listCount"]
+        if type(raw_count) is int:
+            list_count = raw_count
+        else:
+            data = _expect_object(raw_count, "output.listCount")
+            if "formula" in data:
+                list_count = cast("body.Formula", _formula_from_wire(data, "output.listCount"))
+            else:
+                _reject_unknown_fields(data, frozenset({"input", "group"}), "output.listCount")
+                list_count = OutputListCount(
+                    input=_expect_str(data.get("input"), "output.listCount.input"),
+                    group=None
+                    if "group" not in data
+                    else _expect_str(data["group"], "output.listCount.group"),
+                )
     return Output(
         id=_expect_str(entry.get("id"), "output.id"),
         type=expr,
@@ -1625,6 +1660,7 @@ def _output_entry_from_wire(entry: dict[str, Any], wire_version: int) -> Output:
         preview=preview,
         represents=represents,
         known_value=known_value,
+        list_count=list_count,
         label=_text_or_formula_from_wire(entry.get("label", ""), "output.label"),
         visible=True
         if "visible" not in entry
