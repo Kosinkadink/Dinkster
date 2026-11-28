@@ -26,8 +26,8 @@ from .body import (
 )
 from .flatten import (
     NOT_A_FILE,
-    AutomaticSite,
     Flattened,
+    InputSite,
     SiteEvaluator,
     flatten_body,
     site_evaluator,
@@ -135,11 +135,13 @@ class _InUse(Mapping[str, object]):
 class _WorkingOut:
     def __init__(
         self,
-        sites: Mapping[str, AutomaticSite],
+        sites: Mapping[str, InputSite],
         answers: Mapping[LookupCall, LookupAnswer],
     ) -> None:
         self.evaluator = SiteEvaluator(
-            lambda _formula, _site: UNKNOWN, lambda _name, _site: UNKNOWN
+            lambda _formula, _site: UNKNOWN,
+            lambda _name, _site: UNKNOWN,
+            lambda _formula, _site: set(),
         )
         self.sites = sites
         self.answers = answers
@@ -168,7 +170,7 @@ class _WorkingOut:
         self.outcomes[flat_id] = outcome
         return outcome
 
-    def formula(self, formula: Formula, site: AutomaticSite) -> object:
+    def formula(self, formula: Formula, site: InputSite) -> object:
         """A formula's outcome at ``site``. One the checker refuses here (the
         load check passed it, so it reads a row it cannot) is ``_REFUSED``:
         the field takes its default and the run goes on."""
@@ -177,7 +179,7 @@ class _WorkingOut:
         except FormulaRefused:
             return _REFUSED
 
-    def argument(self, argument: str | Formula, site: AutomaticSite) -> object:
+    def argument(self, argument: str | Formula, site: InputSite) -> object:
         """A lookup argument's value. A file field gives its picked file's
         wire form, which the lookup's worker binds to an ``AssetRef`` as for
         any lookup call; with no file picked it is unknown."""
@@ -188,7 +190,7 @@ class _WorkingOut:
             argument = Formula(argument)
         return self.formula(argument, site)
 
-    def work_out(self, site: AutomaticSite) -> AutomaticOutcome:
+    def work_out(self, site: InputSite) -> AutomaticOutcome:
         spec = site.input
         default = spec.default
         automatic = spec.automatic
