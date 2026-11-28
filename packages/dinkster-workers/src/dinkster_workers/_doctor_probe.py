@@ -130,6 +130,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
         "cuda_initialized_on_import": False,
         "nodes": [],
         "schema_errors": [],
+        "numeric_limit_problems": [],
         "duplicate_node_types": [],
         "nodes_entry_problem": None,
         "schema_atoms": [],
@@ -177,6 +178,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
     report["cuda_initialized_on_import"] = _cuda_initialized()
 
     from dinkster_schema import Node, NodeSchema, claim_covers, validate_replacement_references
+    from dinkster_schema.body import numeric_limit_diagnostics
     from dinkster_schema.model import schema_type_atoms
 
     if not isinstance(nodes_obj, (list, tuple)):
@@ -217,6 +219,7 @@ def probe(manifest_path: str, *, part: str | None = None) -> dict[str, Any]:
             seen_types[schema.node_type] = cls_name
             pack_schemas[schema.node_type] = schema
         atoms |= schema_type_atoms(schema)
+        report["numeric_limit_problems"].extend(numeric_limit_diagnostics(schema))
         report["nodes"].append(
             {
                 "node_type": schema.node_type,

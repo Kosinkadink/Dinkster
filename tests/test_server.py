@@ -40,10 +40,12 @@ from dinkster_protocol import (
     PackSettingsSchema,
 )
 from dinkster_schema import (
+    Formula,
     Input,
     MappingSource,
     Node,
     NodeSchema,
+    NumberWidget,
     Output,
     ReplacementCase,
     ReplacementRule,
@@ -301,6 +303,41 @@ class MappingAuthenticator:
 
     async def authenticate(self, token: str) -> Principal | None:
         return self.principals.get(token)
+
+
+def test_numeric_limit_diagnostics_name_cycles_without_rejecting_the_catalog() -> None:
+    async def scenario() -> None:
+        integer = TypeExpr.concrete("INT")
+        limited = NodeSchema(
+            node_type="test.limited",
+            body=(
+                Input("amount", integer, pin=False, widget=NumberWidget(max=Formula("cap"))),
+                Input("cap", integer, pin=False, default=0, automatic=Formula("amount - 1")),
+                Input("other", integer, pin=False, widget=NumberWidget(min=Formula("floor"))),
+                Input("floor", integer, pin=False),
+            ),
+        )
+        client = TestClient(
+            TestServer(create_app(make_engine, {**SCHEMAS, "test.limited": limited}))
+        )
+        await client.start_server()
+        try:
+            response = await client.get("/api/diagnostics")
+            assert response.status == 200
+            problems = (await response.json())["numericLimitProblems"]
+            assert len(problems) == 1
+            assert problems[0]["nodeType"] == "test.limited"
+            assert problems[0]["field"] == "amount"
+            assert problems[0]["limit"] == "max"
+            assert problems[0]["cycle"] == ["amount", "cap", "amount"]
+            assert "treated as unknown" in problems[0]["message"]
+            catalog = await client.get("/api/nodes")
+            assert catalog.status == 200
+            assert "test.limited" in (await catalog.json())["nodes"]
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_authentication_failures_are_structured_and_never_echo_tokens() -> None:

@@ -449,6 +449,132 @@ def test_schema_problems_and_duplicates_are_errors(tmp_path: Path) -> None:
     assert "entry.not-node-classes" in found
 
 
+@pytest.mark.parametrize(
+    ("body", "derived", "cycle"),
+    [
+        (
+            'Input("amount", INT, pin=False, widget=NumberWidget(max=Formula("amount - 1"))),',
+            "{}",
+            ("amount", "amount"),
+        ),
+        (
+            'Input("amount", INT, pin=False, widget=NumberWidget(max=Formula("cap"))),'
+            'Input("cap", INT, pin=False, default=0, automatic=Formula("middle - 1")),'
+            'Input("middle", INT, pin=False, default=0, automatic=Formula("bound")),',
+            '{"bound": Formula("amount + 2")}',
+            ("amount", "cap", "middle", "amount"),
+        ),
+        (
+            'Input("amount", INT, pin=False, widget=NumberWidget(max=Formula("cap"))),'
+            'Input("cap", INT, pin=False, default=0, automatic=Formula("other + 3")),'
+            'Input("other", INT, pin=False),',
+            "{}",
+            (),
+        ),
+        (
+            'Input("amount", INT, pin=False, widget=NumberWidget(max=Formula('
+            "'8 if linked(amount) else 10'))),",
+            "{}",
+            (),
+        ),
+        (
+            'Group("rows", keys=Numbered("m"), member=('
+            'Input("amount", INT, pin=False, widget=NumberWidget(max=Formula("cap"))),'
+            'Input("cap", INT, pin=False, default=0, automatic=Formula("amount - 1")),)),',
+            "{}",
+            ("rows.<member>.amount", "rows.<member>.cap", "rows.<member>.amount"),
+        ),
+        (
+            'Input("amount", INT, pin=False, widget=NumberWidget(max=Formula("cap"))),'
+            'Input("cap", INT, pin=False),'
+            'Group("rows", keys=Numbered("m"), member=(Input("amount", INT, pin=False, default=0,'
+            'automatic=Formula("cap - 1")),)),',
+            "{}",
+            (),
+        ),
+        (
+            'Input("amount", INT, pin=False, '
+            'widget=NumberWidget(max=Lookup(limit, args=("cap",)))),'
+            'Input("cap", INT, pin=False, default=0, automatic=Formula("amount - 1")),',
+            "{}",
+            ("amount", "cap", "amount"),
+        ),
+        (
+            'Choice("mode", shared=(Input("amount", INT, pin=False),), options=('
+            'Option("on", rows=(Use("amount", widget=NumberWidget(max=Formula("cap"))),'
+            'Input("cap", INT, pin=False, default=0, automatic=Formula("amount - 1")))),)),',
+            "{}",
+            ("mode.amount", "mode.cap", "mode.amount"),
+        ),
+        (
+            'Choice("mode", shared=(Input("amount", INT, pin=False),), options=('
+            'Option("on", rows=(Use("amount", widget=NumberWidget(max=Formula("cap"))),)), '
+            'Option("off", rows=(Input("cap", INT, pin=False, default=0, '
+            'automatic=Formula("amount - 1")),)))),',
+            "{}",
+            (),
+        ),
+        (
+            'Choice("mode", shared=(Input("amount", INT, pin=False),'
+            'Input("cap", INT, pin=False)), options=('
+            'Option("on", rows=(Use("amount", widget=NumberWidget(max=Formula("cap"))),)), '
+            'Option("off", rows=(Use("cap", widget=NumberWidget(max=Formula("amount"))),)))),',
+            "{}",
+            (),
+        ),
+    ],
+    ids=[
+        "direct",
+        "automatic-derived-chain",
+        "acyclic",
+        "link-fact",
+        "member",
+        "shadow",
+        "lookup",
+        "use",
+        "exclusive-fields",
+        "exclusive-overrides",
+    ],
+)
+def test_circular_numeric_limits_are_advisory(
+    tmp_path: Path, body: str, derived: str, cycle: tuple[str, ...]
+) -> None:
+    source = f"""
+from dinkster_api.v1 import (
+    Choice, Formula, Group, Input, Lookup, Node, NodeSchema, Numbered,
+    NumberWidget, Option, TypeExpr, Use, lookup,
+)
+INT = TypeExpr.concrete("INT")
+@lookup
+def limit(value: int) -> int:
+    return value
+class Limited(Node):
+    @classmethod
+    def define_schema(cls):
+        return NodeSchema(node_type="healthy.limited", body=({body}), derived={derived})
+NODES = [Limited]
+"""
+    manifest = write_pack(
+        tmp_path / "limits",
+        HEALTHY_MANIFEST.replace('types = "healthy_nodes:register_types"\n', ""),
+        "healthy_nodes",
+        source,
+    )
+    report = diagnose(manifest)
+    assert report.ok, render_text(report)
+    assert report.node_types == ("healthy.limited",)
+    findings = [item for item in report.findings if item.code == "schema.circular-numeric-limit"]
+    if cycle:
+        assert len(findings) == 1, render_text(report)
+        assert findings[0].severity == "warning"
+        assert "healthy.limited" in findings[0].message
+        assert "max depends on the value it limits" in findings[0].message
+        assert " -> ".join(cycle) in findings[0].message
+        assert findings[0].fix
+    else:
+        assert not findings, render_text(report)
+
+
 def test_schema_exception_detail_is_bounded_and_redacts_environment(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

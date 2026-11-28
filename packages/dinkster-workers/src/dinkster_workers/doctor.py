@@ -1074,6 +1074,16 @@ def _probe_findings(report: dict[str, Any], manifest: PackManifest) -> list[Find
                 "message above is the contract being violated",
             )
         )
+    for problem in report["numeric_limit_problems"]:
+        findings.append(
+            Finding(
+                severity="warning",
+                code="schema.circular-numeric-limit",
+                message=problem["message"],
+                fix="make the limit independent of the value it limits, including "
+                "through automatic fields and derived formulas",
+            )
+        )
     for problem in report["replacement_errors"]:
         findings.append(
             Finding(

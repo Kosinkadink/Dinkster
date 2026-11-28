@@ -309,6 +309,7 @@ from dinkster_schema import (
     validate_remote_choice_authority,
     validate_replacement_references,
 )
+from dinkster_schema.body import numeric_limit_diagnostics
 from dinkster_schema.model import schema_type_atoms
 from dinkster_schema.reporting import ImageDocumentArtifact
 from dinkster_values import (
@@ -2761,6 +2762,11 @@ async def handle_diagnostics(request: web.Request) -> web.Response:
         {
             "replacementProblems": [
                 problem_to_wire(problem) for problem in state.replacement_problems
+            ],
+            "numericLimitProblems": [
+                problem
+                for schema in state.schemas.values()
+                for problem in numeric_limit_diagnostics(schema)
             ],
             "compatSkips": [
                 {
