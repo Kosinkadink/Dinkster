@@ -824,6 +824,7 @@ def prepare_retained_libraries(
     return {
         "engine_release": identity,
         "engine_version": manifest["version"],
+        "worker_protocol": manifest["workerProtocol"],
         "constraints": selected,
         "source_kind": "source",
     }
