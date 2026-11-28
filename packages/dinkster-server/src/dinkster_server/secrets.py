@@ -284,10 +284,7 @@ class SecretStore:
                         problems.append(
                             {
                                 "code": "secret-channel-unavailable",
-                                "message": (
-                                    "This base uses worker protocol 14 "
-                                    "and does not support secret execution"
-                                ),
+                                "message": "This dependency base does not support secret execution",
                                 "nodeId": path,
                                 "inputId": spec.id,
                             }

@@ -88,13 +88,14 @@ def install_pack_functions(
             try:
                 positions = secret_arguments(schemas().get(call_request.node_type), call_request)
             except PackFunctionRefused:
-                return _refusal(400, "invalid", FAILED_MESSAGE)
-            if positions:
-                return _refusal(
-                    409,
-                    "secret-channel-unavailable",
-                    "This base uses worker protocol 14 and does not support secret execution",
-                )
+                pass
+            else:
+                if positions:
+                    return _refusal(
+                        409,
+                        "secret-channel-unavailable",
+                        "This dependency base does not support secret execution",
+                    )
         try:
             release = budget.admit(principal.principal_id)
         except LookupCallError:

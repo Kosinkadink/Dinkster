@@ -1080,10 +1080,7 @@ def test_queue_requires_the_submitters_secret_but_allows_optional_and_inactive_r
                     assert payload["problems"] == [
                         {
                             "code": "secret-channel-unavailable",
-                            "message": (
-                                "This base uses worker protocol 14 "
-                                "and does not support secret execution"
-                            ),
+                            "message": "This dependency base does not support secret execution",
                             "nodeId": "consumer",
                             "inputId": "mode.key" if document is graph else "mode.optional_key",
                         }

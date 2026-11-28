@@ -1602,6 +1602,35 @@ def _serve(
     scratch_root: Path | None = None
     preview_root: Path | None = None
     previous_preview_roots: tuple[Path, ...] = ()
+    secret_execution_available = args.generation is None
+    if args.generation is not None:
+        try:
+            record = json.loads((args.generation / "build.json").read_bytes())
+            if not isinstance(record, dict) or record.get("format") != "dinkster.generation/1":
+                raise ValueError("unsupported snapshot format")
+            base_path = args.generation / "base-manifest.json"
+            if base_path.exists() or base_path.is_symlink():
+                base_data = base_path.read_bytes()
+                files = record.get("files", {})
+                if (
+                    base_path.is_symlink()
+                    or not isinstance(files, dict)
+                    or "sha256:" + hashlib.sha256(base_data).hexdigest()
+                    != files.get("base-manifest.json")
+                ):
+                    raise ValueError("snapshot base manifest differs from its inventory")
+                base = json.loads(base_data)
+                if not isinstance(base, dict) or (
+                    base.get("format") != "dinkster.base/1"
+                    or base.get("variant") != record.get("variant")
+                    or base.get("id") != record.get("base")
+                    or type(base.get("workerProtocol")) is not int
+                    or base["workerProtocol"] < 1
+                ):
+                    raise ValueError("snapshot base identity or worker protocol is invalid")
+                secret_execution_available = base["workerProtocol"] >= 15
+        except (OSError, ValueError) as exc:
+            parser.error(f"invalid snapshot secret policy: {exc}")
     if args.generation is not None:
         from dinkster_supervisor.environment_listener import (
             read_response_compression,
@@ -2692,13 +2721,7 @@ def _serve(
                 choice_owners=composition.choice_owners,
                 compat_skips=composition.compat_skips,
                 settings=runtime_settings,
-                secret_execution_available=(
-                    args.generation is None
-                    or json.loads(
-                        (args.generation / "base-manifest.json").read_text(encoding="utf-8")
-                    )["workerProtocol"]
-                    >= 15
-                ),
+                secret_execution_available=secret_execution_available,
                 secrets_root=Path(
                     os.environ.get("DINKSTER_HOME", Path.home() / ".dinkster")
                 ).expanduser()

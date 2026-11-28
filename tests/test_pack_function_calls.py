@@ -558,10 +558,7 @@ def test_secret_calls_use_the_pressers_account_without_reporting_or_returning_ke
                         assert lines == [
                             {
                                 "error": "secret-channel-unavailable",
-                                "message": (
-                                    "This base uses worker protocol 14 "
-                                    "and does not support secret execution"
-                                ),
+                                "message": "This dependency base does not support secret execution",
                             }
                         ]
                         assert len(seen) == before
