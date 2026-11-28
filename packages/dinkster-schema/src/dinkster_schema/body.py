@@ -1786,8 +1786,9 @@ def _names_read(formula: Formula, scope: FormulaScope) -> set[str]:
     pending = [parse_formula(formula.text, scope)]
     while pending:
         compiled = pending.pop()
+        functions = {node.func for node in ast.walk(compiled.tree) if isinstance(node, ast.Call)}
         for node in ast.walk(compiled.tree):
-            if isinstance(node, (ast.Name, ast.Attribute)):
+            if isinstance(node, (ast.Name, ast.Attribute)) and node not in functions:
                 names.add(ast.unparse(node))
         pending.extend(compiled.derived.values())
     return names

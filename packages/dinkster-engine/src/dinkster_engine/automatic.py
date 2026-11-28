@@ -81,7 +81,7 @@ class _Node:
     answers: dict[LookupCall, LookupAnswer]
     outcomes: dict[str, AutomaticOutcome]
 
-    def work_out(self) -> None:
+    def work_out(self, file_facts: Mapping[str, Mapping[str, object]] | None) -> None:
         self.outcomes = work_out_automatic(
             self.schema.body,
             self.node.inputs,
@@ -92,6 +92,7 @@ class _Node:
             linked=is_link,
             literal=literal_value,
             answers=self.answers,
+            file_facts=file_facts,
         )
 
 
@@ -151,6 +152,7 @@ async def resolve_automatic(
     schemas: Mapping[str, NodeSchema],
     *,
     call_lookup: CallLookup | None = None,
+    file_facts: Mapping[str, Mapping[str, object]] | None = None,
     time_limit: float = LOOKUP_TIME_LIMIT,
     clock: Callable[[], float] = time.monotonic,
 ) -> tuple[Graph, tuple[AutomaticRecord, ...]]:
@@ -158,13 +160,14 @@ async def resolve_automatic(
 
     The lookups of the run are called side by side; the step waits for them
     at most ``time_limit`` seconds in all, and a lookup without an answer by
-    then gives the field's default."""
+    then gives the field's default. ``file_facts`` contains already-authorized
+    decoded answers keyed by digest; this step never reads file bytes."""
     nodes = _nodes(graph, schemas, targets, "")
     if not nodes:
         return graph, ()
     deadline = clock() + time_limit
     for node in nodes:
-        node.work_out()
+        node.work_out(file_facts)
     for round_number in range(MAX_LOOKUP_ROUNDS):
         pending = [
             (node, outcome.call)
@@ -194,7 +197,7 @@ async def resolve_automatic(
                 else Failed("lookup-timeout")
             )
         for node in nodes:
-            node.work_out()
+            node.work_out(file_facts)
     values: dict[str, dict[str, object]] = {}
     records: list[AutomaticRecord] = []
     for node in nodes:

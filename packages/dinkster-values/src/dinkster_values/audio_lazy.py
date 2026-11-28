@@ -97,31 +97,35 @@ def _decoded_frame_count(frames: Iterable[Any], rate: int, channels: int) -> int
 
 
 def probe_audio(source: bytes | AudioSource, stream_index: int = 0) -> dict[str, object]:
+    with BytesIO(source) if isinstance(source, bytes) else source.open() as handle:
+        return probe_audio_handle(handle, stream_index)
+
+
+def probe_audio_handle(handle: BinaryIO, stream_index: int = 0) -> dict[str, object]:
+    """Read source facts from a borrowed, already-verified descriptor."""
     import av
 
     integer(stream_index, "audio stream index")
-    with BytesIO(source) if isinstance(source, bytes) else source.open() as handle:
-        prefix = handle.read(14)
-        if prefix[8:] == b"\x93NUMPY":
-            rate = struct.unpack("<Q", prefix[:8])[0]
-            shape, _, _ = pcm_asset_header(handle)
-            integer(rate, "audio sample_rate", 1)
-            if stream_index:
-                raise ValueError("PCM assets have one audio stream")
-            return {
-                "sample_rate": rate,
-                "channels": shape[1],
-                "layout": channel_layout(shape[1]),
-                "duration": shape[2] / rate,
-                "codec": "pcm_npy",
-                "frames": shape[2],
-                "batch": shape[0],
-                "stream_index": 0,
-            }
-    with (
-        BytesIO(source) if isinstance(source, bytes) else source.open() as handle,
-        closing(av.open(handle, mode="r")) as container,
-    ):
+    handle.seek(0)
+    prefix = handle.read(14)
+    if prefix[8:] == b"\x93NUMPY":
+        rate = struct.unpack("<Q", prefix[:8])[0]
+        shape, _, _ = pcm_asset_header(handle)
+        integer(rate, "audio sample_rate", 1)
+        if stream_index:
+            raise ValueError("PCM assets have one audio stream")
+        return {
+            "sample_rate": rate,
+            "channels": shape[1],
+            "layout": channel_layout(shape[1]),
+            "duration": shape[2] / rate,
+            "codec": "pcm_npy",
+            "frames": shape[2],
+            "batch": shape[0],
+            "stream_index": 0,
+        }
+    handle.seek(0)
+    with closing(av.open(handle, mode="r")) as container:
         if stream_index >= len(container.streams.audio):
             raise ValueError("audio asset contains no selected audio stream")
         stream = cast(Any, container.streams.audio[stream_index])

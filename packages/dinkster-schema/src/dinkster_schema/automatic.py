@@ -245,6 +245,7 @@ def work_out_automatic(
     linked: Callable[[object], bool] | None = None,
     literal: Callable[[object], object] | None = None,
     answers: Mapping[LookupCall, LookupAnswer] | None = None,
+    file_facts: Mapping[str, Mapping[str, object]] | None = None,
 ) -> dict[str, AutomaticOutcome]:
     """The value in use of every automatic field of one node with nothing
     stored and no wire, by flattened id.
@@ -278,6 +279,7 @@ def work_out_automatic(
             linked=linked,
             literal=literal,
             in_use=_InUse(working.in_use, tuple(sites)),
+            file_facts=file_facts,
         )
         outcomes = {}
         for flat_id in sites:

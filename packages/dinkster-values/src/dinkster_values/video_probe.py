@@ -1,4 +1,4 @@
-"""Source-only VIDEO facts without decoding frames or reading a full file into RAM."""
+"""Source-only VIDEO facts, with optional exact decoded frame counts."""
 
 from __future__ import annotations
 
@@ -20,13 +20,18 @@ class VideoSource(Protocol):
 
 
 @contextmanager
-def open_video_source(source: bytes | VideoSource | Path) -> Generator[BinaryIO]:
+def open_video_source(source: bytes | VideoSource | Path | BinaryIO) -> Generator[BinaryIO]:
+    if hasattr(source, "read"):
+        handle = cast(BinaryIO, source)
+        handle.seek(0)
+        yield handle
+        return
     opened = (
         io.BytesIO(source)
         if isinstance(source, bytes)
         else source.open("rb")
         if isinstance(source, Path)
-        else source.open()
+        else cast(VideoSource, source).open()
     )
     with opened as handle:
         yield handle
@@ -149,7 +154,9 @@ def color_space_label(transfer: int) -> str:
     return {1: "sRGB", 13: "sRGB", 18: "HDR", 16: "HDR PQ"}.get(transfer, "unknown")
 
 
-def probe_video(source: bytes | VideoSource | Path) -> dict[str, object]:
+def probe_video(
+    source: bytes | VideoSource | Path | BinaryIO, *, exact_frames: bool = False
+) -> dict[str, object]:
     """Probe an admitted source; edits never call this function."""
     import av
 
@@ -161,8 +168,10 @@ def probe_video(source: bytes | VideoSource | Path) -> dict[str, object]:
                 raise ValueError("source has no video stream")
             stream = container.streams.video[0]
             codec = stream.codec_context
-            if isinstance(source, bytes):
-                kind, rotation = _container_facts(source, container.format.name, stream.id)
+            if isinstance(handle, io.BytesIO):
+                kind, rotation = _container_facts(
+                    handle.getvalue(), container.format.name, stream.id
+                )
             else:
                 with mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as data:
                     kind, rotation = _container_facts(data, container.format.name, stream.id)
@@ -175,7 +184,10 @@ def probe_video(source: bytes | VideoSource | Path) -> dict[str, object]:
             if duration is None and container.duration is not None:
                 duration, duration_kind = Fraction(container.duration, av.time_base), "container"
             count_kind = "header" if frame_count is not None else "unknown"
-            if frame_count is None and duration is not None and rate:
+            if exact_frames:
+                frame_count = sum(1 for _ in container.decode(stream))
+                count_kind = "decoded"
+            elif frame_count is None and duration is not None and rate:
                 frame_count, count_kind = math.ceil(duration * rate), "estimated"
             fmt = codec.format
             alpha = bool(fmt and any(c.is_alpha for c in fmt.components))
