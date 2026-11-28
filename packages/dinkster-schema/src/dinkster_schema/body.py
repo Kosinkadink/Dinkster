@@ -49,6 +49,7 @@ from .model import (
     CurveWidget,
     Input,
     MultiComboWidget,
+    NodeSchema,
     NumberWidget,
     Output,
     OutputProbeSpec,
@@ -2410,3 +2411,211 @@ def check_body(
         if not isinstance(cast("object", button), Button):
             raise ValueError("a node's menu holds Button rows")
         check.row(button, scope)
+
+
+@dataclass
+class _LimitScope:
+    formula: FormulaScope
+    own_names: set[str]
+    parent: _LimitScope | None
+    bindings: dict[str, list[int]] = field(default_factory=dict[str, list[int]])
+
+    def resolve(self, name: str) -> list[int]:
+        if name in self.own_names:
+            return self.bindings.get(name, [])
+        return [] if self.parent is None else self.parent.resolve(name)
+
+
+def numeric_limit_diagnostics(schema: NodeSchema) -> list[dict[str, object]]:
+    """Advisory declaration cycles, without evaluating values or refusing a node.
+
+    Every group member is checked as a template. Separate variant scopes keep
+    identically named fields in mutually exclusive variants from sharing edges.
+    """
+    from .flatten import apply_use
+
+    check = _FormulaCheck(schema.tables, {key: value.text for key, value in schema.derived.items()})
+    sites: list[tuple[Input | State | Choice, str, _LimitScope]] = []
+    conditions: list[dict[str, str]] = []
+    limits: list[tuple[int, str, Formula | Lookup, dict[str, str]]] = []
+    widgets: list[tuple[int, object, dict[str, str]]] = []
+
+    def placed(rows: tuple[BodyRow | Use, ...], shared: dict[str, BodyRow]) -> tuple[BodyRow, ...]:
+        result: list[BodyRow] = []
+        for row in rows:
+            if isinstance(row, Use):
+                result.append(apply_use(shared[row.id], row))
+            elif isinstance(row, (Section, Row)):
+                result.append(replace(row, rows=placed(row.rows, shared)))
+            else:
+                result.append(row)
+        return tuple(result)
+
+    def collect(
+        rows: tuple[BodyRow | Use, ...],
+        parent: _LimitScope | None,
+        prefix: str,
+        in_member: bool,
+        active: dict[str, str],
+        declared: tuple[BodyRow | Use, ...] | None = None,
+    ) -> _LimitScope:
+        declared = rows if declared is None else declared
+        scope = _LimitScope(
+            check.scope(
+                declared, None if parent is None else parent.formula, in_member, check_rows=False
+            ),
+            set(formula_names(declared).names),
+            parent,
+        )
+        for row in scope_rows(rows):
+            if isinstance(row, (Input, State, Choice)):
+                scope.bindings[row.id] = [len(sites)]
+                sites.append((row, prefix + row.id, scope))
+                conditions.append(active)
+        for row in scope_rows(rows):
+            children: list[_LimitScope] = []
+            if isinstance(row, Group):
+                children.append(
+                    collect(
+                        row.member if row.member is not None else (cast("BodyRow", row.value),),
+                        scope,
+                        f"{prefix}{row.id}.<member>.",
+                        True,
+                        active,
+                    )
+                )
+            elif isinstance(row, Choice):
+                for option in row.options:
+                    children.append(
+                        collect(
+                            placed(option.rows, shared_rows(row)),
+                            scope,
+                            f"{prefix}{row.id}.",
+                            in_member,
+                            {**active, prefix + row.id: option.key},
+                            choice_scope_rows(row),
+                        )
+                    )
+            elif isinstance(row, TypeChoice):
+                if row.variants is None:
+                    children.append(
+                        collect(row.rows, scope, f"{prefix}{row.id}.", in_member, active)
+                    )
+                for variant in row.variants or ():
+                    children.append(
+                        collect(
+                            (*row.rows, *variant.rows),
+                            scope,
+                            f"{prefix}{row.id}.",
+                            in_member,
+                            {**active, prefix + row.id: variant.key},
+                        )
+                    )
+            if isinstance(row, (Group, Choice, TypeChoice)):
+                for inner in children:
+                    for name, bindings in inner.bindings.items():
+                        qualified = f"{row.id}.{name}"
+                        if qualified in scope.own_names:
+                            scope.bindings.setdefault(qualified, []).extend(bindings)
+        return scope
+
+    collect(schema.body, None, "", False, {})
+
+    def reads(value: Formula | Lookup, scope: _LimitScope) -> set[int]:
+        found: set[int] = set()
+
+        def visit(node: ast.AST, compiled: CompiledFormula) -> None:
+            if isinstance(node, (ast.Name, ast.Attribute)):
+                name = ast.unparse(node)
+                if name in compiled.derived:
+                    derived = compiled.derived[name]
+                    visit(derived.tree, derived)
+                elif name not in compiled.scope.tables:
+                    found.update(scope.resolve(name))
+                return
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Name) and node.func.id in {"linked", "linked_type"}:
+                    return
+                for argument in node.args:
+                    visit(argument, compiled)
+                return
+            for child in ast.iter_child_nodes(node):
+                visit(child, compiled)
+
+        if isinstance(value, Formula):
+            compiled = parse_formula(value.text, scope.formula)
+            visit(compiled.tree, compiled)
+        else:
+            for argument in value.args:
+                if isinstance(argument, Formula):
+                    found |= reads(argument, scope)
+                else:
+                    found.update(scope.resolve(argument))
+        return found
+
+    edges: dict[int, list[tuple[int, dict[str, str]]]] = {}
+    for index, (row, _, scope) in enumerate(sites):
+        edges[index] = []
+        automatic = (
+            row.automatic
+            if isinstance(row, Input)
+            else row.leader
+            if isinstance(row, Choice)
+            else None
+        )
+        if automatic is not None:
+            edges[index].extend(
+                (target, conditions[index]) for target in sorted(reads(automatic, scope))
+            )
+        if isinstance(row, Input):
+            widgets.append((index, row.widget, conditions[index]))
+    for index, descriptor, active in widgets:
+        for widget in _shown_widgets(descriptor):
+            if isinstance(widget, NumberWidget):
+                for limit in ("min", "max", "step", "offset"):
+                    value = getattr(widget, limit)
+                    if isinstance(value, (Formula, Lookup)):
+                        limits.append((index, limit, value, active))
+                        edges[index].extend(
+                            (target, active) for target in sorted(reads(value, sites[index][2]))
+                        )
+
+    problems: list[dict[str, object]] = []
+    for index, limit, value, active in limits:
+        pending: list[tuple[int, tuple[int, ...], dict[str, str]]] = [
+            (target, (index, target), active) for target in sorted(reads(value, sites[index][2]))
+        ]
+        visited: set[tuple[int, tuple[tuple[str, str], ...]]] = set()
+        while pending:
+            current, path, chosen = pending.pop()
+            if any(
+                key in chosen and chosen[key] != value for key, value in conditions[current].items()
+            ):
+                continue
+            chosen = {**chosen, **conditions[current]}
+            if current == index:
+                field_id = sites[index][1]
+                cycle = [sites[part][1] for part in path]
+                problem: dict[str, object] = {
+                    "nodeType": schema.node_type,
+                    "field": field_id,
+                    "limit": limit,
+                    "cycle": cycle,
+                    "message": (
+                        f"Node {schema.node_type!r}, field {field_id!r}: {limit} depends on "
+                        f"the value it limits ({' -> '.join(cycle)}). "
+                        "The circular limit is treated as unknown."
+                    ),
+                }
+                if problem not in problems:
+                    problems.append(problem)
+                break
+            state = (current, tuple(sorted(chosen.items())))
+            if state not in visited:
+                visited.add(state)
+                for target, required in edges[current]:
+                    if not any(
+                        key in chosen and chosen[key] != value for key, value in required.items()
+                    ):
+                        pending.append((target, (*path, target), {**chosen, **required}))
+    return problems
