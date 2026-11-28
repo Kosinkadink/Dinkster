@@ -877,6 +877,7 @@ class MountTable:
                         "bytesDone": progress.bytes_done,
                         "bytesTotal": progress.bytes_total,
                         "elapsedSeconds": progress.elapsed_seconds,
+                        **({"waitingForRun": True} if progress.waiting_for_run else {}),
                     }
                 if row.error is not None:
                     wire["error"] = "model root unavailable" if hidden_semantic_root else row.error
@@ -898,6 +899,7 @@ class MountTable:
             progress.bytes_done,
             progress.bytes_total,
             max(progress.elapsed_seconds, time.monotonic() - row.scan_started),
+            progress.waiting_for_run,
         )
 
     def scan_progress(self, mount_id: str) -> AssetScanProgress | None:
@@ -966,7 +968,8 @@ class MountTable:
             else:
 
                 def published(update: AssetScanProgress) -> None:
-                    library.refresh_index()
+                    if not update.waiting_for_run:
+                        library.refresh_index()
                     progress(update)
 
                 scan_index(row.mount.path, library.index_path, published)

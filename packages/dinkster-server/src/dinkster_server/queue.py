@@ -51,6 +51,7 @@ from dinkster_engine import (
 )
 from dinkster_engine.automatic import AutomaticRecord, CorrectedRecord
 from dinkster_graph import Graph, graph_to_wire, lower_selectors
+from dinkster_library.reading import executing_workflow
 from dinkster_protocol import (
     AttentionPolicyConfig,
     ExportSnapshot,
@@ -594,31 +595,32 @@ class JobQueue:
 
                 job.execution = replace(job.execution, on_artifacts=receive_artifacts)
             job.execution_started_at = time.time()
-            if job.compiled_graph is not None:
-                result = await self._engine.run_compiled(
-                    job.compiled_graph,
-                    run_id=job.run_id,
-                    attempt_id=job.attempt,
-                    execution=job.execution,
-                    export_snapshot=job.export_snapshot,
-                    preview_policy=job.preview_policy,
-                    attention_config=job.attention_config,
-                    single_job_multi_gpu=job.single_job_multi_gpu,
-                    cache_enabled=job.cache_enabled,
-                )
-            else:
-                result = await self._engine.run(
-                    job.graph,
-                    job.targets,
-                    run_id=job.run_id,
-                    attempt_id=job.attempt,
-                    execution=job.execution,
-                    export_snapshot=job.export_snapshot,
-                    preview_policy=job.preview_policy,
-                    attention_config=job.attention_config,
-                    single_job_multi_gpu=job.single_job_multi_gpu,
-                    cache_enabled=job.cache_enabled,
-                )
+            with executing_workflow():
+                if job.compiled_graph is not None:
+                    result = await self._engine.run_compiled(
+                        job.compiled_graph,
+                        run_id=job.run_id,
+                        attempt_id=job.attempt,
+                        execution=job.execution,
+                        export_snapshot=job.export_snapshot,
+                        preview_policy=job.preview_policy,
+                        attention_config=job.attention_config,
+                        single_job_multi_gpu=job.single_job_multi_gpu,
+                        cache_enabled=job.cache_enabled,
+                    )
+                else:
+                    result = await self._engine.run(
+                        job.graph,
+                        job.targets,
+                        run_id=job.run_id,
+                        attempt_id=job.attempt,
+                        execution=job.execution,
+                        export_snapshot=job.export_snapshot,
+                        preview_policy=job.preview_policy,
+                        attention_config=job.attention_config,
+                        single_job_multi_gpu=job.single_job_multi_gpu,
+                        cache_enabled=job.cache_enabled,
+                    )
             if self._complete_result is not None:
                 completion = asyncio.ensure_future(self._complete_result(job, result))
                 cancelled = False

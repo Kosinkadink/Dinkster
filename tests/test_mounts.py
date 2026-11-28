@@ -1095,6 +1095,8 @@ def test_automatic_mount_scans_preserve_ready_catalog_until_explicit_retry(tmp_p
 
 
 def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dinkster_library.reading import executing_workflow
+
     root = tmp_path / "models"
     seed(root, {"model.bin": b"model bytes"})
     table = MountTable(tmp_path / "library" / "mounts.json")
@@ -1114,7 +1116,17 @@ def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.Mo
     async def scenario() -> None:
         client = await make_client(MountService(table))
         try:
-            scan = asyncio.create_task(asyncio.to_thread(table.scan, "models"))
+            with executing_workflow():
+                scan = asyncio.create_task(asyncio.to_thread(table.scan, "models"))
+                async with asyncio.timeout(5):
+                    while True:
+                        rows = (await (await client.get("/api/mounts")).json())["mounts"]
+                        progress = rows[0].get("scanProgress", {})
+                        if progress.get("waitingForRun") is True:
+                            break
+                        await asyncio.sleep(0.01)
+                assert progress["filesDone"] == 0
+                assert not hashing.is_set()
             assert await asyncio.to_thread(hashing.wait, 5)
             response = await client.get("/api/mounts")
             assert response.status == 200
@@ -1125,6 +1137,7 @@ def test_mounts_api_exposes_scan_progress(tmp_path: Path, monkeypatch: pytest.Mo
             assert row["scanProgress"]["bytesDone"] == 0
             assert row["scanProgress"]["bytesTotal"] == len(b"model bytes")
             assert row["scanProgress"]["elapsedSeconds"] >= 0
+            assert not row["scanProgress"].get("waitingForRun", False)
             release.set()
             assert await scan == 1
         finally:

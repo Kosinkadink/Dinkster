@@ -32,6 +32,7 @@ from dinkster_library.index_format import INDEX_NAME as INDEX_NAME
 from dinkster_library.index_format import PARTIAL_DOWNLOAD_EXTENSIONS as PARTIAL_DOWNLOAD_EXTENSIONS
 from dinkster_library.index_format import WRITES_SIDECAR_NAME as WRITES_SIDECAR_NAME
 from dinkster_library.index_format import IgnoreRules, retain_missing_versions
+from dinkster_library.reading import wait_for_workflows
 
 from .catalog import AssetCatalog, AssetEntry, FolderListing, validate_virtual_path
 from .identity import AssetError, is_digest
@@ -46,6 +47,7 @@ class AssetScanProgress:
     bytes_done: int
     bytes_total: int
     elapsed_seconds: float
+    waiting_for_run: bool = False
 
 
 class _Fcntl(Protocol):
@@ -378,6 +380,22 @@ class LocalAssetLibrary:
         if progress_interval < 0:
             raise ValueError("progress_interval must be nonnegative")
         started = time.monotonic()
+        files_done = bytes_done = files_total = bytes_total = 0
+
+        def waiting_progress(waiting: bool) -> None:
+            if on_progress is not None:
+                on_progress(
+                    AssetScanProgress(
+                        files_done,
+                        files_total,
+                        bytes_done,
+                        bytes_total,
+                        time.monotonic() - started,
+                        waiting,
+                    )
+                )
+
+        wait_for_workflows(waiting_progress)
         index = self._load_index()
         # Just-written files carry known digests in the writes sidecar;
         # absorbing them here means a scan right after a save costs a
@@ -388,7 +406,12 @@ class LocalAssetLibrary:
             if not self._ignore.matches(relative, Path(relative).name)
         )
         candidates: list[tuple[Path, str, os.stat_result]] = []
-        for path in sorted(self._root.rglob("*")):
+        paths = iter(self._root.rglob("*"))
+        while True:
+            wait_for_workflows(waiting_progress)
+            path = next(paths, None)
+            if path is None:
+                break
             if not path.is_file() or path.name.startswith("."):
                 continue
             if any(part.startswith(".") for part in path.relative_to(self._root).parts):
@@ -445,7 +468,8 @@ class LocalAssetLibrary:
         if candidates:
             time.sleep(0.1)
         pending: list[tuple[Path, str, os.stat_result]] = []
-        for path, relative, stat in candidates:
+        for path, relative, stat in sorted(candidates):
+            wait_for_workflows(waiting_progress)
             try:
                 settled = path.stat()
             except FileNotFoundError:
@@ -501,6 +525,7 @@ class LocalAssetLibrary:
             self._current_index = fresh_index
         report(force=True)
         for path, relative, stat in pending:
+            wait_for_workflows(waiting_progress)
             try:
                 digest, record = digest_file_with_record(path)
                 stat = path.stat()
