@@ -104,14 +104,17 @@ def publish(release: Path) -> None:
             text=True,
             check=False,
         )
-        if created.returncode and str(json.loads(created.stdout).get("status")) != "422":
-            created.check_returncode()
-        reference = subprocess.run(
-            ["gh", "api", endpoint + "ref/tags/" + quote(tag, safe="")],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        if created.returncode:
+            if str(json.loads(created.stdout).get("status")) != "422":
+                created.check_returncode()
+            reference = subprocess.run(
+                ["gh", "api", endpoint + "ref/tags/" + quote(tag, safe="")],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        else:
+            reference = created
     target = json.loads(reference.stdout)["object"]
     if target["type"] != "tag":
         raise ValueError("tools release tag must be annotated")
