@@ -247,6 +247,7 @@ class MountService:
             )
             or self.table.output_mount != self.settings_table.output_mount
             or self.model_modes() != self.model_modes(settings=True)
+            or self.model_settings() != self.model_settings(settings=True)
         )
         return {"restartRequired": changed, "pendingRemovals": removed}
 
@@ -264,7 +265,8 @@ class MountService:
             }:
                 return ()
             candidate = self.copy_settings()
-            for mount_id in desired:
+            for mount in settings.mounts(include_absent=True):
+                mount_id = mount.id
                 if (
                     candidate.get(mount_id) is not None
                     and candidate.source(mount_id) != "shared-models"
@@ -301,11 +303,13 @@ class MountService:
             assert live_settings is not None
             self.projects.initialize(
                 self.mount_ids(),
-                shared_defaults=tuple(mount.id for mount in live_settings.mounts()),
+                shared_defaults=tuple(
+                    mount.id for mount in live_settings.mounts(include_absent=True)
+                ),
                 groups=tuple(
                     tuple(
                         mount.id
-                        for mount in replace(location, kind="").mounts(0)
+                        for mount in replace(location, kind="").mounts(0, include_absent=True)
                         if self.table.get(mount.id) is None
                         or self.table.source(mount.id) == "shared-models"
                     )
@@ -336,7 +340,13 @@ class MountService:
         }
 
     def update_project(
-        self, project: str, mounts: object, output: str | None, *, input_mount: str | None = None
+        self,
+        project: str,
+        mounts: object,
+        output: str | None,
+        *,
+        input_mount: str | None = None,
+        group_choice: tuple[tuple[str, ...], bool] | None = None,
     ) -> None:
         with self._model_lock:
             self.refresh_models()
@@ -370,11 +380,12 @@ class MountService:
                     if mode == "always-on"
                 ),
                 groups=tuple(
-                    tuple(mount.id for mount in location.mounts(0))
+                    tuple(mount.id for mount in location.mounts(0, include_absent=True))
                     for location in settings.locations
                 )
                 if settings is not None
                 else (),
+                group_choice=group_choice,
                 grant_revision=self._folder_revision,
                 preserve_output=self.library is not None,
             )

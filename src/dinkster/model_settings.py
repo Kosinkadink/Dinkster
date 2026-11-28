@@ -123,7 +123,7 @@ class ModelLocation:
     visibility: str = "default-on"
     kind: str = ""
 
-    def mounts(self, priority: int) -> tuple[MountDef, ...]:
+    def mounts(self, priority: int, *, include_absent: bool = False) -> tuple[MountDef, ...]:
         if self.kind:
             return (
                 MountDef(
@@ -136,16 +136,21 @@ class ModelLocation:
             )
         folders = dict(MODEL_FOLDERS)
         # Unrecognized folders use the open kind vocabulary: custom_model -> model/custom-model.
+        present: set[str] | None = None
         try:
             children = sorted(self.path.iterdir())
         except OSError:
+            # Failed root reads still declare grants so scanning exposes the failure.
             children = []
+        else:
+            if self.mode == "read" and not include_absent:
+                present = {child.name for child in children}
         known = {*folders.values(), *MODEL_FOLDER_ALIASES}
         for child in children:
             kind = f"model/{child.name.replace('_', '-')}"
             if child.is_dir() and child.name not in known and is_asset_kind(kind):
                 folders.setdefault(kind, child.name)
-        return (
+        mounts = (
             *(
                 MountDef(
                     f"{self.id}-{kind.split('/')[1]}",
@@ -167,6 +172,7 @@ class ModelLocation:
                 for folder, kind in MODEL_FOLDER_ALIASES.items()
             ),
         )
+        return tuple(mount for mount in mounts if present is None or mount.path.name in present)
 
 
 @dataclass(frozen=True)
@@ -342,7 +348,7 @@ class ModelSettings:
                     )
                 )
             result = cls(tuple(locations), download_location)
-            mounts = result.mounts()
+            mounts = result.mounts(include_absent=True)
             if len({mount.id for mount in mounts}) != len(mounts):
                 raise ValueError("duplicate model location ids")
             if len({location.id for location in locations}) != len(locations):
@@ -499,12 +505,13 @@ class ModelSettings:
             finally:
                 Path(temporary).unlink(missing_ok=True)
 
-    def mounts(self) -> tuple[MountDef, ...]:
+    def mounts(self, *, include_absent: bool = False) -> tuple[MountDef, ...]:
         return tuple(
             mount
             for index, location in enumerate(self.locations)
             for mount in location.mounts(
-                0 if location.id == self.download_location else 2 * (index + 1)
+                0 if location.id == self.download_location else 2 * (index + 1),
+                include_absent=include_absent,
             )
         )
 

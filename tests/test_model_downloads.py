@@ -2002,6 +2002,7 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
         table.add(mount, source="shared-models")
     private = tmp_path / "private" / "checkpoints"
     private.mkdir(parents=True)
+    (private.parent / "vae").mkdir()
     payload = b"opt-in checkpoint, intentionally not indexed"
     (private / "private.safetensors").write_bytes(payload)
     service = MountService(
@@ -2037,7 +2038,7 @@ def test_model_folder_modes_persist_project_choices_and_follow_shared_changes(
     )
     required = tuple(f"required-{category}" for category in categories)
     common = tuple(f"common-{category}" for category in categories)
-    optional = tuple(f"private-{category}" for category in categories)
+    optional = ("private-checkpoint", "private-vae")
     for project in ("first", "second"):
         assert set(service.project_context(project).mounts) == set(required + common)
         with use_asset_folders(service.project_context(project)):
@@ -2455,13 +2456,134 @@ def test_model_settings_preserve_fixed_project_authority_until_restart(
         assert restarted.project_context("disabled").mounts == ("studio-checkpoint",)
     else:
         enabled = restarted.project_context("enabled").mounts
-        assert (len(enabled) > 1) if change == "layout" else enabled == ("studio-checkpoint",)
+        assert enabled == (() if change == "layout" else ("studio-checkpoint",))
         assert restarted.project_context("disabled").mounts == ()
     restarted.update_project(
         "enabled", [*restarted.project_context("enabled").mounts, "other-checkpoint"], None
     )
     assert "other-checkpoint" in restarted.project_context("enabled").mounts
     assert (root / "keep.safetensors").read_bytes() == b"keep the original model"
+
+
+def test_read_only_model_root_exposes_present_kinds_and_keeps_real_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_assets import MountTable
+
+    from dinkster.mounts_api import MountService
+    from tests.async_scenarios import run_scenario
+    from tests.test_mounts import make_client, wait_for_state
+
+    monkeypatch.setenv("DINKSTER_HOME", str(tmp_path))
+    root = tmp_path / "models"
+    root.mkdir()
+    (root / "checkpoints").mkdir()
+    (root / "checkpoints" / "kept.bin").write_bytes(b"checkpoint bytes")
+    invalid = tmp_path / "not-a-folder"
+    invalid.write_bytes(b"not a directory")
+    (tmp_path / "model-settings.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "downloadLocation": None,
+                "locations": [
+                    {"id": "studio", "path": str(root), "mode": "read"},
+                    {
+                        "id": "invalid",
+                        "path": str(invalid),
+                        "mode": "read",
+                        "kind": "model/vae",
+                    },
+                ],
+            }
+        )
+    )
+    service = MountService(
+        MountTable(), tmp_path / "mounts.toml", shared_models=True, allow_changes=True
+    )
+
+    async def scenario() -> None:
+        client = await make_client(service)
+        try:
+            response = await client.get("/api/models/settings")
+            assert response.status == 200
+            state = await response.json()
+            assert state["locations"][0]["mounts"] == ["studio-checkpoint"]
+            await wait_for_state(client, "studio-checkpoint", "ready")
+            await wait_for_state(client, "invalid-vae", "failed")
+            rows = (await (await client.get("/api/mounts")).json())["mounts"]
+            assert {row["id"] for row in rows} == {"studio-checkpoint", "invalid-vae"}
+            checkpoint = next(row for row in rows if row["id"] == "studio-checkpoint")
+            assert checkpoint["entryCount"] == 1
+            failure = next(row for row in rows if row["id"] == "invalid-vae")
+            assert str(invalid) in failure["error"]
+            assert not (root / "loras").exists()
+
+            (root / "checkpoints").rename(tmp_path / "kept-checkpoints")
+            response = await client.put(
+                "/api/models/locations/studio/projects/default", json={"enabled": False}
+            )
+            assert response.status == 200, await response.text()
+            disabled = (await response.json())["locations"][0]
+            assert disabled["mounts"] == []
+            assert disabled["enabled"] is False
+            (tmp_path / "kept-checkpoints").rename(root / "checkpoints")
+            state = await (await client.get("/api/models/settings")).json()
+            assert state["locations"][0]["enabled"] is False
+            rows = (await (await client.get("/api/mounts")).json())["mounts"]
+            assert {row["id"] for row in rows} == {"invalid-vae"}
+            response = await client.put(
+                "/api/models/locations/studio/projects/default", json={"enabled": True}
+            )
+            assert response.status == 200, await response.text()
+            assert (await response.json())["locations"][0]["enabled"] is True
+
+            (root / "clip").mkdir()
+            (root / "clip" / "encoder.bin").write_bytes(b"alias bytes")
+            (root / "custom_model").mkdir()
+            (root / "custom_model" / "custom.bin").write_bytes(b"custom bytes")
+            (root / "loras").write_bytes(b"invalid existing category")
+            state = await (await client.get("/api/models/settings")).json()
+            assert set(state["locations"][0]["mounts"]) == {
+                "studio-checkpoint",
+                "studio-lora",
+                "studio-clip",
+                "studio-custom-model",
+            }
+            for name in ("studio-clip", "studio-custom-model"):
+                await wait_for_state(client, name, "ready")
+            await wait_for_state(client, "studio-lora", "failed")
+            rows = (await (await client.get("/api/mounts")).json())["mounts"]
+            assert {row["id"] for row in rows if row["state"] == "ready"} == {
+                "studio-checkpoint",
+                "studio-clip",
+                "studio-custom-model",
+            }
+            failure = next(row for row in rows if row["id"] == "studio-lora")
+            assert str(root / "loras") in failure["error"]
+
+            downloads = tmp_path / "downloads"
+            settings = state["settings"]
+            settings["locations"].append(
+                {"id": "downloads", "path": str(downloads), "mode": "readwrite"}
+            )
+            settings["downloadLocation"] = "downloads"
+            response = await client.put(
+                "/api/models/settings", json={"settings": settings, "revision": state["revision"]}
+            )
+            assert response.status == 200, await response.text()
+            await wait_for_state(client, "downloads-lora", "ready")
+            assert (downloads / "loras").is_dir()
+            assert (downloads / "checkpoints").is_dir()
+            rows = (await (await client.get("/api/mounts")).json())["mounts"]
+            destination = next(row for row in rows if row["id"] == "downloads-lora")
+            assert destination["entryCount"] == 0
+            assert destination["mode"] == "readwrite"
+        finally:
+            await service.close()
+            await client.close()
+
+    run_scenario(scenario())
 
 
 def test_model_settings_report_each_location_space_without_changing_settings(
