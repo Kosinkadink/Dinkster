@@ -1431,6 +1431,7 @@ class Input:
     sent: bool = True
     list_count_of: str | None = None
     """Store a known list input's count with the causing editor command.
+    Both fields belong to the node's top-level scope.
     Unknown counts leave the stored value alone; runs never update it."""
     """``label`` is presentation only, text or a formula; empty means "derive
     from the id". Like
@@ -1692,6 +1693,7 @@ KNOWN_VALUE_LIMITS: Final = ("min", "max", "step", "default")
 class OutputListCount:
     """An output's item count follows an input, without reading its values.
 
+    The output and its input or group belong to the node's top-level scope.
     With ``group``, the output joins that group's ``input`` across members:
     a scalar contributes one and a list contributes its item count. An
     unknown list count makes the total unknown. Without ``group``, the
@@ -2535,7 +2537,23 @@ class NodeSchema:
         for output in self.outputs:
             validate_output_type(output.type)
         self._check_options_inputs(inputs_by_id)
-        for input_spec in self.inputs:
+        count_inputs = self.inputs
+        if not self.effective:
+            from .body import all_rows, scope_rows
+
+            count_inputs = tuple(row for row in scope_rows(self.body) if isinstance(row, Input))
+            for row in scope_rows(self.body):
+                if isinstance(row, (Input, Output)):
+                    continue
+                for nested in all_rows((row,)):
+                    if (isinstance(nested, Input) and nested.list_count_of is not None) or (
+                        isinstance(nested, Output)
+                        and isinstance(nested.list_count, OutputListCount)
+                    ):
+                        raise ValueError(
+                            f"{self.node_type}: count sources require top-level input/output rows"
+                        )
+        for input_spec in count_inputs:
             if input_spec.list_count_of is not None:
                 source = inputs_by_id.get(input_spec.list_count_of)
                 if source is None or source.type.kind != "list":
