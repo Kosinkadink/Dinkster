@@ -408,8 +408,10 @@ class SetupJobs:
             ):
                 raise SetupRefused(refusal["code"], refusal["message"])
             previous_identity = self._pack_identities[plan_id]
-            if operation == "check":
-                facts = await self.plan_check(Path(cast("str", previous["root"])))
+            if operation in {"check", "cleanup"}:
+                facts = await self.plan_maintenance(
+                    Path(cast("str", previous["root"])), operation=operation
+                )
                 if facts["root"] != previous["root"]:
                     raise SetupRefused(
                         "plan-changed", "The installation target changed. Review a new plan."
@@ -440,9 +442,9 @@ class SetupJobs:
             if isinstance(refusal, dict):
                 refusal = cast("dict[str, str]", refusal)
                 raise SetupRefused(refusal["code"], refusal["message"])
-            if operation not in {"restore", "check"} and facts["variant"] is None:
+            if operation not in {"restore", "check", "cleanup"} and facts["variant"] is None:
                 raise SetupRefused("build-not-chosen", "Choose a build before starting setup.")
-            if operation not in {"restore", "check"} and (
+            if operation not in {"restore", "check", "cleanup"} and (
                 previous_identity != self._pack_identities[cast("str", facts["id"])]
                 or any(
                     facts[key] != previous[key]
@@ -488,14 +490,14 @@ class SetupJobs:
             )
             return job
 
-    async def plan_check(self, root: Path) -> dict[str, object]:
+    async def plan_maintenance(self, root: Path, *, operation: str) -> dict[str, object]:
         if not root.is_absolute() or self._installations is None:
             raise SetupRefused("unknown-installation", "Choose a registered installation.")
         root = await asyncio.to_thread(resolve_installation_root, root)
         if root not in await asyncio.to_thread(self._installations):
             raise SetupRefused("unknown-installation", "Choose a registered installation.")
         plan_id = uuid4().hex
-        facts: dict[str, object] = {"id": plan_id, "operation": "check", "root": str(root)}
+        facts: dict[str, object] = {"id": plan_id, "operation": operation, "root": str(root)}
         self._plans[plan_id] = facts
         self._pack_identities[plan_id] = None
         while len(self._plans) > 16:
@@ -547,12 +549,14 @@ class SetupJobs:
             },
         }
         try:
-            if operation != "check" and self._prepare is not None:
+            if operation not in {"check", "cleanup"} and self._prepare is not None:
                 await self._prepare()
             # Only setup allocates a listener; maintenance preserves assignments.
             context = installation_context(root)
             if operation == "check":
                 arguments = ["doctor"]
+            elif operation == "cleanup":
+                arguments = ["cleanup"]
             elif operation == "restore":
                 arguments = [
                     "restore",
@@ -613,7 +617,7 @@ class SetupJobs:
                 outcome = {
                     "state": "completed",
                     "installation": {"root": str(root), "engine": "main"},
-                    **({"result": result} if operation == "check" else {}),
+                    **({"result": result} if operation in {"check", "cleanup"} else {}),
                 }
         except (OSError, ValueError, LookupError, RuntimeError) as exc:
             outcome = {
@@ -729,6 +733,7 @@ async def handle_start(request: web.Request) -> web.Response:
             "/supervisor/installations/update": "update",
             "/supervisor/installations/restore": "restore",
             "/supervisor/installations/check": "check",
+            "/supervisor/installations/cleanup": "cleanup",
         }.get(request.path, "setup")
         job = await request.app[SETUP_KEY].start(body["planId"], operation=operation)
         return web.json_response(job, status=202)
