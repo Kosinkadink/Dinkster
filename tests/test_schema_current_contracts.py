@@ -1,8 +1,10 @@
+from dataclasses import replace
 from typing import cast
 
 import pytest
 from dinkster_schema import (
     ComboWidget,
+    Formula,
     Group,
     Input,
     Node,
@@ -11,11 +13,83 @@ from dinkster_schema import (
     Numbered,
     Output,
     OutputKnownValue,
+    OutputListCount,
     StringWidget,
     TypeExpr,
     schema_from_wire,
     schema_to_wire,
 )
+
+
+def test_list_count_advice_does_not_invalidate_cached_computation() -> None:
+    from dinkster_schema import elaborate, schema_signature
+
+    integer = TypeExpr.concrete("INT")
+    items = TypeExpr.list_of(integer)
+    plain = NodeSchema(
+        node_type="test.counted",
+        body=(
+            Input("items", items),
+            Input("count", integer, pin=False),
+            Output("out", items),
+            Input("video", TypeExpr.asset_of(TypeExpr.concrete("IMAGE"))),
+        ),
+    )
+    for count in (0, 7, OutputListCount("items"), Formula("frames(video)")):
+        advised = replace(
+            plain,
+            body=(
+                plain.inputs[0],
+                replace(plain.inputs[1], list_count_of="items"),
+                replace(plain.outputs[0], list_count=count),
+                plain.inputs[2],
+            ),
+        )
+        restored = schema_from_wire(schema_to_wire(advised))
+        assert restored.outputs[0].list_count == count
+        assert schema_signature(restored) == schema_signature(plain)
+        assert schema_signature(
+            elaborate(restored, {"items": [1, 2], "count": 2})
+        ) == schema_signature(elaborate(plain, {"items": [1, 2], "count": 2}))
+
+    with pytest.raises(ValueError, match=r"frames\(\) takes the name of an input"):
+        replace(
+            plain, body=(*plain.inputs, Output("out", items, list_count=Formula("frames(missing)")))
+        )
+
+
+@pytest.mark.parametrize("source", ["items", "missing"])
+@pytest.mark.parametrize("output", [False, True])
+def test_count_sources_do_not_escape_their_declared_scope(source: str, output: bool) -> None:
+    integer = TypeExpr.concrete("INT")
+    items = TypeExpr.list_of(integer)
+    plain = Output("out", items) if output else Input("count", integer, pin=False)
+    counted = (
+        replace(plain, list_count=OutputListCount(source))
+        if isinstance(plain, Output)
+        else replace(plain, list_count_of=source)
+    )
+    group = Group("parts", keys=Numbered("p"), member=(Input("items", items), plain))
+    with pytest.raises(ValueError, match="count.*top-level"):
+        NodeSchema(
+            node_type="test.count_scope",
+            body=(replace(group, member=(Input("items", items), counted)),),
+        )
+
+    wire = schema_to_wire(NodeSchema(node_type="test.count_scope", body=(group,)))
+    member = cast(
+        "list[dict[str, object]]", cast("list[dict[str, object]]", wire["body"])[0]["member"]
+    )
+    member[1]["listCount" if output else "listCountOf"] = {"input": source} if output else source
+    with pytest.raises(ValueError, match="count.*top-level"):
+        schema_from_wire(wire)
+
+    if not output:
+        with pytest.raises(ValueError, match="list_count_of must name a list input"):
+            NodeSchema(
+                node_type="test.unsent_count",
+                body=(replace(cast("Input", counted), list_count_of="missing", sent=False),),
+            )
 
 
 class TwoOutputs(Node):

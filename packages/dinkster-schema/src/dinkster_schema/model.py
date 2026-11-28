@@ -1429,6 +1429,10 @@ class Input:
     disabled_reason: TextOrFormula = ""
     automatic: Formula | Lookup | None = None
     sent: bool = True
+    list_count_of: str | None = None
+    """Store a known list input's count with the causing editor command.
+    Both fields belong to the node's top-level scope.
+    Unknown counts leave the stored value alone; runs never update it."""
     """``label`` is presentation only, text or a formula; empty means "derive
     from the id". Like
     ``tooltip`` and ``widget`` it never
@@ -1495,6 +1499,10 @@ class Input:
     None means "use the default for this input's required-ness"."""
 
     def __post_init__(self) -> None:
+        if self.list_count_of is not None:
+            _validate_structural_id(self.list_count_of, "input list count source")
+            if self.type != TypeExpr.concrete(CORE_INT) or self.pin:
+                raise ValueError(f"input {self.id}: list_count_of needs an INT field with no pin")
         if type(self.pin) is not bool:
             raise ValueError(f"input {self.id}: pin must be a bool")
         if not self.pin and self.pin_first:
@@ -1682,6 +1690,26 @@ KNOWN_VALUE_LIMITS: Final = ("min", "max", "step", "default")
 
 
 @dataclass(frozen=True)
+class OutputListCount:
+    """An output's item count follows an input, without reading its values.
+
+    The output and its input or group belong to the node's top-level scope.
+    With ``group``, the output joins that group's ``input`` across members:
+    a scalar contributes one and a list contributes its item count. An
+    unknown list count makes the total unknown. Without ``group``, the
+    output preserves the named list input's count.
+    """
+
+    input: str
+    group: str | None = None
+
+    def __post_init__(self) -> None:
+        _validate_structural_id(self.input, "output list count input")
+        if self.group is not None:
+            _validate_structural_id(self.group, "output list count group")
+
+
+@dataclass(frozen=True)
 class OutputKnownValue:
     """An output equal to one typed primitive input before execution.
 
@@ -1765,9 +1793,13 @@ class Output:
     alpha_policy: Literal["preserve", "require", "create_if_missing", "drop"] = "preserve"
     mask_polarity: Literal["coverage", "transparency"] | None = None
     mask_semantic: Literal["alpha", "selection", "other"] | None = None
+    list_count: int | OutputListCount | Formula | None = None
+    """An item count, its input source, or a formula, separate from the type.
+    File-derived formula answers are estimates, not document-known counts.
+    Editor metadata only: never an execution value or part of cache identity."""
 
     def __post_init__(self) -> None:
-        from .body import check_flag_or_formula, check_text_or_formula
+        from .body import Formula, check_flag_or_formula, check_text_or_formula
 
         _validate_media_policy(self.alpha_policy, self.mask_polarity, self.mask_semantic)
         check_text_or_formula(self.label, f"output {self.id} label")
@@ -1782,6 +1814,16 @@ class Output:
             cast("object", self.known_value), OutputKnownValue
         ):
             raise ValueError(f"output {self.id}: known_value must be an OutputKnownValue")
+        if self.list_count is not None:
+            if self.type.kind != "list":
+                raise ValueError(f"output {self.id}: list_count needs a list output")
+            if not isinstance(self.list_count, (OutputListCount, Formula)) and not (
+                type(self.list_count) is int and 0 <= self.list_count <= 2**53 - 1
+            ):
+                raise ValueError(
+                    f"output {self.id}: list_count needs a safe nonnegative integer "
+                    "or OutputListCount or Formula"
+                )
 
 
 RESERVED_INPUT_IDS = frozenset({"execution_context", "input_values"})
@@ -2495,7 +2537,70 @@ class NodeSchema:
         for output in self.outputs:
             validate_output_type(output.type)
         self._check_options_inputs(inputs_by_id)
+        count_inputs = self.inputs
+        if not self.effective:
+            from .body import all_rows, scope_rows
+
+            count_inputs = tuple(row for row in scope_rows(self.body) if isinstance(row, Input))
+            for row in scope_rows(self.body):
+                if isinstance(row, (Input, Output)):
+                    continue
+                for nested in all_rows((row,)):
+                    if (isinstance(nested, Input) and nested.list_count_of is not None) or (
+                        isinstance(nested, Output)
+                        and isinstance(nested.list_count, OutputListCount)
+                    ):
+                        raise ValueError(
+                            f"{self.node_type}: count sources require top-level input/output rows"
+                        )
+        for input_spec in count_inputs:
+            if input_spec.list_count_of is not None:
+                source = inputs_by_id.get(input_spec.list_count_of)
+                if source is None or source.type.kind != "list":
+                    raise ValueError(
+                        f"{self.node_type}: input {input_spec.id!r} "
+                        "list_count_of must name a list input"
+                    )
         for output in self.outputs:
+            count = output.list_count
+            if isinstance(count, OutputListCount):
+                if count.group is None:
+                    source = inputs_by_id.get(count.input)
+                    if source is None or source.type.kind != "list":
+                        raise ValueError(
+                            f"{self.node_type}: output {output.id!r} "
+                            "list_count must name a list input"
+                        )
+                elif not self.effective:
+                    from .body import Group, scope_rows
+
+                    group = next(
+                        (
+                            row
+                            for row in scope_rows(self.body)
+                            if isinstance(row, Group) and row.id == count.group
+                        ),
+                        None,
+                    )
+                    source = (
+                        None
+                        if group is None
+                        else next(
+                            (
+                                row
+                                for row in scope_rows(group.member or ())
+                                if isinstance(row, Input) and row.id == count.input
+                            ),
+                            group.value
+                            if isinstance(group.value, Input) and group.value.id == count.input
+                            else None,
+                        )
+                    )
+                    if source is None:
+                        raise ValueError(
+                            f"{self.node_type}: output {output.id!r} "
+                            "list_count must name an input in its group"
+                        )
             known_value = output.known_value
             if known_value is not None:
                 known_input = inputs_by_id.get(known_value.input)
