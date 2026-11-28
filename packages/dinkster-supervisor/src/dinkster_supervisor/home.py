@@ -68,7 +68,38 @@ return 400 and changed/unverified bindings return 409
 
 ``GET /supervisor/installations`` lists each installation's root with its
 frontend facts (``home_frontend.InstallationFrontend``): ``wire``,
-``selected`` and ``available``.
+``selected`` and ``available``. ``GET /supervisor/installations/packs`` takes
+an absolute registered ``root`` and optional ``engine`` (default ``main``).
+It reads installed pack identity and requested ``networkOrigins`` from the
+current snapshot without starting an engine. ``available: false`` with
+``packs: null`` means snapshot metadata is unavailable. Within an available
+list, an unreadable manifest retains its locked identity with
+``networkOrigins: null``; an empty list means known empty requests, not
+unknown requests. Origins include execution parts, not operator grants.
+``GET /supervisor/installations/history`` takes an absolute registered ``root``
+and returns ``root``, ``current`` and the recorded ``history``, including entries
+whose build trees were collected. Unreadable history answers 503, not an empty list.
+``GET /supervisor/installations/facts`` returns the registered root's selected
+``current`` generation, recorded ``build`` identity and observed ``engines``.
+No selected generation means ``build: null``. Unreadable or changing selected
+metadata answers 503; this read never migrates or starts the installation.
+``internetAddresses`` lists effective exact HTTPS origins with ``source`` of
+``pack`` or ``user``; ``graphicsCard`` reports nullable ``requested`` and
+``granted`` booleans. These describe next-start sandbox policy, not live devices.
+``GET/PUT /supervisor/installations/sandbox`` reads/sets ``{root, sandboxPacks}``;
+new installations default off. ``GET`` on its ``/readiness`` subpath reports
+the selected engine's sandbox prerequisites. ``GET/POST/DELETE`` on
+``/supervisor/installations/packs/internet`` reads/adds/removes a pack's
+effective addresses, including manifest requests. Reads take registered ``root``,
+``pack`` and optional ``engine``; writes take those fields plus ``address``.
+Mutations persist without restarting; Home restart rebuilds engine authority.
+
+``GET /supervisor/installations/update`` reviews a registered root's channel
+update without changing the installation. ``POST`` accepts only its retained
+``planId`` and refuses a changed selection or target. Setup and update share
+one process-owned job slot. ``GET/DELETE /supervisor/installations/jobs/{id}``
+observes or cooperatively cancels that job, including its cleanup. Update
+preserves engine assignments and never opens a stopped installation.
 
 ``POST /supervisor/engine/stop`` stops the open engine and keeps its
 installation open. ``GET /supervisor/engine/log`` reads the last 64 KiB of
@@ -118,6 +149,7 @@ from dinkster_library.previews import PREVIEW_MEDIA_TYPE, ContentMismatch, file_
 from yarl import URL
 
 from .environment_state import dinkster_home, shared_library
+from .home_context import configured_wsl, installation_context, resolve_installation_root
 from .home_frontend import (
     FrontendSource,
     dev_session,
@@ -129,6 +161,7 @@ from .home_frontend import (
 from .home_setup import (
     SETUP_KEY,
     SetupJobs,
+    SetupRefused,
     handle_active_job,
     handle_job,
     handle_plan,
@@ -193,7 +226,14 @@ def known_installations() -> frozenset[Path]:
     for store in registered_stores().values():
         if Path(store).is_dir():
             roots.update(Path(project).resolve() for project in store_projects(Path(store)))
-    return frozenset(root for root in roots if (root / "environment.json").is_file())
+    roots = {root for root in roots if (root / "environment.json").is_file()}
+    if (context := configured_wsl()) is not None:
+        anchor = context.windows_path("/")
+        roots.update(
+            context.windows_path(path)
+            for path in cast("list[str]", context.call(anchor, "installations"))
+        )
+    return frozenset(roots)
 
 
 def engine_ports() -> dict[int, Path]:
@@ -202,6 +242,12 @@ def engine_ports() -> dict[int, Path]:
 
     ports: dict[int, Path] = {}
     for root in sorted(known_installations()):
+        if (context := installation_context(root)) is not None:
+            for row in cast("list[dict[str, object]]", context.call(root, "status")):
+                url = row.get("url")
+                if isinstance(url, str) and URL(url).port is not None:
+                    ports.setdefault(cast("int", URL(url).port), root)
+            continue
         records = [root / "environment.json"]
         with contextlib.suppress(OSError, ValueError):
             current = read_current(root)
@@ -241,6 +287,10 @@ def recorded_node_table(target: OpenTarget) -> dict[str, object] | None:
     from .environment_runtime import node_table_record
     from .environment_state import EnvironmentError, read_current
 
+    if (context := installation_context(target.root)) is not None:
+        return cast(
+            "dict[str, object] | None", context.call(target.root, "node-table", target.engine)
+        )
     try:
         record: object = json.loads(
             node_table_record(target.root, target.engine).read_text(encoding="utf-8")
@@ -344,7 +394,21 @@ def project_installation(project: str, known: frozenset[Path]) -> Path | None:
 
     by_identity: dict[str, Path] = {}
     libraries: set[str] = set()
+    guest_roots = [root for root in known if installation_context(root) is not None]
+    if guest_roots:
+        context = installation_context(guest_roots[0])
+        assert context is not None
+        found = context.call(
+            guest_roots[0],
+            "project-installation",
+            project,
+            [context.guest_path(str(root)) for root in guest_roots],
+        )
+        if isinstance(found, str):
+            return context.windows_path(found)
     for root in sorted(known):
+        if installation_context(root) is not None:
+            continue
         with contextlib.suppress(OSError, EnvironmentError):
             if (identity := read_environment_identity(root)) is not None:
                 by_identity[identity] = root
@@ -411,11 +475,7 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
         ),
         (),
     )
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-I",
-        "-m",
-        "dinkster_supervisor.environment",
+    arguments = [
         "--root",
         str(target.root),
         "start",
@@ -424,17 +484,45 @@ async def start_managed_engine(target: OpenTarget, found: Callable[[str], None])
         *(argument for gpu in gpus for argument in ("--gpu", gpu)),
         "--yes",
         "--json",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
+    ]
+    context = installation_context(target.root)
+    command = (
+        [sys.executable, "-I", "-m", "dinkster_supervisor.environment", *arguments]
+        if context is None
+        else context.environment_command(*arguments)
     )
-    output = asyncio.ensure_future(process.communicate())
-    while not output.done():
-        with contextlib.suppress(OSError, ValueError):
-            url = await asyncio.to_thread(address)
-            if url is not None:
-                found(url)
-        await asyncio.wait((output,), timeout=0.25)
-    stdout, _ = output.result()
+    launching = asyncio.create_task(
+        asyncio.create_subprocess_exec(
+            *command,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+        )
+    )
+    output = None
+    try:
+        # Even cancellation during spawn must recover ownership of the start CLI.
+        process = await asyncio.shield(launching)
+        output = asyncio.create_task(process.communicate())
+        while not output.done():
+            with contextlib.suppress(OSError, ValueError):
+                url = await asyncio.to_thread(address)
+                if url is not None:
+                    found(url)
+            await asyncio.wait((output,), timeout=0.25)
+        stdout, _ = output.result()
+    except asyncio.CancelledError:
+        process = await launching
+        if process.returncode is None and context is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
+        # Reap the writer before stop can trust an absent or previous runtime record.
+        if output is None:
+            await process.communicate()
+        else:
+            await output
+        if context is not None:
+            await asyncio.to_thread(stop_managed_engine, target)
+        raise
     try:
         result = cast("dict[str, object]", json.loads(stdout))
     except ValueError:
@@ -472,7 +560,27 @@ class Home:
         self._task: asyncio.Task[None] | None = None
         self._on_change: list[Callable[[], Awaitable[None]]] = []
         self._changing = asyncio.Lock()
-        self.setup = SetupJobs(lambda root: self.open(root, "main"), prepare=self._prepare_setup)
+        self.setup = SetupJobs(
+            lambda root: self.open(root, "main"),
+            prepare=self._prepare_setup,
+            installations=self._installations,
+            updated=self._updated,
+        )
+
+    async def _updated(self, root: Path) -> None:
+        from .environment_runtime import engine_status
+
+        async with self._changing:
+            if self.target is None or self.target.root != root:
+                return
+            engines = await asyncio.to_thread(engine_status, root)
+            if any(
+                row["name"] == self.target.engine and row["state"] == "ready" for row in engines
+            ):
+                await self._replace_locked(self.target)
+            else:
+                await self._cancel()
+                self._set(state="stopped", base_url="")
 
     def on_change(self, callback: Callable[[], Awaitable[None]]) -> None:
         self._on_change.append(callback)
@@ -488,7 +596,7 @@ class Home:
         return self.link.state != "starting" and (self._task is None or self._task.done())
 
     async def open(self, root: Path, engine: str) -> None:
-        resolved = root.resolve()
+        resolved = await asyncio.to_thread(resolve_installation_root, root)
         if not root.is_absolute() or resolved not in await asyncio.to_thread(self._installations):
             raise LookupError("not an installation Dinkster knows")
         await self._replace(OpenTarget(resolved, engine))
@@ -512,6 +620,13 @@ class Home:
         if self.target is None:
             known = await asyncio.to_thread(self._installations)
             await self._replace(OpenTarget(self._default_installation(known), "main"))
+            return
+        if installation_context(self.target.root) is not None or await asyncio.to_thread(
+            (self.target.root / "pack-sandbox.json").exists
+        ):
+            target = self.target
+            await self.stop_open()
+            await self._replace(target)
             return
         if self._task is not None and not self._task.done() and self.link.state != "starting":
             timeout = aiohttp.ClientTimeout(total=10)
@@ -604,15 +719,18 @@ class Home:
 
     async def _replace(self, target: OpenTarget) -> None:
         async with self._changing:
-            self.selection_epoch += 1
-            await self._cancel()
-            self.target = target
-            if target not in self.opened:
-                self.opened.append(target)
-            self._set(state="starting", base_url="")
-            for callback in self._on_change:
-                await callback()
-            self._task = asyncio.create_task(self._run(target))
+            await self._replace_locked(target)
+
+    async def _replace_locked(self, target: OpenTarget) -> None:
+        self.selection_epoch += 1
+        await self._cancel()
+        self.target = target
+        if target not in self.opened:
+            self.opened.append(target)
+        self._set(state="starting", base_url="")
+        for callback in self._on_change:
+            await callback()
+        self._task = asyncio.create_task(self._run(target))
 
     def _set(self, *, state: str, base_url: str | None = None, detail: str = "") -> None:
         self.link.state = state
@@ -624,6 +742,7 @@ class Home:
 
     async def _run(self, target: OpenTarget) -> None:
         timeout = aiohttp.ClientTimeout(total=5)
+        expected_instance: str | None = None
         async with aiohttp.ClientSession(timeout=timeout) as session:
 
             async def engine_status() -> dict[str, object] | None:
@@ -636,6 +755,8 @@ class Home:
                 if not isinstance(status, dict):
                     return None
                 body = cast("dict[str, object]", status)
+                if expected_instance is not None and body.get("instance") != expected_instance:
+                    return None
                 return body if body.get("state") in {"starting", "ready", "failed"} else None
 
             starting = asyncio.create_task(self._start(target, self._found))
@@ -648,12 +769,32 @@ class Home:
                         )
                     await asyncio.wait((starting,), timeout=self._watch_interval)
                 url = starting.result()
+                if (context := installation_context(target.root)) is not None:
+                    connection = cast(
+                        "dict[str, str]",
+                        await asyncio.to_thread(
+                            context.call, target.root, "connection", target.engine
+                        ),
+                    )
+                    expected_instance = connection["instance"]
+                    self.link.base_url = url.rstrip("/")
+                    if (
+                        connection["url"].rstrip("/") != self.link.base_url
+                        or await engine_status() is None
+                    ):
+                        raise RuntimeError(
+                            "The WSL engine is not reachable at its Windows address. "
+                            "Another Windows process may be using its port."
+                        )
             except Exception as error:  # noqa: BLE001 - every start failure is reported in status
                 log.warning("opening %s failed: %s", target.root, error)
                 self._set(state="failed", detail=str(error))
                 return
             finally:
-                starting.cancel()
+                if not starting.done():
+                    starting.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await starting
             self.link.base_url = url.rstrip("/")
             self._set(state="ready")
             log.info("engine %s of %s is open at %s", target.engine, target.root, url)
@@ -701,8 +842,15 @@ class HomeLibrary:
     starting either one.
     """
 
-    def __init__(self, root: Path, usable: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        root: Path,
+        usable: Callable[[], bool],
+        target: Callable[[], OpenTarget | None] = lambda: None,
+    ) -> None:
         self.root = root
+        self._native_root = root
+        self._target = target
         self._usable = usable
         self._client: AsyncLibraryClient | None = None
         self._lock = asyncio.Lock()
@@ -713,8 +861,23 @@ class HomeLibrary:
             if not self._usable():
                 raise _EngineOpening
             if self._client is None:
-                await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
-                self._client = await AsyncLibraryClient.start(self.root)
+                target = self._target()
+                context = None if target is None else installation_context(target.root)
+                if context is not None and target is not None:
+                    guest = await asyncio.to_thread(context.call, target.root, "library-root")
+                    self.root = context.windows_path(cast("str", guest))
+                    self._client = await AsyncLibraryClient.start(
+                        self.root,
+                        command=context.command(
+                            "dinkster_supervisor.home_context",
+                            "--library-owner",
+                            context.distribution,
+                        ),
+                    )
+                else:
+                    self.root = self._native_root
+                    await asyncio.to_thread(self.root.mkdir, parents=True, exist_ok=True)
+                    self._client = await AsyncLibraryClient.start(self.root)
             return await self._client.call(operation, **arguments)
 
     async def close(self) -> None:
@@ -1156,6 +1319,241 @@ async def _handle_installations(request: web.Request) -> web.Response:
     return web.json_response({"installations": rows})
 
 
+async def _handle_update_plan(request: web.Request) -> web.Response:
+    root, _ = await _installation_fields(request, {"root"})
+    try:
+        jobs = request.app[SETUP_KEY]
+        plan = await jobs.plan_update(root)
+        return web.json_response({"plan": plan, "activeJob": jobs.active_job})
+    except (OSError, ValueError) as error:
+        return web.json_response(
+            {"error": getattr(error, "code", "update-unavailable"), "message": str(error)},
+            status=409 if isinstance(error, SetupRefused) else 503,
+        )
+
+
+async def _handle_restore_plan(request: web.Request) -> web.Response:
+    root, fields = await _installation_fields(request, {"root", "entry"})
+    try:
+        entry = int(cast("str", fields.get("entry", "")))
+        if entry < 1:
+            raise ValueError("Choose a positive history entry.")
+    except ValueError as error:
+        return web.json_response({"error": "invalid-entry", "message": str(error)}, status=400)
+    try:
+        jobs = request.app[SETUP_KEY]
+        plan = await jobs.plan_restore(root, entry)
+        return web.json_response({"plan": plan, "activeJob": jobs.active_job})
+    except (OSError, ValueError) as error:
+        return web.json_response(
+            {"error": getattr(error, "code", "restore-unavailable"), "message": str(error)},
+            status=409 if isinstance(error, SetupRefused) else 503,
+        )
+
+
+async def _handle_installation_facts(request: web.Request) -> web.Response:
+    from .environment_runtime import engine_status
+    from .environment_state import EnvironmentError, Generation, read_current
+
+    root, _ = await _installation_fields(request, {"root"})
+
+    def observe() -> dict[str, object]:
+        if not root.is_dir():
+            raise FileNotFoundError("the installation folder is missing")
+        current = read_current(root)
+        build = None
+        if current is not None:
+            recorded = Generation.read(root / "builds" / str(current) / "build.json")
+            if recorded.number != current:
+                raise EnvironmentError("snapshot directory and recorded number disagree")
+            build = {
+                "version": recorded.engine_version,
+                "release": recorded.engine_release,
+                "variant": recorded.variant,
+                "baseId": recorded.base,
+                "source": recorded.source,
+            }
+        engines = list(engine_status(root))
+        if read_current(root) != current:
+            raise EnvironmentError("the selected snapshot changed while reading installation facts")
+        return {"root": str(root), "current": current, "build": build, "engines": engines}
+
+    try:
+        return web.json_response(await asyncio.to_thread(observe))
+    except (OSError, ValueError) as error:
+        return web.json_response({"error": "facts-unavailable", "message": str(error)}, status=503)
+
+
+async def _handle_installation_history(request: web.Request) -> web.Response:
+    from .environment_history import history
+    from .environment_state import read_current
+
+    root = Path(request.query.get("root", ""))
+    if (
+        set(request.query) != {"root"}
+        or len(request.query.getall("root")) != 1
+        or not root.is_absolute()
+    ):
+        return web.json_response(
+            {"error": "invalid-request", "message": "provide one absolute root"}, status=400
+        )
+    try:
+        roots = await request.app[HOME_KEY].installations()
+    except ValueError as error:
+        return web.json_response(
+            {"error": "installations-unavailable", "message": str(error)}, status=503
+        )
+    root = root.resolve()
+    if root not in roots:
+        return web.json_response({"error": "unknown-installation"}, status=404)
+    try:
+        if not await asyncio.to_thread(root.is_dir):
+            raise FileNotFoundError("the installation folder is missing")
+        entries = await asyncio.to_thread(history, root)
+        current = await asyncio.to_thread(read_current, root)
+    except (OSError, ValueError) as error:
+        return web.json_response(
+            {"error": "history-unavailable", "message": str(error)}, status=503
+        )
+    return web.json_response({"root": str(root), "current": current, "history": entries})
+
+
+async def _handle_installation_packs(request: web.Request) -> web.Response:
+    from .environment_runtime import installation_pack_metadata
+
+    root, fields = await _installation_fields(request, {"root", "engine"})
+    engine = fields.get("engine", "main")
+    if not isinstance(engine, str):
+        return web.json_response({"error": "invalid-request"}, status=400)
+    try:
+        metadata = await asyncio.to_thread(installation_pack_metadata, root, engine)
+    except ValueError as error:
+        return web.json_response({"error": "invalid-request", "message": str(error)}, status=400)
+    return web.json_response(metadata)
+
+
+async def _installation_fields(
+    request: web.Request, allowed: set[str]
+) -> tuple[Path, dict[str, object]]:
+    if request.method == "GET":
+        fields: dict[str, object] = dict(request.query)
+        valid = len(request.query) == len(fields)
+    else:
+        try:
+            body: object = await request.json()
+        except ValueError:
+            body = None
+        fields = cast("dict[str, object]", body) if isinstance(body, dict) else {}
+        valid = isinstance(body, dict) and not request.query
+    root_value = fields.get("root")
+    if (
+        not valid
+        or set(fields) - allowed
+        or not isinstance(root_value, str)
+        or not Path(root_value).is_absolute()
+    ):
+        raise web.HTTPBadRequest(
+            text=json.dumps({"error": "invalid-request", "message": "invalid installation fields"}),
+            content_type="application/json",
+        )
+    try:
+        roots = await request.app[HOME_KEY].installations()
+    except ValueError as error:
+        raise web.HTTPServiceUnavailable(
+            text=json.dumps({"error": "installations-unavailable", "message": str(error)}),
+            content_type="application/json",
+        ) from error
+    root = await asyncio.to_thread(resolve_installation_root, Path(root_value))
+    if root not in roots:
+        raise web.HTTPNotFound(
+            text=json.dumps({"error": "unknown-installation"}), content_type="application/json"
+        )
+    return root, fields
+
+
+async def _handle_installation_sandbox(request: web.Request) -> web.Response:
+    from .environment_runtime import sandbox_readiness
+    from .environment_sandbox import read_sandbox_settings, set_sandbox_switch
+    from .environment_state import read_current
+
+    allowed = {"root", "sandboxPacks"} if request.method == "PUT" else {"root"}
+    root, fields = await _installation_fields(request, allowed)
+    try:
+        if request.method == "PUT":
+            enabled = fields.get("sandboxPacks")
+            if type(enabled) is not bool:
+                raise ValueError("sandboxPacks must be a boolean")
+            return web.json_response(await asyncio.to_thread(set_sandbox_switch, root, enabled))
+        settings = await asyncio.to_thread(read_sandbox_settings, root)
+        answer: dict[str, object] = {"root": str(root), "sandboxPacks": settings["sandboxPacks"]}
+        if request.path.endswith("/readiness"):
+            context = installation_context(root)
+            current = (
+                await asyncio.to_thread(read_current, root)
+                if context is None
+                else cast("int | None", await asyncio.to_thread(context.call, root, "current"))
+            )
+            report = (
+                await asyncio.to_thread(sandbox_readiness, root, current)
+                if current is not None
+                else {
+                    "format": "dinkster.sandbox-readiness/1",
+                    "available": False,
+                    "detail": "Install an engine before enabling pack sandboxing.",
+                }
+            )
+            answer.update(report)
+        return web.json_response(answer)
+    except (OSError, ValueError) as error:
+        return web.json_response({"error": "invalid-request", "message": str(error)}, status=400)
+
+
+async def _handle_pack_internet(request: web.Request) -> web.Response:
+    from .environment_runtime import installation_pack_metadata
+    from .environment_sandbox import change_internet_address
+
+    allowed = {"root", "engine", "pack"}
+    if request.method != "GET":
+        allowed.add("address")
+    root, fields = await _installation_fields(request, allowed)
+    engine, pack = fields.get("engine", "main"), fields.get("pack")
+    if not isinstance(engine, str) or not isinstance(pack, str) or not pack:
+        return web.json_response({"error": "invalid-request"}, status=400)
+    try:
+        metadata = await asyncio.to_thread(installation_pack_metadata, root, engine)
+        if not metadata["available"]:
+            return web.json_response(metadata, status=503)
+        rows = cast("list[dict[str, object]]", metadata["packs"])
+        row = next((row for row in rows if row["pack"] == pack), None)
+        if row is None:
+            return web.json_response({"error": "unknown-pack"}, status=404)
+        if row["internetAddresses"] is None:
+            return web.json_response({"error": "pack-metadata-unavailable"}, status=503)
+        if request.method != "GET":
+            address = fields.get("address")
+            if not isinstance(address, str):
+                raise ValueError("address must be an exact HTTPS origin")
+            row["internetAddresses"] = await asyncio.to_thread(
+                change_internet_address,
+                root,
+                pack,
+                address,
+                cast("list[str]", row["networkOrigins"]),
+                str(metadata["snapshot"]),
+                allow=request.method == "POST",
+            )
+        return web.json_response(
+            {
+                "root": str(root),
+                "engine": engine,
+                "pack": pack,
+                "internetAddresses": row["internetAddresses"],
+            }
+        )
+    except (OSError, ValueError) as error:
+        return web.json_response({"error": "invalid-request", "message": str(error)}, status=400)
+
+
 async def _handle_open(request: web.Request) -> web.Response:
     try:
         body = await request.json()
@@ -1285,7 +1683,7 @@ def create_home_app(
     app[LIBRARY_KEY] = None
     if library is not None:
         app[LIBRARY_KEY] = shared = HomeLibrary(
-            library, lambda: home.engine_absent and not home.setup.busy
+            library, lambda: home.engine_absent and not home.setup.busy, lambda: home.target
         )
         home.on_change(shared.close)
     app[LINK_KEY] = home.link
@@ -1354,15 +1752,30 @@ def create_home_app(
     app.on_cleanup.append(close_session)
     app.router.add_get(STATUS_PATH, _handle_status)
     app.router.add_get("/supervisor/installations", _handle_installations)
+    app.router.add_get("/supervisor/installations/facts", _handle_installation_facts)
+    app.router.add_get("/supervisor/installations/history", _handle_installation_history)
+    app.router.add_get("/supervisor/installations/packs", _handle_installation_packs)
+    app.router.add_get("/supervisor/installations/sandbox", _handle_installation_sandbox)
+    app.router.add_put("/supervisor/installations/sandbox", _handle_installation_sandbox)
+    app.router.add_get("/supervisor/installations/sandbox/readiness", _handle_installation_sandbox)
+    app.router.add_get("/supervisor/installations/packs/internet", _handle_pack_internet)
+    app.router.add_post("/supervisor/installations/packs/internet", _handle_pack_internet)
+    app.router.add_delete("/supervisor/installations/packs/internet", _handle_pack_internet)
     app.router.add_post("/supervisor/engine", _handle_open)
     app.router.add_post("/supervisor/engine/restart", _handle_restart)
     app.router.add_post("/supervisor/engine/stop", _handle_stop_engine)
     app.router.add_get("/supervisor/engine/log", _handle_engine_log)
     app.router.add_get("/supervisor/setup", handle_plan)
+    app.router.add_get("/supervisor/installations/update", _handle_update_plan)
+    app.router.add_post("/supervisor/installations/update", handle_start)
+    app.router.add_get("/supervisor/installations/restore", _handle_restore_plan)
+    app.router.add_post("/supervisor/installations/restore", handle_start)
     app.router.add_post("/supervisor/setup", handle_start)
     app.router.add_get("/supervisor/setup/active", handle_active_job)
     app.router.add_get("/supervisor/setup/{id}", handle_job)
     app.router.add_delete("/supervisor/setup/{id}", handle_job)
+    app.router.add_get("/supervisor/installations/jobs/{id}", handle_job)
+    app.router.add_delete("/supervisor/installations/jobs/{id}", handle_job)
     app.router.add_post("/supervisor/shutdown", _handle_shutdown)
     app.router.add_post("/supervisor/projects/{project}/folder", _handle_open_folder)
     app.router.add_route("*", "/supervisor/{tail:.*}", _handle_unknown)

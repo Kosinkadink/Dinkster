@@ -11,21 +11,37 @@ import os
 import socket
 import stat
 import sys
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dinkster_store.egress import (
+    EgressProxyError as EgressProxyError,
+)
+from dinkster_store.egress import (
+    canonical_host as _canonical_host,
+)
+from dinkster_store.egress import (
+    egress_origin_from_url as egress_origin_from_url,
+)
+from dinkster_store.egress import (
+    is_public_unicast as _is_public_unicast,
+)
+from dinkster_store.egress import (
+    normalize_egress_origin as normalize_egress_origin,
+)
+from dinkster_store.egress import (
+    origin as _origin,
+)
+
 EGRESS_PROXY_ENV = "DINKSTER_EGRESS_PROXY"
 
 _MAX_HEADER_BYTES = 16 * 1024
-_MAX_CLIENTS = 64
+MAX_PROXY_CLIENTS = 64
 _MAX_RESOLVE_BODY_BYTES = 64 * 1024
 _REQUEST_TIMEOUT_SECONDS = 10.0
 _UPSTREAM_TIMEOUT_SECONDS = 10.0
-
-
-class EgressProxyError(ValueError):
-    """An egress origin or proxy request is invalid."""
 
 
 class _EgressDenied(EgressProxyError):
@@ -34,81 +50,6 @@ class _EgressDenied(EgressProxyError):
 
 class _ProxyAuthenticationRequired(EgressProxyError):
     pass
-
-
-def _is_public_unicast(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return (
-        address.is_global
-        and not address.is_private
-        and not address.is_loopback
-        and not address.is_link_local
-        and not address.is_multicast
-        and not address.is_reserved
-        and not address.is_unspecified
-    )
-
-
-def _canonical_host(host: str) -> str:
-    host = host.rstrip(".")
-    if not host or "%" in host:
-        raise EgressProxyError("egress origin requires a valid host")
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        try:
-            canonical = host.encode("idna").decode("ascii").lower()
-        except UnicodeError as exc:
-            raise EgressProxyError("egress origin requires a valid host") from exc
-        labels = canonical.split(".")
-        if len(canonical) > 253 or any(
-            not label
-            or len(label) > 63
-            or label[0] == "-"
-            or label[-1] == "-"
-            or any(not (char.isascii() and (char.isalnum() or char == "-")) for char in label)
-            for label in labels
-        ):
-            raise EgressProxyError("egress origin requires a valid host") from None
-        return canonical
-    if not _is_public_unicast(address):
-        raise EgressProxyError("egress origin cannot name a non-public address")
-    return address.compressed
-
-
-def _origin(host: str, port: int) -> str:
-    rendered = f"[{host}]" if ":" in host else host
-    return f"https://{rendered}" if port == 443 else f"https://{rendered}:{port}"
-
-
-def egress_origin_from_url(value: str) -> str:
-    """Return the canonical HTTPS origin named by a URL."""
-    candidate = value.strip()
-    try:
-        parsed = urlsplit(candidate)
-        port = parsed.port
-    except ValueError as exc:
-        raise EgressProxyError(f"invalid egress origin {value!r}") from exc
-    if parsed.scheme.lower() != "https" or not parsed.hostname:
-        raise EgressProxyError("egress origin must use https:// and include a host")
-    if parsed.username is not None or parsed.password is not None:
-        raise EgressProxyError("egress origin cannot include credentials")
-    if parsed.netloc.rsplit("@", 1)[-1].endswith(":"):
-        raise EgressProxyError("egress origin requires a valid port")
-    if port is not None and not 1 <= port <= 65535:
-        raise EgressProxyError("egress origin requires a valid port")
-    return _origin(_canonical_host(parsed.hostname), port if port is not None else 443)
-
-
-def normalize_egress_origin(value: str) -> str:
-    """Return one canonical HTTPS origin suitable for exact allowlisting."""
-    candidate = value.strip()
-    try:
-        parsed = urlsplit(candidate)
-    except ValueError as exc:
-        raise EgressProxyError(f"invalid egress origin {value!r}") from exc
-    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
-        raise EgressProxyError("egress origin cannot include a path, query, or fragment")
-    return egress_origin_from_url(candidate)
 
 
 def _parse_authority(value: str) -> tuple[str, int, str]:
@@ -212,7 +153,7 @@ async def _pump(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> N
         await writer.drain()
 
 
-async def _relay(
+async def relay_streams(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
     remote_reader: asyncio.StreamReader,
@@ -222,20 +163,26 @@ async def _relay(
         asyncio.create_task(_pump(client_reader, remote_writer)),
         asyncio.create_task(_pump(remote_reader, client_writer)),
     }
-    _done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*tasks, return_exceptions=True)
+    try:
+        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class EgressProxy:
     """An HTTP CONNECT proxy scoped to one worker's HTTPS origin allowlist."""
 
-    def __init__(self, socket_path: Path | None, origins: tuple[str, ...]) -> None:
+    def __init__(
+        self,
+        socket_path: Path | None,
+        origins: tuple[str, ...],
+        on_denied: Callable[[str], None] | None = None,
+    ) -> None:
         self._socket_path = socket_path
         self.origins = frozenset(normalize_egress_origin(origin) for origin in origins)
-        if not self.origins:
-            raise EgressProxyError("egress proxy requires at least one allowed origin")
+        self._on_denied = on_denied
         self._server: asyncio.Server | None = None
         self._clients: set[asyncio.Task[None]] = set()
         self._closing = False
@@ -249,10 +196,16 @@ class EgressProxy:
         return self._socket_path
 
     @classmethod
-    async def start_tcp(cls, origins: tuple[str, ...], token: str) -> EgressProxy:
+    async def start_tcp(
+        cls,
+        origins: tuple[str, ...],
+        token: str,
+        *,
+        on_denied: Callable[[str], None] | None = None,
+    ) -> EgressProxy:
         if len(token) < 32 or not token.isalnum() or not token.isascii():
             raise EgressProxyError("TCP egress proxy requires a private random token")
-        proxy = cls(None, origins)
+        proxy = cls(None, origins, on_denied)
         proxy._authorization = "Basic " + base64.b64encode(f"dinkster:{token}".encode()).decode()
         proxy._server = await asyncio.start_server(
             proxy._handle, host="127.0.0.1", port=0, limit=_MAX_HEADER_BYTES
@@ -262,10 +215,16 @@ class EgressProxy:
         return proxy
 
     @classmethod
-    async def start(cls, socket_path: Path, origins: tuple[str, ...]) -> EgressProxy:
+    async def start(
+        cls,
+        socket_path: Path,
+        origins: tuple[str, ...],
+        *,
+        on_denied: Callable[[str], None] | None = None,
+    ) -> EgressProxy:
         if sys.platform == "win32":
             raise EgressProxyError("egress proxy requires Unix sockets")
-        proxy = cls(socket_path, origins)
+        proxy = cls(socket_path, origins, on_denied)
         try:
             metadata = socket_path.lstat()
         except FileNotFoundError:
@@ -322,13 +281,14 @@ class EgressProxy:
 
     async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
-        if self._closing or task is None or len(self._clients) >= _MAX_CLIENTS:
+        if self._closing or task is None or len(self._clients) >= MAX_PROXY_CLIENTS:
             writer.close()
             with suppress(Exception):
                 await writer.wait_closed()
             return
         self._clients.add(task)
         remote_writer: asyncio.StreamWriter | None = None
+        origin: str | None = None
         try:
             method, target, _version = await self._request_head(reader)
             host, port, origin = _parse_authority(target)
@@ -350,12 +310,14 @@ class EgressProxy:
                 remote_reader, remote_writer = await _connect(addresses, port)
                 writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
                 await writer.drain()
-                await _relay(reader, writer, remote_reader, remote_writer)
+                await relay_streams(reader, writer, remote_reader, remote_writer)
             else:
                 await _try_write_response(writer, 405, "Method Not Allowed")
         except _ProxyAuthenticationRequired:
             await _try_write_response(writer, 407, "Proxy Authentication Required")
         except _EgressDenied:
+            if origin is not None and self._on_denied is not None:
+                self._on_denied(origin)
             await _try_write_response(writer, 403, "Forbidden")
         except (EgressProxyError, OSError):
             await _try_write_response(writer, 502, "Bad Gateway")

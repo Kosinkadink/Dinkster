@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import socket
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -47,6 +49,228 @@ def test_retained_setup_job_discovery_does_not_wait_for_planning(
                 assert response.status == 200
 
     run_scenario(scenario())
+
+
+@pytest.mark.usefixtures("signed_channels")
+@pytest.mark.parametrize("opened", [False, True])
+@pytest.mark.parametrize("operation", ["update", "restore"])
+def test_installation_job_binds_review_and_cancels_real_cli_without_opening_stopped_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, opened: bool, operation: str
+) -> None:
+    from dinkster_supervisor.environment_runtime import (
+        engine_assignments,
+        engine_status,
+        stop_engine,
+    )
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    monkeypatch.setattr(home_setup, "RELEASE_MIRROR", fixture["mirror"])
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "library"))
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    root = tmp_path / "installation"
+    cancel = True
+    change_before_launch = False
+    launch = asyncio.create_subprocess_exec
+
+    async def signed_process(executable: str, *arguments: str, **kwargs: Any):
+        if change_before_launch and operation in arguments and "--yes" in arguments:
+            settings_path = root / "environment.json"
+            changed = json.loads(settings_path.read_text())
+            changed["responseCompression"] = True
+            write_document(settings_path, changed)
+        if arguments[:3] == ("-I", "-m", "dinkster_supervisor.environment"):
+            script = (
+                "from dinkster_supervisor import environment, environment_channel_signatures; "
+                f"environment_channel_signatures.CHANNEL_KEYS = {KEYS!r}\n"
+            )
+            if cancel and operation in arguments and "--yes" in arguments:
+                module = "environment_restore" if operation == "restore" else "environment"
+                script += f"from dinkster_supervisor import {module} as observed\n"
+                script += """
+import sys, time
+from pathlib import Path
+observe = observed.preparation_progress
+def progress(stage, completed=0, total=0):
+    if stage == 'starting-engine':
+        marker = Path(sys.argv[sys.argv.index('--progress') + 1])
+        marker.with_suffix('.boundary').touch()
+        deadline = time.monotonic() + 30
+        while not marker.with_name(marker.name + '.cancel').exists():
+            if time.monotonic() > deadline:
+                raise ValueError('test did not cancel at activation boundary')
+            time.sleep(0.01)
+    observe(stage, completed, total)
+observed.preparation_progress = progress
+"""
+            arguments = ("-I", "-c", script + "environment.main()", *arguments[3:])
+        return await launch(executable, *arguments, **kwargs)
+
+    monkeypatch.setattr(home_setup.asyncio, "create_subprocess_exec", signed_process)
+
+    async def scenario() -> None:
+        nonlocal cancel, change_before_launch
+        installed = await home_setup.environment_command(
+            root,
+            "setup",
+            "--channel",
+            "nightly",
+            "--variant",
+            "fixture-cpu",
+            "--data",
+            str(tmp_path / "store"),
+            "--port",
+            str(free_port()),
+            "--yes",
+        )
+        assert installed["current"] == 1
+        channel = Path(fixture["mirror"]) / "channels/nightly.json"
+        original_channel = channel.read_bytes()
+        channel.write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+        if operation == "restore":
+            assert (await home_setup.environment_command(root, "update", "--yes"))["current"] == 2
+        await asyncio.to_thread(stop_engine, root, "main")
+        current = 2 if operation == "restore" else 1
+        settings = (root / "environment.json").read_bytes()
+        previous = (root / "builds" / str(current) / "build.json").read_bytes()
+        home = Home(watch_interval=0.01)
+        path = "/supervisor/installations/" + operation
+        params = {"root": str(root), **({"entry": "1"} if operation == "restore" else {})}
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            if opened:
+                await home.open(root, "main")
+                for _ in range(600):
+                    if home.link.state == "ready":
+                        break
+                    await asyncio.sleep(0.05)
+                assert home.link.state == "ready", home.link.detail
+            for invalid_params, expected in (
+                ({"root": str(tmp_path / "unknown")}, 404),
+                ({"root": "relative"}, 400),
+                ({"root": str(root), "command": "stop"}, 400),
+            ):
+                assert (await client.get(path, params=invalid_params)).status == expected
+            if operation == "restore":
+                for entry in ("", "0", "-1", "unknown"):
+                    assert (
+                        await client.get(path, params={"root": str(root), "entry": entry})
+                    ).status == 400
+            response = await client.get(path, params=params)
+            assert response.status == 200, await response.text()
+            plan = (await response.json())["plan"]
+            if operation == "restore":
+                assert plan["observed"]["current"] == current and plan["exact"] is True
+                plan_id = plan["alternatives"][0]["planId"]
+            else:
+                assert plan["current"] == 1 and plan["version"] == "2.0"
+                plan_id = plan["id"]
+            assert (root / "environment.json").read_bytes() == settings
+            assert (root / "builds" / str(current) / "build.json").read_bytes() == previous
+            expected_state = "ready" if opened else "stopped"
+            before_engines = engine_status(root)
+            assert len(before_engines) == 1 and before_engines[0]["state"] == expected_state
+            before_assignments = engine_assignments(root, current)
+            if operation == "update":
+                channel.write_bytes(original_channel)
+                stale = await client.post(path, json={"planId": plan_id})
+                assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
+                channel.write_bytes(Path(fixture["updatedChannel"]).read_bytes())
+            changed = json.loads(settings)
+            changed["responseCompression"] = True
+            write_document(root / "environment.json", changed)
+            stale = await client.post(path, json={"planId": plan_id})
+            assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
+            (root / "environment.json").write_bytes(settings)
+            assert (await client.post("/supervisor/setup", json={"planId": plan_id})).status == 404
+            other_operation = "restore" if operation == "update" else "update"
+            assert (
+                await client.post(
+                    "/supervisor/installations/" + other_operation, json={"planId": plan_id}
+                )
+            ).status == 404
+            assert (
+                await client.post(path, json={"planId": plan_id, "root": str(root)})
+            ).status == 400
+            change_before_launch = True
+            response = await client.post(path, json={"planId": plan_id})
+            assert response.status == 202, await response.text()
+            raced = await response.json()
+            race_path = "/supervisor/installations/jobs/" + raced["id"]
+            for _ in range(600):
+                raced = await (await client.get(race_path)).json()
+                if raced["state"] not in {"running", "cancelling"}:
+                    break
+                await asyncio.sleep(0.05)
+            assert raced["state"] == "failed", raced
+            expected_error = "approval is stale" if operation == "restore" else "review a new plan"
+            assert expected_error in raced["error"]["message"], raced
+            assert (root / "current").read_text() == f"{current}\n"
+            (root / "environment.json").write_bytes(settings)
+            change_before_launch = False
+            for cancelling in (True, False):
+                cancel = cancelling
+                response = await client.post(path, json={"planId": plan_id})
+                assert response.status == 202, await response.text()
+                job = await response.json()
+                job_path = "/supervisor/installations/jobs/" + job["id"]
+                progress = home_setup.dinkster_home() / "setup-jobs" / (job["id"] + ".json")
+                requested = False
+                for _ in range(600):
+                    job = await (await client.get(job_path)).json()
+                    if cancelling and not requested and progress.with_suffix(".boundary").exists():
+                        assert job["progress"] is not None
+                        for start_path in (path, "/supervisor/setup"):
+                            assert (
+                                await client.post(start_path, json={"planId": plan_id})
+                            ).status == 409
+                        assert (await client.delete(job_path)).status == 202
+                        requested = True
+                    if job["state"] not in {"running", "cancelling"}:
+                        break
+                    await asyncio.sleep(0.05)
+                assert job["state"] == ("cancelled" if cancelling else "completed"), job
+                assert (
+                    not progress.exists()
+                    and not progress.with_name(progress.name + ".cancel").exists()
+                )
+                if opened:
+                    for _ in range(600):
+                        if home.link.state == "ready":
+                            break
+                        await asyncio.sleep(0.05)
+                    assert home.link.state == "ready", home.link.detail
+                    assert home.target is not None and home.target.root == root
+                else:
+                    assert home.target is None
+                if cancelling:
+                    assert requested and (root / "current").read_text() == f"{current}\n"
+                    assert (root / "environment.json").read_bytes() == settings
+                    assert (root / "builds" / str(current) / "build.json").read_bytes() == previous
+                    assert not (root / "builds" / str(current + 1)).exists()
+                else:
+                    assert (root / "current").read_text() == f"{current + 1}\n"
+                    assert json.loads(
+                        (root / "builds" / str(current + 1) / "build.json").read_text()
+                    )["engine"]["version"] == ("1.0" if operation == "restore" else "2.0")
+                engines = engine_status(root)
+                assert len(engines) == 1 and engines[0]["state"] == expected_state
+                assignments = engine_assignments(root, current if cancelling else current + 1)
+                assert [
+                    {key: value for key, value in row.items() if key != "port"}
+                    for row in assignments
+                ] == [
+                    {key: value for key, value in row.items() if key != "port"}
+                    for row in before_assignments
+                ]
+                if cancelling or not opened:
+                    assert assignments[0]["port"] == before_assignments[0]["port"]
+            stale = await client.post(path, json={"planId": plan_id})
+            assert stale.status == 409 and (await stale.json())["error"] == "plan-changed"
+
+    try:
+        run_scenario(scenario())
+    finally:
+        stop_engine(root, "main")
 
 
 @pytest.mark.parametrize(
@@ -139,6 +363,31 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
             job = await response.json()
             await started.wait()
             path = "/supervisor/setup/" + job["id"]
+            if outcome == "completed":
+                reading, release = threading.Event(), threading.Event()
+                original_read = home_setup.read_document
+
+                def held_read(progress: Path) -> dict[str, object]:
+                    reading.set()
+                    if not release.wait(timeout=30):
+                        raise AssertionError("Progress reading blocked the Home event loop")
+                    return original_read(progress)
+
+                with monkeypatch.context() as held:
+                    held.setattr(home_setup, "read_document", held_read)
+                    pending = asyncio.create_task(client.get(path))
+                    try:
+                        assert await asyncio.to_thread(reading.wait, 30)
+                        status = await client.get("/supervisor/status")
+                        assert status.status == 200
+                        release.set()
+                        assert (await pending).status == 200
+                    except BaseException:
+                        finish.set()
+                        cleanup.set()
+                        raise
+                    finally:
+                        release.set()
             assert (await (await client.get(path)).json())["progress"] == {
                 "stage": "downloading",
                 "completed": 17,
@@ -194,6 +443,77 @@ def test_setup_job_is_shared_between_screens_and_finishes_cleanup_before_cancell
                 "activeJob": final
             }
             assert (await client.delete(path)).status == 200
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize(
+    ("torch", "cuda"),
+    [("2.14.1+cu132", "13.2"), ("2.9.1+cu126", "12.6"), ("2.14.1+cpu", None), (None, None)],
+)
+def test_setup_details_follow_the_selected_build_not_the_planning_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, torch: str | None, cuda: str | None
+) -> None:
+    from dinkster_supervisor import environment_hardware
+
+    monkeypatch.setattr(environment_hardware, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(environment_hardware.platform, "machine", lambda: "x86_64")
+    common = {"platform": {"os": "linux", "arch": "x86_64"}, "nvidia": None}
+    catalog = SimpleNamespace(
+        bases={
+            "first": {
+                **common,
+                "python": "3.14.10",
+                "wheels": [{"name": "torch", "version": "2.8.0+cpu"}],
+            },
+            "second": {
+                **common,
+                "python": "3.13.8",
+                "wheels": [{"name": "torch", "version": torch}] if torch else [],
+            },
+        },
+        channel=SimpleNamespace(engine_release="release", base_for=lambda variant: variant),
+        engine={"version": "0.0.19.dev123"},
+    )
+    monkeypatch.setattr(home_setup, "discover", lambda *args: catalog)
+    monkeypatch.setattr(home_setup, "detect_graphics_cards", list)
+    monkeypatch.setattr(home_setup, "library_engine", lambda _: None)
+
+    async def command(root: Path, *arguments: str) -> dict[str, object]:
+        assert "--plan" in arguments and "--yes" not in arguments
+        return {"runtimeDownloadBytes": 123}
+
+    monkeypatch.setattr(home_setup, "environment_command", command)
+
+    async def scenario() -> None:
+        home = Home(installations=frozenset)
+        root = tmp_path / "prospective"
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            first = await client.get(
+                "/supervisor/setup", params={"root": str(root), "variant": "first"}
+            )
+            assert first.status == 200
+            assert (await first.json())["plan"]["buildDetails"] == {
+                "python": "3.14.10",
+                "pytorch": "2.8.0+cpu",
+                "cuda": None,
+                "dinkster": "0.0.19.dev123",
+            }
+            second = await client.get(
+                "/supervisor/setup", params={"root": str(root), "variant": "second"}
+            )
+            assert second.status == 200
+            assert (await second.json())["plan"]["buildDetails"] == (
+                {
+                    "python": "3.13.8",
+                    "pytorch": torch,
+                    "cuda": cuda,
+                    "dinkster": "0.0.19.dev123",
+                }
+                if torch
+                else None
+            )
+        assert not root.exists()
 
     run_scenario(scenario())
 

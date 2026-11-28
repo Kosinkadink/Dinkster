@@ -2111,11 +2111,13 @@ def test_setup_cancelled_before_planning_leaves_no_registration(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("cancel_stage", ["building-installation", "starting-engine"])
-def test_setup_cancellation_rolls_back_registration_and_candidate(
+@pytest.mark.parametrize("operation", ["setup", "update"])
+def test_installation_cancellation_rolls_back_candidate_and_preserves_previous_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     cancel_stage: str,
+    operation: str,
 ) -> None:
     from dinkster_supervisor import environment
     from dinkster_supervisor.environment_stores import registered_stores, store_projects
@@ -2127,6 +2129,34 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
     progress = tmp_path / "progress.json"
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "library"))
+    before_selection = None
+    if operation == "update":
+        code, installed = _run(
+            root,
+            "setup",
+            "--mirror",
+            fixture["mirror"],
+            "--channel",
+            "nightly",
+            "--variant",
+            "fixture-cpu",
+            "--data",
+            str(store),
+            "--port",
+            str(free_port()),
+            "--yes",
+        )
+        assert code == 0 and installed["current"] == 1, installed
+        assert _run(root, "stop", "--yes")[0] == 0
+        before_selection = (
+            (root / "environment.json").read_bytes(),
+            (root / "builds/1/build.json").read_bytes(),
+            registered_stores(),
+        )
+        (Path(fixture["mirror"]) / "channels/nightly.json").write_bytes(
+            Path(fixture["updatedChannel"]).read_bytes()
+        )
     observe = environment.preparation_progress
 
     def cancel(stage: str, completed: int = 0, total: int = 0) -> None:
@@ -2139,7 +2169,7 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
         [
             "--root",
             str(root),
-            "setup",
+            operation,
             "--mirror",
             fixture["mirror"],
             "--channel",
@@ -2148,8 +2178,7 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
             "fixture-cpu",
             "--data",
             str(store),
-            "--port",
-            str(free_port()),
+            *(("--port", str(free_port())) if operation == "setup" else ()),
             "--progress",
             str(progress),
             "--yes",
@@ -2159,13 +2188,113 @@ def test_setup_cancellation_rolls_back_registration_and_candidate(
     assert environment.run(args) == 1
     result = json.loads(capsys.readouterr().out)
     assert result["status"] == "cancelled", result
-    assert result["error"] == "setup cancelled"
-    assert not (root / "current").exists()
-    assert not (root / "environment.json").exists()
-    assert not (root / "builds/1").exists()
-    assert store_projects(store) == [] and registered_stores() == {}
-    journal = next((root / "journal").glob("*.json"))
+    assert result["error"] == f"{operation} cancelled"
+    if operation == "setup":
+        assert not (root / "current").exists()
+        assert not (root / "environment.json").exists()
+        assert not (root / "builds/1").exists()
+        assert store_projects(store) == [] and registered_stores() == {}
+    else:
+        assert before_selection is not None
+        settings, previous, registration = before_selection
+        assert (root / "current").read_text() == "1\n"
+        assert (root / "environment.json").read_bytes() == settings
+        assert (root / "builds/1/build.json").read_bytes() == previous
+        assert not (root / "builds/2").exists()
+        assert store_projects(store) == [str(root)] and registered_stores() == registration
+    journal = sorted((root / "journal").glob("*.json"))[-1]
     assert Journal.read(journal).stage == "rolled-back"
+    if operation == "update":
+        progress.with_name(progress.name + ".cancel").unlink()
+        progress.unlink()
+        try:
+            code, updated = _run(root, "update", "--progress", str(progress), "--yes")
+            assert code == 0 and updated["current"] == 2, updated
+            assert (
+                json.loads((root / "builds/2/build.json").read_text())["engine"]["version"] == "2.0"
+            )
+            observation = json.loads(progress.read_text())
+            assert observation["sequence"] > 1
+        finally:
+            assert _run(root, "stop", "--yes")[0] == 0
+
+
+@pytest.mark.parametrize("operation", ["restore", "restore-previous"])
+@pytest.mark.parametrize("cancel_stage", ["building-installation", "checking-restore"])
+def test_restore_cancellation_recovers_before_reporting_and_can_be_retried(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    operation: str,
+    cancel_stage: str,
+) -> None:
+    from dinkster_supervisor import environment, environment_restore
+    from dinkster_supervisor.environment_history import history
+    from dinkster_supervisor.environment_runtime import engine_status
+
+    from tests.fixtures.environments.build import build
+
+    fixture = build(tmp_path / "fixture", "fixture-cpu", free_port())
+    root, store = tmp_path / "installation", tmp_path / "store"
+    progress = tmp_path / "progress.json"
+    for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
+        monkeypatch.setenv(variable, str(tmp_path / "user-data"))
+    monkeypatch.setenv("DINKSTER_LIBRARY_ROOT", str(tmp_path / "library"))
+    code, installed = _run(
+        root,
+        "setup",
+        "--mirror",
+        fixture["mirror"],
+        "--variant",
+        "fixture-cpu",
+        "--data",
+        str(store),
+        "--port",
+        str(free_port()),
+        "--yes",
+    )
+    assert code == 0, installed
+    try:
+        (Path(fixture["mirror"]) / "channels/nightly.json").write_bytes(
+            Path(fixture["updatedChannel"]).read_bytes()
+        )
+        code, updated = _run(root, "update", "--yes")
+        assert code == 0 and updated["current"] == 2, updated
+        settings = (root / "environment.json").read_bytes()
+        previous = (root / "builds/2/build.json").read_bytes()
+        entries, engines = history(root), list(engine_status(root))
+        observe = environment_restore.preparation_progress
+        checks = 0
+
+        def cancel(stage: str, completed: int = 0, total: int = 0) -> None:
+            nonlocal checks
+            if stage == "checking-restore":
+                checks += 1
+            if stage == cancel_stage and (stage != "checking-restore" or checks == 2):
+                progress.with_name(progress.name + ".cancel").touch()
+            observe(stage, completed, total)
+
+        monkeypatch.setattr(environment_restore, "preparation_progress", cancel)
+        command = [operation, *(["1"] if operation == "restore" else [])]
+        args = environment.argument_parser().parse_args(
+            ["--root", str(root), *command, "--progress", str(progress), "--yes", "--json"]
+        )
+        assert environment.run(args) == 1
+        result = json.loads(capsys.readouterr().out)
+        assert result["status"] == "cancelled" and result["error"] == f"{operation} cancelled"
+        assert (root / "current").read_text() == "2\n"
+        assert (root / "environment.json").read_bytes() == settings
+        assert (root / "builds/2/build.json").read_bytes() == previous
+        assert history(root) == entries and list(engine_status(root)) == engines
+        assert not (root / "builds/3").exists()
+        assert Journal.read(sorted((root / "journal").glob("*.json"))[-1]).stage == "rolled-back"
+        progress.with_name(progress.name + ".cancel").unlink()
+        code, restored = _run(root, *command, "--progress", str(progress), "--yes")
+        assert code == 0 and restored["current"] == 3, restored
+        assert history(root)[-1]["snapshot"] == entries[0]["snapshot"]
+        assert json.loads(progress.read_text())["sequence"] > 1
+    finally:
+        assert _run(root, "stop", "--yes")[0] == 0
 
 
 def test_catalog_uses_common_envelope_and_leaves_prospective_root_absent(
@@ -2285,14 +2414,29 @@ def test_catalog_recommends_only_the_matching_graphics_build(
     else:
         import subprocess
 
+        windows_root = tmp_path / "Windows"
+        powershell = windows_root / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        monkeypatch.setenv("SystemRoot", str(windows_root))
+
+        class PciPath(Path):
+            @property
+            def name(self) -> str:
+                # Preserve sysfs PCI names without creating invalid Windows paths.
+                return super().name.replace("_", ":")
+
         pci.mkdir()
         monkeypatch.setattr(
             environment_hardware,
             "Path",
-            lambda path: pci if path == "/sys/bus/pci/devices" else Path(path),
+            lambda path: PciPath(pci) if path == "/sys/bus/pci/devices" else Path(path),
         )
 
         def command(arguments: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
+            if system == "win32":
+                if arguments[0] == "powershell.exe":
+                    raise FileNotFoundError("PowerShell is not on the restricted launcher PATH")
+                if arguments[0] == str(powershell):
+                    arguments = ["powershell.exe", *arguments[1:]]
             if system == "win32" and arguments[0] == "amd-smi":
                 raise FileNotFoundError("amd-smi is not available on native Windows")
             if arguments[0] == "powershell.exe" and "DriverVersion" not in arguments[-1]:
@@ -2386,7 +2530,7 @@ def test_catalog_recommends_only_the_matching_graphics_build(
             for device in pci.iterdir():
                 shutil.rmtree(device)
             for card in cards:
-                device = pci / card_address(card)
+                device = pci / card_address(card).replace(":", "_")
                 device.mkdir()
                 (device / "vendor").write_text("0x" + vendor_ids[card["vendor"]])
                 (device / "class").write_text("0x030000")

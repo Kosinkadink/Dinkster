@@ -30,6 +30,7 @@ from .environment_history import (
     validate_import,
 )
 from .environment_library import library_plan, project_environment, project_software_review
+from .environment_progress import PreparationCancelled, preparation_progress
 from .environment_restore_plan import plan_restore
 from .environment_state import (
     Channel,
@@ -241,6 +242,7 @@ def restore_entry(
     target_identity: str | None = None
 
     def revalidate() -> None:
+        preparation_progress("checking-restore")
         if project_review is not None and (
             project_software_review(source, cast(str, project), cast(int, revision))
             != project_review
@@ -450,6 +452,7 @@ def restore_entry(
                     or protocol != engine["workerProtocol"]
                 ):
                     raise EnvironmentError("snapshot worker protocols disagree")
+                preparation_progress("building-installation")
                 build_generation(
                     root=root,
                     number=target,
@@ -516,6 +519,7 @@ def restore_entry(
             ):
                 raise EnvironmentError("rebuilt software differs from the recorded snapshot")
             replace(Journal.read(journal), history_entry=entry).write(journal)
+            preparation_progress("starting-engine")
             activate(root, journal, revalidate=revalidate)
         except Exception as exc:
             if Journal.read(journal).stage == "complete":
@@ -526,6 +530,8 @@ def restore_entry(
             replace(Journal.read(journal), error=message).write(journal)
             record_failed_restore(root, journal.stem, entry_id, message)
             recover_activation(root, journal)
+            if isinstance(exc, PreparationCancelled):
+                raise
             raise EnvironmentError(message) from exc
         if destination is not None and project_review is not None:
             try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import platform
 import re
 import shutil
@@ -27,6 +28,15 @@ class GraphicsCard(TypedDict):
 
 
 def hardware_command(arguments: list[str]) -> str:
+    if (
+        sys.platform == "win32"
+        and arguments[0] == "powershell.exe"
+        and (root := os.environ.get("SystemRoot"))
+    ):
+        arguments = [
+            str(Path(root) / "System32/WindowsPowerShell/v1.0/powershell.exe"),
+            *arguments[1:],
+        ]
     return subprocess.run(arguments, capture_output=True, text=True, check=True, timeout=5).stdout
 
 

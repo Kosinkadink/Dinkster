@@ -160,6 +160,8 @@ class MountSnapshotWriter:
                 raise AssetError(
                     f"mount {mount_id!r} is granted read-only; saving needs a readwrite mount"
                 )
+            if entry.get("saveError"):
+                raise AssetError(str(entry["saveError"]))
             return entry
         raise AssetError(
             f"no ready mount {mount_id!r}: it was never granted, was "

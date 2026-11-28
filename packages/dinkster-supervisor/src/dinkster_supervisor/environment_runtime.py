@@ -35,6 +35,11 @@ from .environment_process import (
     process_document,
     process_state,
 )
+from .environment_sandbox import (
+    internet_addresses,
+    read_sandbox_settings,
+    sandbox_command_arguments,
+)
 from .environment_state import (
     EnvironmentError,
     Generation,
@@ -47,9 +52,11 @@ from .environment_state import (
     write_document,
     writer_lock,
 )
+from .home_context import installation_context
 
 __all__ = [
     "engine_assignments",
+    "engine_connection",
     "engine_provenance",
     "engine_status",
     "generation_runtime_lock",
@@ -117,6 +124,8 @@ def run_generation(root: Path, command: list[str]) -> int:
 
 def sandbox_readiness(root: Path, generation: int) -> dict[str, object]:
     """Ask the selected engine's worker launcher, not the tools host, about isolation."""
+    if (context := installation_context(root)) is not None:
+        return cast("dict[str, object]", context.call(root, "readiness", generation))
     with generation_runtime_lock(root):
         target = root / "builds" / str(generation)
         Generation.read(target / "build.json")
@@ -262,6 +271,8 @@ def start_engine(
 ) -> dict[str, object]:
     """Start one generation through its identity-bound managed supervisor."""
     root = Path(root)
+    if (root / "pack-sandbox.json").exists():
+        sandbox_packs = read_sandbox_settings(root)["sandboxPacks"]
     if sandbox_packs:
         readiness = sandbox_readiness(root, generation)
         if not readiness["available"]:
@@ -470,7 +481,12 @@ def _start_engine(
         ),
     ]
     if sandbox_packs:
-        command.append("--sandbox-packs")
+        metadata = installation_pack_metadata(root, name, snapshot=generation)
+        if not metadata["available"]:
+            raise EnvironmentError(str(metadata.get("message", "pack metadata unavailable")))
+        command.extend(
+            sandbox_command_arguments(cast("list[dict[str, object]]", metadata["packs"]))
+        )
     if selected_packs:
         command.append("--selected-packs")
     if frontend_root is not None:
@@ -580,6 +596,9 @@ def _startup_failure(
 
 def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None:
     """Stop only the supervisor whose live status proves its recorded identity."""
+    if (context := installation_context(root)) is not None:
+        context.call(root, "stop", name, generation)
+        return
     _validate_name(name)
     root = Path(root)
     selected = generation if generation is not None else read_current(root)
@@ -648,6 +667,8 @@ def stop_engine(root: Path, name: str, *, generation: int | None = None) -> None
 
 def engine_status(root: Path) -> tuple[dict[str, object], ...]:
     """Return the selected generation's engines without trusting a reused PID."""
+    if (context := installation_context(root)) is not None:
+        return tuple(cast("list[dict[str, object]]", context.call(root, "status")))
     runtime = Path(root) / "runtime"
     if not runtime.is_dir():
         return ()
@@ -702,6 +723,19 @@ def engine_provenance(root: Path, name: str) -> dict[str, object] | None:
         "library": filesystem,
         "processInstance": inspected["_engineInstance"],
     }
+
+
+def engine_connection(root: Path, name: str) -> dict[str, str]:
+    """The verified supervisor endpoint and public instance identity, never its shutdown token."""
+    _validate_name(name)
+    generation = read_current(root)
+    record = None if generation is None else _load_record(root, name, generation)
+    if record is None:
+        raise EnvironmentError("engine has no supervisor record")
+    inspected = _inspect(record)
+    if not _identity_matches(inspected):
+        raise EnvironmentError("engine supervisor identity is not verified")
+    return {key: cast("str", inspected[key]) for key in ("url", "instance")}
 
 
 def engine_assignments(root: Path, generation: int) -> list[dict[str, object]]:
@@ -851,8 +885,87 @@ def _validate_name(name: str) -> None:
         raise EnvironmentError("engine name must be a portable engine id")
 
 
+def installation_pack_metadata(
+    root: Path, name: str, *, snapshot: int | None = None
+) -> dict[str, object]:
+    """Ask the selected snapshot for installed requests without starting an engine."""
+    if (context := installation_context(root)) is not None:
+        result = cast("dict[str, object]", context.call(root, "packs", name, snapshot))
+        result["root"] = str(root)
+        return result
+    _validate_name(name)
+    answer: dict[str, object] = {
+        "root": str(root),
+        "engine": name,
+        "snapshot": None,
+        "available": False,
+        "packs": None,
+    }
+    try:
+        current = read_current(root) if snapshot is None else snapshot
+        if current is None:
+            raise EnvironmentError("no installed snapshot")
+        answer["snapshot"] = str(current)
+        generation = root / "builds" / str(current)
+        result = subprocess.run(
+            [
+                str(interpreter(generation)),
+                "-I",
+                "-B",
+                "-m",
+                "dinkster.manager",
+                "--root",
+                "",
+                "pack-metadata",
+                "--generation",
+                str(generation),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode:
+            raise EnvironmentError(
+                "installed pack metadata is unavailable; update or repair this installation"
+            )
+        metadata = json.loads(result.stdout)
+        if not isinstance(metadata, dict):
+            raise EnvironmentError("invalid installed pack metadata")
+        packs = cast("dict[str, object]", metadata).get("packs")
+        if not isinstance(packs, list):
+            raise EnvironmentError("invalid installed pack metadata")
+        if snapshot is None and read_current(root) != current:
+            raise EnvironmentError("installation changed; read its packs again")
+        settings = read_sandbox_settings(root)
+        for row in cast("list[dict[str, object]]", packs):
+            origins = row.get("networkOrigins")
+            row["internetAddresses"] = (
+                internet_addresses(str(row["pack"]), cast("list[str]", origins), settings)
+                if isinstance(origins, list)
+                else None
+            )
+            graphics_value = row.get("graphicsCard")
+            graphics: dict[str, object] = (
+                cast("dict[str, object]", graphics_value)
+                if isinstance(graphics_value, dict)
+                else {"requested": None, "granted": None}
+            )
+            row["graphicsCard"] = graphics
+            graphics["granted"] = (
+                settings["sandboxPacks"] and graphics["requested"] is True
+                if graphics["requested"] is not None
+                else None
+            )
+        answer.update(available=True, packs=cast("list[object]", packs))
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        answer["message"] = str(exc)
+    return answer
+
+
 def engine_log_tail(root: Path, name: str) -> dict[str, str | bool]:
     """Read at most 64 KiB of the current snapshot's engine output, even after stop."""
+    if (context := installation_context(root)) is not None:
+        return cast("dict[str, str | bool]", context.call(root, "log", name))
     _validate_name(name)
     generation = read_current(root)
     empty: dict[str, str | bool] = {"available": False, "text": "", "truncated": False}

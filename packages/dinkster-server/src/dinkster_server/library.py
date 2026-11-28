@@ -133,8 +133,6 @@ from .lookups import announce_asset_kinds, recorded_asset_kinds
 from .paging import decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
-    from dinkster_engine import RunResult
-
     from .cleanup import CleanupPolicy, EngineReferences
     from .queue import Job
 
@@ -195,7 +193,7 @@ class ServerLibrary:
     #: Per-kind bounds for classified media ingest; must cover _MEDIA_KINDS.
     media_upload_limits: Mapping[str, int] = _MEDIA_UPLOAD_LIMITS
     #: None disables size limits; a map enables ceilings with per-kind lowering.
-    upload_limits: Mapping[str, int] | None = field(default=None, kw_only=True)
+    upload_limits: Mapping[str, int] | None = field(default_factory=dict[str, int], kw_only=True)
     #: Optional read fallback for digest GETs (e.g. filesystem mounts).
     #: Hits stream rather than buffer: a mount can hold model-sized files.
     resolver: AssetResolver | None = None
@@ -357,7 +355,9 @@ class ServerLibrary:
 
         return await publish_original_documents(self, node_id, claims)
 
-    def record_saved_outputs(self, job: Job, result: RunResult) -> RunResult:
+    def record_saved_artifacts(
+        self, job: Job, saved: Sequence[SavedArtifact]
+    ) -> tuple[SavedArtifact, ...]:
         """Retain required encoded attachments and catalog saves before completion."""
 
         def prepare(ref: AssetRef, node_id: str, journal: Path) -> None:
@@ -376,7 +376,7 @@ class ServerLibrary:
             )
 
         artifacts: list[SavedArtifact] = []
-        for artifact in result.artifacts:
+        for artifact in saved:
             journal = self.vault.root / ".upload-observations" / f"{uuid.uuid4().hex}.json"
             ref = AssetRef(
                 artifact.digest,
@@ -474,7 +474,7 @@ class ServerLibrary:
                     with contextlib.suppress(OSError):
                         preview_journal.unlink(missing_ok=True)
             artifacts.append(artifact)
-        return replace(result, artifacts=tuple(artifacts))
+        return tuple(artifacts)
 
 
 LIBRARY_KEY: web.AppKey[ServerLibrary] = web.AppKey("server_library")
@@ -732,7 +732,11 @@ async def _ingest_latent_upload(
     if declared is not None and not is_digest(declared):
         return _media_error(400, "invalid_digest", "X-Dinkster-Digest is not canonical")
     library = request.app[LIBRARY_KEY]
-    limit = library.upload_limits[LATENT_ASSET_KIND] if library.upload_limits is not None else None
+    limit = (
+        library.upload_limits[LATENT_ASSET_KIND]
+        if source is None and library.upload_limits is not None
+        else None
+    )
     content_length = (
         os.fstat(source.fileno()).st_size if source is not None else request.content_length
     )
@@ -985,7 +989,7 @@ async def _ingest_file_upload(
     # cannot ride in under a roomier video claim.
     limit = (
         library.upload_limits[claimed_kind or "generic"]
-        if library.upload_limits is not None
+        if source is None and library.upload_limits is not None
         else None
     )
     content_length = (

@@ -804,6 +804,221 @@ class TestDetection:
     ),
 )
 class TestLiveJail:
+    def test_refused_https_origins_are_reported_once_per_run(self, tmp_path: Path) -> None:
+        from dinkster_engine import ExecutionError
+
+        from dinkster.compose import PackSpec, ServingComposer
+
+        pack = tmp_path / "network-probe"
+        pack.mkdir()
+        manifest = pack / "dinkster-pack.toml"
+        manifest.write_text(
+            '[pack]\nname="networkprobe"\nnamespaces=["networkprobe"]\n'
+            '[pack.entry]\nnodes="network_probe:NODES"\n',
+            encoding="ascii",
+        )
+        (pack / "network_probe.py").write_text(
+            "import asyncio, errno, socket, urllib.request\n"
+            "from dinkster_schema.reporting import _emit\n"
+            "from dinkster_api.v1 import (CORE_STRING, Input, Node, NodeSchema, "
+            "Output, TypeExpr)\n"
+            "class Probe(Node):\n"
+            "    arrived = 0\n"
+            "    finished = 0\n"
+            "    ready = None\n"
+            "    done = None\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='networkprobe.probe', idempotent=False, "
+            "io_bound=True, body=(\n"
+            "            Input('mode', TypeExpr.concrete(CORE_STRING)),\n"
+            "            Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "    @classmethod\n"
+            "    async def execute(cls, mode):\n"
+            "        _emit('sandbox-network-denied', {'pack': 'innocent',\n"
+            "            'origin': 'https://forged.example.test'}, None)\n"
+            "        if mode == 'file-denied':\n"
+            "            raise PermissionError(errno.EACCES, 'denied', '/private/file')\n"
+            "        if mode == 'unknown':\n"
+            "            last = None\n"
+            "            for attempt in range(2):\n"
+            "                try:\n"
+            "                    connection = socket.create_connection(('203.0.113.9', 443), 1)\n"
+            "                    connection.close()\n"
+            "                except OSError as error:\n"
+            "                    last = error\n"
+            "                else:\n"
+            "                    raise RuntimeError('sandbox unexpectedly allowed direct TCP')\n"
+            "            raise last\n"
+            "        if mode != 'single':\n"
+            "            if Probe.ready is None:\n"
+            "                Probe.ready, Probe.done = asyncio.Event(), asyncio.Event()\n"
+            "            Probe.arrived += 1\n"
+            "            if Probe.arrived == 2:\n"
+            "                Probe.ready.set()\n"
+            "            await Probe.ready.wait()\n"
+            "        last = None\n"
+            "        for host in ('downloads.example.test', 'mirror.example.test:8443'):\n"
+            "            for attempt in range(2):\n"
+            "                try:\n"
+            "                    await asyncio.to_thread(urllib.request.urlopen,\n"
+            "                        'https://' + host + '/model', timeout=1)\n"
+            "                except OSError as error:\n"
+            "                    last = error\n"
+            "                else:\n"
+            "                    raise RuntimeError('sandbox unexpectedly allowed HTTPS')\n"
+            "        if mode == 'single':\n"
+            "            raise last\n"
+            "        Probe.finished += 1\n"
+            "        if Probe.finished == 2:\n"
+            "            Probe.done.set()\n"
+            "        await Probe.done.wait()\n"
+            "        return cls.outputs(report='refused')\n"
+            "class AlternateProbe(Probe):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema(node_type='alternateprobe.probe', idempotent=False,\n"
+            "            io_bound=True, body=(Input('mode',\n"
+            "            TypeExpr.concrete(CORE_STRING)),\n"
+            "            Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
+            "NODES = (Probe,)\n"
+            "ALTERNATE_NODES = (AlternateProbe,)\n",
+            encoding="ascii",
+        )
+
+        async def scenario() -> None:
+            composer = ServingComposer(sandbox_policy=SandboxPolicy())
+            try:
+                await composer.add_pack(PackSpec(manifest, env={"PYTHONPATH": str(pack)}))
+                events = []
+                engine = composer.composition.make_engine(events.append)
+                graph = Graph(nodes={"probe": GraphNode("networkprobe.probe", {"mode": "single"})})
+                for _run in range(2):
+                    events.clear()
+                    with pytest.raises(ExecutionError) as refused:
+                        await engine.run(graph, ["probe"])
+                    error = refused.value.error
+                    reports = [
+                        hint for hint in error.hints if hint.code == "sandbox-network-denied"
+                    ]
+                    assert len(reports) == 2, error
+                    for origin in (
+                        "https://downloads.example.test",
+                        "https://mirror.example.test:8443",
+                    ):
+                        assert (
+                            sum(
+                                "networkprobe" in hint.message and origin in hint.message
+                                for hint in reports
+                            )
+                            == 1
+                        ), error
+                    diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                    assert len(diagnostics) == 2
+                    assert all("One of these nodes" not in hint.message for hint in reports)
+
+                for mode in ("unknown", "file-denied"):
+                    events.clear()
+                    with pytest.raises(ExecutionError) as refused:
+                        await engine.run(
+                            Graph(nodes={"probe": GraphNode("networkprobe.probe", {"mode": mode})}),
+                            ["probe"],
+                        )
+                    reports = [
+                        hint
+                        for hint in refused.value.error.hints
+                        if hint.code == "sandbox-network-denied"
+                    ]
+                    diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                    if mode == "unknown":
+                        assert len(reports) == len(diagnostics) == 1, refused.value.error
+                        assert "networkprobe" in reports[0].message
+                        assert "destination unknown" in reports[0].message
+                        assert "203.0.113.9" not in reports[0].message
+                        assert diagnostics[0].detail["diagnostics"][0]["origin"] is None
+                    else:
+                        assert reports == diagnostics == []
+
+                events.clear()
+                result = await asyncio.wait_for(
+                    engine.run(
+                        Graph(
+                            nodes={
+                                node: GraphNode("networkprobe.probe", {"mode": node})
+                                for node in ("left", "right")
+                            }
+                        ),
+                        ["left", "right"],
+                    ),
+                    timeout=30,
+                )
+                assert result.outputs["left"]["report"].resolve() == "refused"
+                assert result.outputs["right"]["report"].resolve() == "refused"
+                assert len(result.diagnostics) == 4
+                assert {item.node_id for item in result.diagnostics} == {"left", "right"}
+                assert all("One of these nodes" in item.message for item in result.diagnostics)
+                diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                assert len(diagnostics) == 4
+                assert all(
+                    set(event.detail["diagnostics"][0]["candidateNodeIds"]) == {"left", "right"}
+                    for event in diagnostics
+                )
+            finally:
+                await composer.close()
+
+            alternate = pack / "alternate-pack.toml"
+            alternate.write_text(
+                '[pack]\nname="alternateprobe"\nnamespaces=["alternateprobe"]\n'
+                '[pack.entry]\nnodes="network_probe:ALTERNATE_NODES"\n',
+                encoding="ascii",
+            )
+            composer = ServingComposer(sandbox_policy=SandboxPolicy())
+            try:
+                for path in (manifest, alternate):
+                    await composer.add_pack(
+                        PackSpec(
+                            path,
+                            env={"PYTHONPATH": str(pack)},
+                            worker_group="network-probes",
+                            group_manifests=(manifest, alternate),
+                        )
+                    )
+                events = []
+                result = await asyncio.wait_for(
+                    composer.composition.make_engine(events.append).run(
+                        Graph(
+                            nodes={
+                                "left": GraphNode("networkprobe.probe", {"mode": "left"}),
+                                "right": GraphNode("alternateprobe.probe", {"mode": "right"}),
+                            }
+                        ),
+                        ["left", "right"],
+                    ),
+                    timeout=30,
+                )
+                assert result.outputs["left"]["report"].resolve() == "refused"
+                assert result.outputs["right"]["report"].resolve() == "refused"
+                assert len(result.diagnostics) == 4
+                assert all(
+                    "One of these nodes" in item.message
+                    and "sandboxed packs" in item.message
+                    and "networkprobe" in item.message
+                    and "alternateprobe" in item.message
+                    for item in result.diagnostics
+                )
+                assert all("forged.example.test" not in item.message for item in result.diagnostics)
+                diagnostics = [event for event in events if event.kind == "value_diagnostics"]
+                assert len(diagnostics) == 4
+                assert all(
+                    set(event.detail["diagnostics"][0]["candidatePacks"])
+                    == {"networkprobe", "alternateprobe"}
+                    for event in diagnostics
+                )
+            finally:
+                await composer.close()
+
+        run_scenario(scenario())
+
     def test_helper_published_indexes_resolve_with_only_snapshot_and_folder_grants(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1350,6 +1565,154 @@ Path({str(observed)!r}).write_text(json.dumps([str(root) for root in roots]))
                 if process.returncode is None:
                     process.terminate()
                     await process.wait()
+                server.close()
+                await server.wait_closed()
+
+        run_scenario(scenario())
+
+    @pytest.mark.parametrize("declared", [True, False])
+    @pytest.mark.parametrize("managed", [None, "selected", "empty"])
+    def test_manifest_origins_grant_only_the_named_destinations(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, declared: bool, managed: str | None
+    ) -> None:
+        from dinkster.compose import CompositionError, PackSpec, ServingComposer
+
+        async def scenario() -> None:
+            async def echo(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+                try:
+                    if await reader.read(4) == b"ping":
+                        writer.write(b"pong")
+                        await writer.drain()
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+
+            server = await asyncio.start_server(echo, "127.0.0.1", 0)
+            port = int(server.sockets[0].getsockname()[1])
+            hosts = ("api.example.test", "mirror.example.test", "operator.example.test")
+
+            async def test_resolver(host: str, resolved_port: int) -> tuple[str, ...]:
+                assert host in hosts and resolved_port == port
+                return ("127.0.0.1",)
+
+            monkeypatch.setattr(egress_module, "_resolve_public_addresses", test_resolver)
+            pack = tmp_path / "network-pack"
+            pack.mkdir()
+            manifest = pack / "dinkster-pack.toml"
+            manifest.write_text(
+                '[pack]\nname="networkprobe"\nnamespaces=["networkprobe"]\n'
+                '[pack.entry]\nnodes="network_probe:NODES"\n'
+                "[pack.sandbox]\n"
+                + (
+                    "network-origins=["
+                    f'"https://API.example.test:{port}/", "https://mirror.example.test:{port}"]\n'
+                    if declared
+                    else "network=true\n"
+                )
+            )
+            (pack / "network_probe.py").write_text(
+                "import os, socket\n"
+                "from dinkster_api.v1 import CORE_STRING, Node, NodeSchema, Output, TypeExpr\n"
+                "class Probe(Node):\n"
+                "    @classmethod\n"
+                "    def define_schema(cls):\n"
+                "        return NodeSchema(node_type='networkprobe.probe', body=(\n"
+                "            Output('report', TypeExpr.concrete(CORE_STRING)),))\n"
+                "    @classmethod\n"
+                "    def execute(cls):\n"
+                "        reports = []\n"
+                f"        for host in {(*hosts, 'other.example.test')!r}:\n"
+                "            with socket.socket(socket.AF_UNIX) as proxy:\n"
+                "                proxy.settimeout(5)\n"
+                "                proxy.connect(os.environ['DINKSTER_EGRESS_PROXY'])\n"
+                f"                proxy.sendall(f'CONNECT {{host}}:{port} HTTP/1.1\\r\\n\\r\\n'"
+                ".encode('ascii'))\n"
+                "                head = b''\n"
+                "                while b'\\r\\n\\r\\n' not in head:\n"
+                "                    head += proxy.recv(4096)\n"
+                "                status = head.split(b' ')[1].decode()\n"
+                "                if status == '200':\n"
+                "                    proxy.sendall(b'ping')\n"
+                "                    assert proxy.recv(4) == b'pong'\n"
+                "                reports.append(host + ':' + status)\n"
+                "        return cls.outputs(report=','.join(reports))\n"
+                "NODES = (Probe,)\n"
+            )
+            composer = ServingComposer(
+                sandbox_policy=SandboxPolicy(ro_binds=(str(REPO_ROOT),)),
+                sandbox_network_grants={
+                    "networkprobe": (f"https://operator.example.test:{port}",),
+                    "different-pack": (f"https://other.example.test:{port}",),
+                },
+                sandbox_network_policy=(
+                    {
+                        "networkprobe": (
+                            [
+                                f"https://mirror.example.test:{port}",
+                                f"https://operator.example.test:{port}",
+                            ]
+                            if managed == "selected"
+                            else []
+                        ),
+                        "peerprobe": [f"https://api.example.test:{port}"],
+                    }
+                    if managed is not None
+                    else None
+                ),
+            )
+            peer = tmp_path / "peer-pack"
+            peer.mkdir()
+            peer_manifest = peer / "dinkster-pack.toml"
+            peer_manifest.write_text(manifest.read_text().replace("networkprobe", "peerprobe"))
+            (peer / "network_probe.py").write_text(
+                (pack / "network_probe.py").read_text().replace("networkprobe", "peerprobe")
+            )
+            manifests = (manifest, peer_manifest)
+            try:
+                if not declared:
+                    ungranted = ServingComposer(sandbox_policy=SandboxPolicy())
+                    try:
+                        with pytest.raises(CompositionError, match="network access requested"):
+                            await ungranted.add_pack(PackSpec(manifest))
+                    finally:
+                        await ungranted.close()
+                for member in manifests if managed is not None else (manifest,):
+                    await composer.add_pack(
+                        PackSpec(
+                            member,
+                            env={"PYTHONPATH": os.pathsep.join((str(pack), str(peer)))},
+                            worker_group="network" if managed is not None else None,
+                            group_manifests=manifests if managed is not None else (),
+                        )
+                    )
+                engine = composer.composition.make_engine(lambda event: None)
+                nodes = {"probe": GraphNode("networkprobe.probe", {})}
+                if managed is not None:
+                    nodes["peer"] = GraphNode("peerprobe.probe", {})
+                result = await engine.run(Graph(nodes=nodes), list(nodes))
+                expected = (
+                    "api.example.test:403,mirror.example.test:403,"
+                    "operator.example.test:403,other.example.test:403"
+                    if managed == "empty"
+                    else (
+                        (
+                            "api.example.test:403,mirror.example.test:200,"
+                            if managed == "selected"
+                            else "api.example.test:200,mirror.example.test:200,"
+                            if declared
+                            else "api.example.test:403,mirror.example.test:403,"
+                        )
+                        + "operator.example.test:200,other.example.test:403"
+                    )
+                )
+                assert result.outputs["probe"]["report"].resolve() == expected
+                if managed is not None:
+                    assert result.outputs["peer"]["report"].resolve() == (
+                        "api.example.test:200,mirror.example.test:403,"
+                        "operator.example.test:403,other.example.test:403"
+                    )
+            finally:
+                await composer.close()
                 server.close()
                 await server.wait_closed()
 

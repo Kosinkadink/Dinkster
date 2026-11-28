@@ -801,11 +801,12 @@ def _check_steps(steps: tuple[Step, ...], what: str) -> None:
 
 @dataclass(frozen=True)
 class Rule:
-    """A check that must hold, its message, and an optional fix of button steps."""
+    """A check that must hold, its message, and an optional labeled fix of button steps."""
 
     check: Formula
     message: str
     fix: tuple[Step, ...] = ()
+    fix_label: str = ""
 
     def __post_init__(self) -> None:
         if not isinstance(cast("object", self.check), Formula):
@@ -813,6 +814,10 @@ class Rule:
         if not isinstance(cast("object", self.message), str) or not self.message:
             raise ValueError("a Rule needs a message")
         _check_steps(self.fix, "rule fix")
+        if self.fix and (
+            not isinstance(cast("object", self.fix_label), str) or not self.fix_label.strip()
+        ):
+            raise ValueError("a Rule's fix needs a non-empty label")
         if any(isinstance(cast("object", step), Call) for step in self.fix):
             raise ValueError("a Rule's fix cannot Call a pack function; a button's Call can")
 

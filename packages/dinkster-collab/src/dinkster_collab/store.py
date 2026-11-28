@@ -47,6 +47,8 @@ class SessionStore:
                 self._conn.execute(
                     "ALTER TABLE sessions ADD COLUMN held TEXT NOT NULL DEFAULT '{}'"
                 )
+            if "title" not in columns:
+                self._conn.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ops (
@@ -86,6 +88,10 @@ class SessionStore:
                 self._conn.execute(
                     "ALTER TABLE ops ADD COLUMN actor_kind TEXT NOT NULL DEFAULT 'human'"
                 )
+            if "numeric_corrections" not in op_columns:
+                self._conn.execute(
+                    "ALTER TABLE ops ADD COLUMN numeric_corrections TEXT NOT NULL DEFAULT '[]'"
+                )
             self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS session_acl (
@@ -114,8 +120,8 @@ class SessionStore:
             self._conn.execute(
                 "INSERT INTO sessions"
                 " (session_id, scope, document_id, document_kind, snapshot,"
-                " snapshot_revision, created_at, held)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " snapshot_revision, created_at, held, title)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session.session_id,
                     session.scope,
@@ -125,6 +131,7 @@ class SessionStore:
                     session.snapshot_revision,
                     session.created_at,
                     _held_json(session.held),
+                    session.title,
                 ),
             )
             self._conn.execute(
@@ -137,6 +144,12 @@ class SessionStore:
                     (session.session_id, principal_id, role)
                     for principal_id, role in session.acl.items()
                 ],
+            )
+
+    def rename(self, session_id: str, title: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE sessions SET title = ? WHERE session_id = ?", (title, session_id)
             )
 
     def replace_acl(self, session_id: str, default_role: str, entries: dict[str, str]) -> None:
@@ -161,8 +174,8 @@ class SessionStore:
             self._conn.execute(
                 "INSERT INTO ops"
                 " (session_id, revision, op_id, actor_id, base_revision, patch, timestamp,"
-                " principal_id, actor_kind)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " principal_id, actor_kind, numeric_corrections)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     session_id,
                     op.revision,
@@ -173,6 +186,7 @@ class SessionStore:
                     op.timestamp,
                     principal_id,
                     op.actor_kind,
+                    json.dumps(op.numeric_corrections),
                 ),
             )
 
@@ -222,6 +236,7 @@ class SessionStore:
                     sessions.snapshot_revision,
                     sessions.created_at,
                     sessions.held,
+                    sessions.title,
                     ops.revision,
                     ops.op_id,
                     ops.actor_id,
@@ -229,7 +244,8 @@ class SessionStore:
                     ops.patch,
                     ops.timestamp,
                     ops.principal_id,
-                    ops.actor_kind
+                    ops.actor_kind,
+                    ops.numeric_corrections
                 FROM sessions
                 LEFT JOIN ops ON ops.session_id = sessions.session_id
                 ORDER BY sessions.session_id, ops.revision
@@ -264,6 +280,7 @@ class SessionStore:
                             dict[str, list[str]], json.loads(cast(str, row["held"]))
                         ).items()
                     },
+                    title=cast(str | None, row["title"]),
                 )
                 sessions[session_id] = session
             if row["revision"] is None:
@@ -278,6 +295,7 @@ class SessionStore:
                 timestamp=cast(float, row["timestamp"]),
                 principal_id=cast(str, row["principal_id"]),
                 actor_kind=cast(str, row["actor_kind"]),
+                numeric_corrections=tuple(json.loads(cast(str, row["numeric_corrections"]))),
             )
             session.ops.append(op)
             session.ops_by_id[op.op_id] = op

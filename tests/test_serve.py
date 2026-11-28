@@ -24,6 +24,7 @@ from typing import Any
 
 import aiohttp
 import pytest
+from supervisor_subprocess import _request_snapshot
 from test_compose import write_iso_manifest
 
 from tests.async_scenarios import run_scenario
@@ -1637,15 +1638,28 @@ def test_engine_upload_staging_refuses_linked_directories(
     command = serve_with_library_command(
         port, library, "--no-default-packs", "--engine-state-root", str(state)
     )
-    process, log = start_logged_serve(command, tmp_path)
+    trace = tmp_path / "child.stack"
+    traced_command = [
+        command[0],
+        str(TESTS_DIR / "supervisor_subprocess.py"),
+        "snapshot",
+        str(trace),
+        *command[2:],
+    ]
+    process, log = start_logged_serve(traced_command, tmp_path)
     pending_error: BaseException | None = None
     try:
         wait_for_composition(process, port)
     except BaseException as error:
         pending_error = error
+        error.add_note(_request_snapshot(tmp_path))
         raise
     finally:
         stop_logged_serve(process, log, pending_error)
+        if pending_error is not None and trace.exists():
+            pending_error.add_note(
+                "server stacks:\n" + trace.read_text(encoding="utf-8", errors="replace")
+            )
     parent = library / ".engine-uploads"
     selected = parent if linked_parent else next(parent.iterdir())
     retained = tmp_path / "retained"
@@ -3566,7 +3580,10 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                 ops = f"{base}/api/sessions/{(await resp.json())['sessionId']}/ops"
             revision = 0
 
-            async def post(patch: list[dict[str, object]]) -> tuple[int, dict[str, object]]:
+            async def post(
+                patch: list[dict[str, object]],
+                corrections: list[dict[str, object]] | None = None,
+            ) -> tuple[int, dict[str, object]]:
                 nonlocal revision
                 body = {
                     "protocolVersion": 1,
@@ -3575,6 +3592,8 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
                     "baseRevision": revision,
                     "patch": patch,
                 }
+                if corrections is not None:
+                    body["numericCorrections"] = corrections
                 async with session.post(ops, json=body, headers=agent) as resp:
                     answer = await resp.json()
                 if resp.status == 200:
@@ -3603,6 +3622,13 @@ def test_serve_refuses_session_writes_outside_number_limits(tmp_path: Path) -> N
             ]
             assert (await post(write(steps=0)))[0] == 422
             assert (await post(write(cfg=30.5)))[0] == 422
+            owner = {"graphId": "root", "nodeId": "s", "valueKey": "steps"}
+            corrections: list[dict[str, object]] = [
+                {"owner": owner, "causes": [{**owner, "instancePath": [], "stamp": "limits"}]}
+            ]
+            status, annotated_refusal = await post(write(steps=10001, cfg=9.0), corrections)
+            assert status == 422
+            assert annotated_refusal["error"] == "value-outside-limits"
             # Steps count from min: 2, 6, 10, 14 ... and a decimal is not judged on its step.
             status, refusal = await post(write(frames=12))
             assert status == 422
@@ -3844,7 +3870,7 @@ def test_sandboxed_serve_rotates_remote_bearer_without_exposing_private_credenti
         )
         for entry in sys.path:
             root = Path(entry)
-            if root.name == "src" and root.is_dir():
+            if root.name in {"src", "shared"} and root.is_dir():
                 shutil.copytree(root, site_packages, dirs_exist_ok=True)
         (site_packages / "runtime-dependencies.pth").write_text(
             str(
@@ -4218,7 +4244,7 @@ def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
     (pack / "rules_nodes.py").write_text(
         "import os\n"
         "from dinkster_api.v1 import CORE_INT, Input, Node, NodeSchema, Output, TypeExpr\n"
-        "from dinkster_schema import Formula, Rule\n"
+        "from dinkster_schema import Formula, NumberWidget, Rule\n"
         "from dinkster_schema.body import Set\n"
         "INT = TypeExpr.concrete(CORE_INT)\n"
         "def mark(name):\n"
@@ -4237,11 +4263,13 @@ def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
         "    @classmethod\n"
         "    def define_schema(cls):\n"
         "        return NodeSchema('rules.sampler', display_name='Sampler', output_node=True,\n"
-        "            body=(Input('steps', INT, default=20), Input('frames', INT, default=16)),\n"
+        "            body=(Input('steps', INT, default=20,\n"
+        "                        widget=NumberWidget(min=8, max=50, step=4)),\n"
+        "                  Input('frames', INT, default=16)),\n"
         "            validate=(\n"
         "                Rule(Formula('steps <= 50'), 'steps must be 50 or fewer'),\n"
         "                Rule(Formula('frames <= 32'), 'frames above 32 run slowly',\n"
-        "                     fix=(Set('frames', 32),)),\n"
+        "                     fix=(Set('frames', 32),), fix_label='Use 32 frames'),\n"
         "            ))\n"
         "    @classmethod\n"
         "    def execute(cls, *, steps, frames):\n"
@@ -4343,6 +4371,17 @@ def test_serve_checks_node_rules_when_a_job_is_queued(tmp_path: Path) -> None:
             assert wired["state"] == "completed", wired
             assert await warnings(wired) == []
             assert ran.read_text().splitlines()[1:] == ["source", "sampler 12000 16"]
+
+            off_step = await run(
+                "wired-off-step",
+                {
+                    "src": GraphNode("rules.source", {"value": 12001}),
+                    "s": GraphNode("rules.sampler", {"steps": Link("src", "value")}),
+                },
+            )
+            assert off_step["state"] == "completed", off_step
+            assert await warnings(off_step) == []
+            assert ran.read_text().splitlines()[3:] == ["source", "sampler 12001 16"]
 
     pending_error: BaseException | None = None
     try:

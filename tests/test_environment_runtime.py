@@ -46,6 +46,7 @@ parser.add_argument('--engine-state-root')
 parser.add_argument('--prepare-stale-catalogs', action='store_true')
 parser.add_argument('--allow-mount-changes', action='store_true')
 parser.add_argument('--sandbox-packs', action='store_true')
+parser.add_argument('--sandbox-network-policy')
 parser.add_argument('--allow-origin', action='append')
 args = parser.parse_args()
 
@@ -194,6 +195,7 @@ def make_generation(root: Path, number: int = 1, *, fake_serve: bool = True) -> 
         package.mkdir(exist_ok=True)
         (package / "__init__.py").write_text("")
         (package / "serve.py").write_text(SERVE)
+        (package / "manager.py").write_text('import json; print(json.dumps({"packs": []}))\n')
         (site / "000-project.pth").write_text(str(root.resolve()) + "\n")
     (root / "queue.json").write_text('{"idle": true}')
     if not (root / "current").exists():
@@ -1022,20 +1024,25 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                 text=True,
             )
             assert disabled.returncode == 0, disabled.stdout + disabled.stderr
-            assert json.loads((tmp_path / "environment.json").read_text())["uploadLimits"] is None
+            saved = json.loads((tmp_path / "environment.json").read_text())
+            assert saved["noUploadSizeLimit"] is True
+            assert saved["uploadLimits"] == {"generic": 64, "media/image": image_limit}
             start_engine(tmp_path, 1, "main", port)
 
-            async def probe_unlimited() -> None:
+            async def probe_upload_policy(*, unlimited: bool) -> None:
                 context = ssl.create_default_context(cafile=str(certificate))
                 async with aiohttp.ClientSession(trust_env=False) as client:
                     url = f"https://127.0.0.1:{port}"
                     options = {"ssl": context, "server_hostname": "localhost"}
                     async with client.get(url + "/api/nodes", **options) as response:
                         assert response.status == 200
-                        assert (await response.json())["dinkster"]["uploadLimits"] is None
+                        limits = (await response.json())["dinkster"]["uploadLimits"]
+                        assert (limits is None) is unlimited
+                        if not unlimited:
+                            assert limits["generic"] == 16 * 1024**2
                     async with client.get(url + "/api/assets/upload-limits", **options) as response:
                         assert response.status == 200
-                        assert await response.json() is None
+                        assert await response.json() == limits
                     body = b"z" * 65
                     async with client.post(url + "/api/assets", data=body, **options) as response:
                         assert response.status in (200, 201)
@@ -1044,14 +1051,15 @@ def test_managed_public_listener_persists_bindings_tls_and_browser_boundary(
                     ) as response:
                         assert await response.read() == body
 
-            asyncio.run(probe_unlimited())
+            asyncio.run(probe_upload_policy(unlimited=True))
             stop_engine(tmp_path, "main")
             project = tmp_path / "environment.json"
             unconfigured = json.loads(project.read_text())
             del unconfigured["uploadLimits"]
+            del unconfigured["noUploadSizeLimit"]
             project.write_text(json.dumps(unconfigured))
             start_engine(tmp_path, 1, "main", port)
-            asyncio.run(probe_unlimited())
+            asyncio.run(probe_upload_policy(unlimited=False))
             stop_engine(tmp_path, "main")
             reset = subprocess.run(
                 [

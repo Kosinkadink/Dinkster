@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -131,6 +132,74 @@ def test_frontend_and_status_answer_with_no_engine(
             assert handshake.value.status == 503
         finally:
             await client.close()
+
+    run_scenario(scenario())
+
+
+def test_home_status_answers_when_the_wsl_transport_cannot_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_supervisor.home_context import WslContext
+
+    context = WslContext("Dinkster-Desktop-0123456789ab", "/home/dinkster/tools/python3")
+    monkeypatch.setattr(
+        WslContext, "command", lambda *_: [str(tmp_path / "missing-wsl-executable")]
+    )
+
+    def installations() -> frozenset[Path]:
+        context.call(context.windows_path("/"), "installations")
+        raise AssertionError("The missing executable cannot return an installation list")
+
+    async def scenario() -> None:
+        home = Home(installations=installations)
+        async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+            response = await client.get("/supervisor/status")
+            assert response.status == 200
+            status = await response.json()
+            assert status["role"] == "home" and status["state"] == "stopped"
+            assert "installations" not in status
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("guest_instance", ["windows-listener", "different-guest-instance"])
+def test_wsl_home_requires_the_guest_instance_at_its_windows_address(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, guest_instance: str
+) -> None:
+    from dinkster_supervisor import home as module
+    from dinkster_supervisor.home_context import WslContext
+    from dinkster_supervisor.supervisor import EngineLink, create_supervisor_app
+
+    async def scenario() -> None:
+        root = tmp_path / "guest-installation"
+        server = TestServer(
+            create_supervisor_app(EngineLink(state="ready"), instance="windows-listener")
+        )
+        async with TestClient(server):
+            url = str(server.make_url("")).rstrip("/")
+            context = WslContext("Dinkster-Desktop-0123456789ab", "/home/dinkster/tools/python3")
+            monkeypatch.setattr(module, "installation_context", lambda _: context)
+            monkeypatch.setattr(
+                WslContext, "call", lambda *_: {"url": url, "instance": guest_instance}
+            )
+
+            async def start(target: OpenTarget, found: Callable[[str], None]) -> str:
+                return url
+
+            home = Home(installations=lambda: frozenset({root.resolve()}), start=start)
+            async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+                assert (
+                    await client.post("/supervisor/engine", json={"root": str(root)})
+                ).status == 200
+                status = await wait_for(client, lambda s: s["state"] in {"ready", "failed"})
+                if guest_instance == "windows-listener":
+                    assert status["state"] == "ready"
+                else:
+                    assert status["state"] == "failed"
+                    assert "Windows address" in status["detail"]
+                    assert (
+                        await client.post("/api/projects", json={"id": "private"})
+                    ).status == 503
 
     run_scenario(scenario())
 
@@ -677,6 +746,93 @@ def test_the_engine_and_the_process_answer_a_projects_outputs_alike(tmp_path: Pa
             assert [row["asset"]["digest"] for row in first["assets"]] == ["blake3:" + "3" * 64]
             assert engine_answer["/api/projects/film/outputs?limit=x"][0] == 400
             assert engine_answer["/api/projects/absent/outputs"][0] == 404
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("previous", [False, True])
+@pytest.mark.parametrize("action", ["engine/stop", "shutdown"])
+def test_stopping_home_cannot_leave_an_owned_start_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, previous: bool, action: str
+) -> None:
+    from dinkster_supervisor.environment_collection import generation_maintenance_directory
+    from dinkster_supervisor.environment_runtime import engine_status, start_engine, stop_engine
+    from dinkster_supervisor.environment_state import writer_lock
+    from test_environment_runtime import free_port, make_generation
+
+    root = tmp_path / "installation"
+    make_generation(root, fake_serve=False)
+    (root / "builds/1/dinkster.lock").write_text('{"format":"dinkster.lock/1","packs":[]}\n')
+    (root / "environment.json").write_text(
+        json.dumps(
+            {
+                "format": "dinkster.project/1",
+                "channel": "nightly",
+                "variant": "linux-cpu",
+                "port": free_port(),
+                "mirrors": [],
+                "libraryRoot": str(root / "library"),
+            }
+        )
+    )
+    home_folder = tmp_path / "home"
+    home_folder.mkdir()
+    (home_folder / "model-settings.json").write_text('{"version":1,"locations":[]}')
+    monkeypatch.setenv("DINKSTER_HOME", str(home_folder))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    async def scenario() -> None:
+        spawned = asyncio.Event()
+        children: list[asyncio.subprocess.Process] = []
+        spawn = asyncio.create_subprocess_exec
+
+        async def observe_spawn(*args: Any, **kwargs: Any) -> asyncio.subprocess.Process:
+            child = await spawn(*args, **kwargs)
+            if "dinkster_supervisor.environment" in args:
+                children.append(child)
+                spawned.set()
+            return child
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", observe_spawn)
+        if previous:
+            await asyncio.to_thread(start_engine, root, 1, "main", free_port())
+            await asyncio.to_thread(stop_engine, root, "main")
+        home = Home(installations=lambda: frozenset({root}), watch_interval=0.05)
+        try:
+            async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
+                # The real CLI cannot write a new runtime record until maintenance ends.
+                with writer_lock(generation_maintenance_directory(root), operation="maintenance"):
+                    response = await client.post("/supervisor/engine", json={"root": str(root)})
+                    assert response.status == 200, await response.text()
+                    await asyncio.wait_for(spawned.wait(), timeout=30)
+                    before = await asyncio.to_thread(engine_status, root)
+                    assert [row["state"] for row in before] == (["stopped"] if previous else [])
+                    response = await client.post(f"/supervisor/{action}")
+                    assert response.status == 200, await response.text()
+                    answer = await response.json()
+                    assert answer["state" if action == "engine/stop" else "status"] == "stopped"
+                await asyncio.wait_for(children[0].wait(), timeout=120)
+                after = await asyncio.to_thread(engine_status, root)
+                assert [row["state"] for row in after] == (["stopped"] if previous else [])
+
+                # A deliberate stop must not prevent a later start of the same installation.
+                spawned.clear()
+                response = await client.post("/supervisor/engine/restart")
+                assert response.status == 200, await response.text()
+                # CLI completion, not startup speed, establishes when Home can be ready.
+                await spawned.wait()
+                await children[-1].wait()
+                await wait_for(client, lambda status: status["state"] == "ready")
+                assert (await client.post("/supervisor/shutdown")).status == 200
+                assert [row["state"] for row in await asyncio.to_thread(engine_status, root)] == [
+                    "stopped"
+                ]
+        finally:
+            for child in children:
+                if child.returncode is None:
+                    child.terminate()
+                    await child.wait()
+            await asyncio.to_thread(stop_engine, root, "main")
 
     run_scenario(scenario())
 
@@ -1522,7 +1678,10 @@ def test_home_creates_empty_workflow_and_copied_projects_without_an_engine(tmp_p
             assert copied.status == 200
             project = (await copied.json())["project"]
             assert project["uid"] != source["uid"]
-            assert project["name"] == "Copy" and project["packs"] == {"extra": ["example.extra"]}
+            assert project["name"] == "Copy" and project["packs"] == {
+                "extra": ["example.extra"],
+                "allInstalled": True,
+            }
             assert project["filesFolder"] == str(tmp_path / "copy")
             assert project["folder"] == str(tmp_path / "copy" / "output")
             assert project["lastOpenedAt"] is None and project["accountProject"] is None
@@ -1841,6 +2000,365 @@ def test_installations_report_their_wire_version_and_own_frontend(tmp_path: Path
             manifest["sources"] = {"frontend": {"url": "https://github.com/x/y"}}
             (same / "builds/1/engine-manifest.json").write_text(json.dumps(manifest))
             assert (await facts())["same"]["selected"] == "git"
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_installation_packs_read_stopped_snapshot_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dinkster_registry import LockedPack, Lockfile
+    from test_environment_runtime import make_generation
+
+    root = tmp_path / "installed"
+    make_generation(root, fake_serve=False)
+    generation = root / "builds/1"
+    names = ("declared", "offline", "missing")
+    (generation / "dinkster.lock").write_text(
+        Lockfile.of(
+            [LockedPack(name, "1.2", "blake3:" + "a" * 64, "", (name,)) for name in names]
+        ).record_json()
+    )
+    for name in names[:2]:
+        source = generation / "pack-sources" / name
+        source.mkdir(parents=True)
+        (source / "nodes.py").write_text('raise AssertionError("must not import pack code")\n')
+        (source / "dinkster-pack.toml").write_text(
+            f'[pack]\nname="{name}"\nnamespaces=["{name}"]\n'
+            '[pack.entry]\nnodes="nodes:NODES"\n'
+            + (
+                '[pack.sandbox]\nnetwork-origins=["https://API.example.test:443/"]\n'
+                '[[pack.parts]]\nname="extra"\n[pack.parts.entry]\nnodes="nodes:NODES"\n'
+                "[pack.parts.sandbox]\ngpu=true\n"
+                'network-origins=["https://mirror.example.test:8443", '
+                '"https://api.example.test"]\n'
+                if name == "declared"
+                else "[pack.sandbox]\nnetwork=true\n"
+            )
+        )
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({root.resolve()}))
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/packs"
+            for query, expected in (
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unknown")}, 404),
+                ({"root": str(root), "engine": "../other"}, 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected
+            response = await client.get(endpoint, params={"root": str(root)})
+            assert response.status == 200
+            body = await response.json()
+            assert body["available"] is True and body["snapshot"] == "1"
+            packs = {row["pack"]: row for row in body["packs"]}
+            assert packs["declared"] == {
+                "pack": "declared",
+                "version": "1.2",
+                "displayName": "declared",
+                "available": True,
+                "networkOrigins": ["https://api.example.test", "https://mirror.example.test:8443"],
+                "graphicsCard": {"requested": True, "granted": False},
+                "internetAddresses": [
+                    {"address": "https://api.example.test", "source": "pack"},
+                    {"address": "https://mirror.example.test:8443", "source": "pack"},
+                ],
+            }
+            assert packs["offline"]["networkOrigins"] == []
+            assert packs["offline"]["graphicsCard"] == {"requested": False, "granted": False}
+            assert packs["missing"]["version"] == "1.2"
+            assert packs["missing"]["available"] is False
+            assert packs["missing"]["networkOrigins"] is None
+            assert packs["missing"]["graphicsCard"] == {"requested": None, "granted": None}
+            assert packs["missing"]["message"]
+            sandbox = "/supervisor/installations/sandbox"
+            query = {"root": str(root)}
+            assert (await (await client.get(sandbox, params=query)).json())["sandboxPacks"] is False
+            changed = await client.put(sandbox, json={**query, "sandboxPacks": True})
+            assert changed.status == 200
+            assert (await changed.json())["sandboxPacks"] is True
+            grants = await (await client.get(endpoint, params=query)).json()
+            by_pack = {row["pack"]: row for row in grants["packs"]}
+            assert by_pack["declared"]["graphicsCard"] == {"requested": True, "granted": True}
+            assert by_pack["offline"]["graphicsCard"] == {"requested": False, "granted": False}
+            internet = endpoint + "/internet"
+            pack_query = {**query, "pack": "declared"}
+            user = {**pack_query, "address": "https://USER.example.test:443/"}
+            added = await client.post(internet, json=user)
+            assert added.status == 200
+            assert (await added.json())["internetAddresses"][-1] == {
+                "address": "https://user.example.test",
+                "source": "user",
+            }
+            removed = await client.delete(
+                internet, json={**pack_query, "address": "https://api.example.test"}
+            )
+            assert removed.status == 200
+            assert (await removed.json())["internetAddresses"] == [
+                {"address": "https://mirror.example.test:8443", "source": "pack"},
+                {"address": "https://user.example.test", "source": "user"},
+            ]
+            restored = await client.post(
+                internet, json={**pack_query, "address": "https://api.example.test"}
+            )
+            assert (await restored.json())["internetAddresses"][0] == {
+                "address": "https://api.example.test",
+                "source": "pack",
+            }
+            assert (await client.delete(internet, json=user)).status == 200
+            for path, valid in (
+                (sandbox, query),
+                (sandbox + "/readiness", query),
+                (endpoint, query),
+                (internet, pack_query),
+            ):
+                assert (await client.get(path, params={**valid, "extra": "no"})).status == 400
+                assert (
+                    await client.get(path, params={**valid, "root": str(tmp_path / "unknown")})
+                ).status == 404
+            for method, path, valid in (
+                ("PUT", sandbox, {**query, "sandboxPacks": True}),
+                ("POST", internet, user),
+                ("DELETE", internet, user),
+            ):
+                assert (
+                    await client.request(method, path, json={**valid, "extra": False})
+                ).status == 400
+                assert (
+                    await client.request(
+                        method, path, json={**valid, "root": str(tmp_path / "unknown")}
+                    )
+                ).status == 404
+            assert (await client.put(sandbox, json={**query, "sandboxPacks": 1})).status == 400
+            assert (
+                await client.post(internet, json={**user, "address": "https://127.0.0.1"})
+            ).status == 400
+            assert (await client.delete(internet, json={**user, "pack": "unknown"})).status == 404
+            assert (await client.post(internet, json={**user, "pack": "missing"})).status == 503
+            # Probe the selected engine with no host tools on PATH, not Home's interpreter.
+            with monkeypatch.context() as isolated:
+                isolated.setenv("PATH", "")
+                readiness = await (await client.get(sandbox + "/readiness", params=query)).json()
+            assert readiness["sandboxPacks"] is True
+            if sys.platform == "linux":
+                assert readiness["available"] is False
+                assert "bubblewrap" in readiness["detail"]
+            assert readiness["detail"]
+            await client.close()
+            client = TestClient(
+                TestServer(
+                    create_home_app(
+                        Home(installations=lambda: frozenset({root.resolve()})), frontend=None
+                    )
+                )
+            )
+            await client.start_server()
+            assert (await (await client.get(sandbox, params=query)).json())["sandboxPacks"] is True
+            persisted = await (await client.get(internet, params=pack_query)).json()
+            assert persisted["internetAddresses"] == packs["declared"]["internetAddresses"]
+            (generation / "dinkster.lock").unlink()
+            unavailable = await (await client.get(endpoint, params={"root": str(root)})).json()
+            assert unavailable["available"] is False and unavailable["packs"] is None
+            assert unavailable["message"]
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["state"] == "stopped" and "open" not in status
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_installation_facts_read_selected_records_without_starting_or_migrating(
+    tmp_path: Path,
+) -> None:
+    from test_environment_state import _generation
+
+    nightly, stable, empty = (tmp_path / name for name in ("nightly", "stable", "empty"))
+    empty.mkdir()
+    _generation(nightly, 1)
+    selected = _generation(nightly, 2)
+    document = json.loads(selected.read_text())
+    document["engine"]["version"] = "0.4.2"
+    document["variant"] = "linux-cuda128"
+    document["source"] = "source"
+    selected.write_text(json.dumps(document))
+    (nightly / "current").write_text("2\n")
+    _generation(stable, 1)
+    (stable / "current").write_text("1\n")
+    runtime = nightly / "runtime" / "2"
+    runtime.mkdir(parents=True)
+    (runtime / "main.json").write_text(
+        json.dumps(
+            {
+                "name": "main",
+                "generation": 2,
+                "port": 12345,
+                "pid": 0,
+                "instance": "stopped-facts",
+                "shutdownToken": "unused",
+                "url": "http://127.0.0.1:12345",
+                "state": "stopped",
+                "gpus": [],
+            }
+        )
+    )
+    before = {
+        str(path.relative_to(tmp_path)): path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    }
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({nightly, stable, empty}))
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/facts"
+            for query, expected in (
+                ({}, 400),
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unknown")}, 404),
+                ({"root": str(nightly), "generation": "1"}, 400),
+                ([("root", str(nightly)), ("root", str(stable))], 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected
+            response = await client.get(endpoint, params={"root": str(nightly)})
+            assert response.status == 200
+            facts = await response.json()
+            assert facts == {
+                "root": str(nightly),
+                "current": 2,
+                "build": {
+                    "version": "0.4.2",
+                    "release": "sha256:" + "b" * 64,
+                    "variant": "linux-cuda128",
+                    "baseId": "sha256:" + "a" * 64,
+                    "source": "source",
+                },
+                "engines": [
+                    {
+                        "name": "main",
+                        "generation": 2,
+                        "state": "stopped",
+                        "url": "http://127.0.0.1:12345",
+                        "gpus": [],
+                    }
+                ],
+            }
+            other = await (await client.get(endpoint, params={"root": str(stable)})).json()
+            assert other["current"] == 1 and other["build"]["version"] == "0.3.1"
+            assert other["build"]["variant"] == "linux-cpu" and other["engines"] == []
+            assert await (await client.get(endpoint, params={"root": str(empty)})).json() == {
+                "root": str(empty),
+                "current": None,
+                "build": None,
+                "engines": [],
+            }
+            assert {
+                str(path.relative_to(tmp_path)): path.read_bytes()
+                for path in tmp_path.rglob("*")
+                if path.is_file()
+            } == before
+            for invalid in ("broken metadata", json.dumps({**document, "generation": 1})):
+                selected.write_text(invalid)
+                refused = await client.get(endpoint, params={"root": str(nightly)})
+                assert refused.status == 503
+                assert (await refused.json())["error"] == "facts-unavailable"
+                assert selected.read_text() == invalid
+            selected.unlink()
+            assert (await client.get(endpoint, params={"root": str(nightly)})).status == 503
+            empty.rmdir()
+            assert (await client.get(endpoint, params={"root": str(empty)})).status == 503
+            assert not empty.exists()
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["state"] == "stopped" and "open" not in status
+        finally:
+            await client.close()
+
+    run_scenario(scenario())
+
+
+def test_installation_history_reads_recorded_entries_without_retained_builds(
+    tmp_path: Path,
+) -> None:
+    import shutil
+
+    from dinkster_supervisor.environment_history import prepare_entry, publish_entry
+    from test_environment_state import _generation
+
+    root, empty = tmp_path / "nightly", tmp_path / "empty"
+    empty.mkdir()
+    for number, version in ((1, "0.3.1"), (2, "0.4.2")):
+        manifest = _generation(root, number)
+        generation = manifest.parent
+        record = json.loads(manifest.read_text())
+        record["engine"]["version"] = version
+        manifest.write_text(json.dumps(record))
+        publish_entry(
+            root,
+            prepare_entry(
+                root,
+                generation,
+                operation=str(number),
+                reason="setup" if number == 1 else "update",
+            ),
+        )
+    (root / "current").write_text("2\n")
+    shutil.rmtree(root / "builds")
+    before = {
+        str(path.relative_to(root)): path.read_bytes() for path in root.rglob("*") if path.is_file()
+    }
+
+    async def scenario() -> None:
+        home = Home(installations=lambda: frozenset({root.resolve(), empty.resolve()}))
+        client = TestClient(TestServer(create_home_app(home, frontend=None)))
+        await client.start_server()
+        try:
+            endpoint = "/supervisor/installations/history"
+            for query, expected in (
+                ({}, 400),
+                ({"root": "relative"}, 400),
+                ({"root": str(tmp_path / "unregistered")}, 404),
+                ({"root": str(root), "generation": "1"}, 400),
+                ([("root", str(root)), ("root", str(empty))], 400),
+            ):
+                assert (await client.get(endpoint, params=query)).status == expected
+            response = await client.get(endpoint, params={"root": str(root)})
+            assert response.status == 200
+            body = await response.json()
+            assert body["root"] == str(root.resolve()) and body["current"] == 2
+            assert [entry["id"] for entry in body["history"]] == [1, 2]
+            assert [entry["snapshot"]["engine"]["version"] for entry in body["history"]] == [
+                "0.3.1",
+                "0.4.2",
+            ]
+            assert [entry["reason"] for entry in body["history"]] == ["setup", "update"]
+            known_empty = await (await client.get(endpoint, params={"root": str(empty)})).json()
+            assert known_empty == {"root": str(empty.resolve()), "current": None, "history": []}
+            (empty / "history").write_text("not a directory")
+            unavailable = await client.get(endpoint, params={"root": str(empty)})
+            assert unavailable.status == 503
+            assert (await unavailable.json())["error"] == "history-unavailable"
+            assert (empty / "history").read_text() == "not a directory"
+            (empty / "history").unlink()
+            empty.rmdir()
+            assert (await client.get(endpoint, params={"root": str(empty)})).status == 503
+            assert not empty.exists()
+            assert {
+                str(path.relative_to(root)): path.read_bytes()
+                for path in root.rglob("*")
+                if path.is_file()
+            } == before
+            (root / "history" / "00000000000000000001.json").write_text("broken history")
+            unavailable = await client.get(endpoint, params={"root": str(root)})
+            assert unavailable.status == 503
+            assert (await unavailable.json())["error"] == "history-unavailable"
+            status = await (await client.get("/supervisor/status")).json()
+            assert status["state"] == "stopped" and "open" not in status
         finally:
             await client.close()
 

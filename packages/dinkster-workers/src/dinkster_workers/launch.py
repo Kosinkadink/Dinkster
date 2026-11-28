@@ -18,15 +18,21 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 from .interpreter import module_command
 
+SANDBOX_NETWORK_ENV = "DINKSTER_SANDBOX_NETWORK"
 HOST_OWNED_ENVIRONMENT: frozenset[str] = frozenset(
-    {"DINKSTER_EGRESS_PROXY", "DINKSTER_PACK_SCRATCH", "DINKSTER_MXC_EXECUTABLE"}
+    {
+        "DINKSTER_EGRESS_PROXY",
+        "DINKSTER_PACK_SCRATCH",
+        "DINKSTER_MXC_EXECUTABLE",
+        SANDBOX_NETWORK_ENV,
+    }
 )
 
 
@@ -56,6 +62,7 @@ class LaunchSpec:
     python: str
     use_shm: bool
     temporary_directory: Path | None = None
+    on_network_denied: Callable[[str], None] | None = None
 
     def __post_init__(self) -> None:
         if (

@@ -111,7 +111,7 @@ def _create_project(
         created_folders=created,
     )
     if source is not None:
-        document["packs"] = {"extra": object_value(source["packs"], "packs")["extra"]}
+        document["packs"] = dict(object_value(source["packs"], "packs"))
         folders = object_value(
             preference(records, "folders.projects.get", {})["folders"], "folders"
         )

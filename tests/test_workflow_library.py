@@ -1593,8 +1593,10 @@ def test_asset_get_falls_through_to_resolver(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("destination", ("anonymous", "named", "transfer"))
-@pytest.mark.parametrize("limited", (False, True))
-def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str, limited: bool) -> None:
+@pytest.mark.parametrize("limited", (False, True, None))
+def test_upload_declared_digest_and_limits(
+    tmp_path: Path, destination: str, limited: bool | None
+) -> None:
     async def oversized_chunks():
         yield b"x" * 32
         await asyncio.sleep(0)
@@ -1609,7 +1611,11 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str, lim
         client = await make_client(
             tmp_path,
             upload_limit=96,
-            upload_limits={"generic": 64, "media/image": 2**40} if limited else None,
+            **(
+                {}
+                if limited is None
+                else {"upload_limits": {"generic": 64, "media/image": 2**40} if limited else None}
+            ),
             resolver=mounts,
             upload_writer=AssetWriter(mounts),
             project_folders_for=lambda _project: AssetFolderContext(("imports",)),
@@ -1625,16 +1631,18 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str, lim
             assert guidance.status == 200
             assert guidance.headers["Cache-Control"] == "no-store"
             expected_limits = {
-                "generic": 64,
+                "generic": 96 if limited is None else 64,
                 "media/image": 256 * 1024**2,
                 "media/audio": 1024**3,
                 "media/video": 1024**3,
                 "media/model3d": 1024**3,
                 "data/latent": 1024**3,
             }
-            assert await guidance.json() == (expected_limits if limited else None)
+            assert await guidance.json() == (None if limited is False else expected_limits)
             catalog = await (await client.get("/api/nodes")).json()
-            assert catalog["dinkster"]["uploadLimits"] == (expected_limits if limited else None)
+            assert catalog["dinkster"]["uploadLimits"] == (
+                None if limited is False else expected_limits
+            )
             body = b'{"graphs": {}}'
             resp = await client.post(
                 path, data=body, headers={**headers, "X-Dinkster-Digest": DIGEST_B}
@@ -1652,12 +1660,18 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str, lim
             headers["X-Dinkster-Digest"] = digest_bytes(oversized)
             for index, data in enumerate((oversized, oversized_chunks())):
                 response = await client.post(path, data=data, headers=headers)
-                expected = 413 if limited else 201 if destination == "named" or index == 0 else 200
+                expected = (
+                    413
+                    if limited is not False
+                    else 201
+                    if destination == "named" or index == 0
+                    else 200
+                )
                 assert response.status == expected
             assert (await client.post(path, data=b"", headers=headers)).status == 400
             if destination == "named":
                 assert (root / "source.bin").read_bytes() == body
-                if limited:
+                if limited is not False:
                     assert sorted(entry.name for entry in root.iterdir()) == saved_files
                 else:
                     assert sorted(entry.read_bytes() for entry in root.glob("*.bin")) == [
@@ -1669,7 +1683,7 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str, lim
             else:
                 assert not (root / "source.bin").exists()
                 expected_digests = [digest_bytes(body)]
-                if not limited:
+                if limited is False:
                     expected_digests.append(digest_bytes(oversized))
                     fetched = await client.get(f"/api/assets/{digest_bytes(oversized)}")
                     assert await fetched.read() == oversized
@@ -1685,10 +1699,11 @@ def test_upload_declared_digest_and_limits(tmp_path: Path, destination: str, lim
     run_scenario(scenario())
 
 
-def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other_projects(
+def test_project_node_catalog_defaults_to_installed_packs_and_preserves_explicit_selection(
     tmp_path: Path,
 ) -> None:
     from dinkster_server import PackInfo
+    from dinkster_server.auth import Principal, StaticBearerAuthenticator
     from dinkster_server.projects import add_project_routes
 
     async def scenario() -> None:
@@ -1706,10 +1721,51 @@ def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other
             library=library,
             packs={"tools": PackInfo("Tools"), "other": PackInfo("Other", version="8.0")},
             node_packs={"test.echo": "tools", "other.tool": "other"},
+            authenticator=StaticBearerAuthenticator(
+                {
+                    "writer": Principal(
+                        "writer",
+                        {"local": frozenset({"assets:read", "assets:write", "schemas:read"})},
+                    ),
+                    "reader": Principal("reader", {"local": frozenset({"assets:read"})}),
+                }
+            ),
         )
         add_project_routes(app, tmp_path, engine_version="0.0.15")
-        async with TestClient(TestServer(app)) as client:
+        async with TestClient(
+            TestServer(app), headers={"Authorization": "Bearer writer"}
+        ) as client:
             await client.post("/api/projects", json={"id": "film"})
+            writable = await (await client.get("/api/projects/film/needs")).json()
+            assert writable["canWrite"] is True
+            readonly = await (
+                await client.get(
+                    "/api/projects/film/needs", headers={"Authorization": "Bearer reader"}
+                )
+            ).json()
+            assert readonly["canWrite"] is False
+            assert readonly["hasInstalledNodes"] is True
+            for project in ("default", "film"):
+                fresh = await (await client.get(f"/api/nodes?project={project}")).json()
+                assert set(fresh["nodes"]) == set(schemas)
+                assert set(fresh["packs"]) == {"core", "tools", "other"}
+            updated = await client.patch(
+                "/api/projects/default",
+                json={"revision": 1, "patch": {"packs": {"extra": ["wanted"]}}},
+            )
+            assert updated.status == 200, await updated.text()
+            assert (await updated.json())["project"]["packs"]["allInstalled"] is True
+            assert set(
+                (await (await client.get("/api/projects/default/needs")).json())["extra"]
+            ) == {"core", "tools", "other", "wanted"}
+            assert set(
+                (await (await client.get("/api/nodes?project=default")).json())["nodes"]
+            ) == set(schemas)
+            narrowed = await client.patch(
+                "/api/projects/film",
+                json={"revision": 1, "patch": {"packs": {"extra": [], "allInstalled": False}}},
+            )
+            assert narrowed.status == 200, await narrowed.text()
             document = {
                 "format": "dinkster-workflow",
                 "formatVersion": 1,
@@ -1737,11 +1793,11 @@ def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other
             assert set(film["nodes"]) == {"core.tool", "test.echo"}
             assert set(film["packs"]) == {"core", "tools"}
             default = await (await client.get("/api/nodes?project=default")).json()
-            assert set(default["nodes"]) == {"core.tool"}
-            assert set(default["packs"]) == {"core"}
+            assert set(default["nodes"]) == set(schemas)
+            assert set(default["packs"]) == {"core", "tools", "other"}
             assert len((await (await client.get("/api/nodes")).json())["nodes"]) == 3
             added = await client.patch(
-                "/api/projects/film", json={"revision": 1, "patch": {"packs": {"extra": ["other"]}}}
+                "/api/projects/film", json={"revision": 2, "patch": {"packs": {"extra": ["other"]}}}
             )
             assert added.status == 200, await added.text()
             assert set(
@@ -1749,7 +1805,7 @@ def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other
             ) == set(schemas)
             assert await (await client.get("/api/nodes?project=default")).json() == default
             removed = await client.patch(
-                "/api/projects/film", json={"revision": 2, "patch": {"packs": {"extra": []}}}
+                "/api/projects/film", json={"revision": 3, "patch": {"packs": {"extra": []}}}
             )
             assert removed.status == 200
             assert await (await client.get("/api/nodes?project=film")).json() == film
@@ -1814,8 +1870,28 @@ def test_project_node_catalog_tracks_used_and_added_packs_without_changing_other
             assert invalid["unknown"] == [{"scope": "local", "id": invalid_record["id"]}]
             assert [pack["pack"] for pack in invalid["packs"]] == ["tools"]
             assert (await client.get("/api/nodes?project=missing")).status == 404
-            await client.delete("/api/projects/film", json={"revision": 3})
+            restored = await client.patch(
+                "/api/projects/film",
+                json={"revision": 4, "patch": {"packs": {"extra": [], "allInstalled": True}}},
+            )
+            assert restored.status == 200, await restored.text()
+            assert set(
+                (await (await client.get("/api/nodes?project=film")).json())["nodes"]
+            ) == set(schemas)
+            deleted = await client.delete("/api/projects/film", json={"revision": 5})
+            assert deleted.status == 200, await deleted.text()
             assert (await client.get("/api/nodes?project=film")).status == 404
+        empty_library = ServerLibrary(
+            AssetVault(tmp_path / "empty-vault"), LibraryStore(tmp_path / "empty.sqlite")
+        )
+        empty_app = create_app(
+            make_engine, {}, library=empty_library, packs={"metadata": PackInfo("Metadata")}
+        )
+        add_project_routes(empty_app, tmp_path / "empty", engine_version="0.0.15")
+        async with TestClient(TestServer(empty_app)) as client:
+            empty = await (await client.get("/api/projects/default/needs")).json()
+            assert empty["hasInstalledNodes"] is False
+            assert empty["canWrite"] is True
         library.store.close()
 
     run_scenario(scenario())
@@ -2157,7 +2233,7 @@ def test_concurrent_project_runs_retry_compatible_revision_changes(
             project = (await (await client.get("/api/projects/default")).json())["project"]
             assert project["environment"]["id"] == "a" * 32
             assert project["environment"]["lastSnapshot"] == "3"
-            assert project["packs"] == {"extra": []}
+            assert project["packs"] == {"extra": [], "allInstalled": True}
 
     run_scenario(scenario())
 
@@ -2542,9 +2618,11 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
                         "publisher": None,
                     }
                 ],
-                "extra": [],
+                "extra": ["core"],
                 "unknown": [],
                 "installed": [{"pack": "core", "version": None}],
+                "hasInstalledNodes": True,
+                "canWrite": True,
             }
             registered = await client.post("/api/projects", json={"id": "film"})
             assert registered.status == 200
@@ -2633,9 +2711,11 @@ def test_saved_workflow_updates_project_needs_without_changing_legacy_schema(
             needs = await (await client.get("/api/projects/default/needs")).json()
             assert needs == {
                 "packs": [],
-                "extra": [],
+                "extra": ["core"],
                 "unknown": [{"scope": "local", "id": record["id"]}],
                 "installed": [{"pack": "core", "version": None}],
+                "hasInstalledNodes": True,
+                "canWrite": True,
             }
             deleted = await client.delete("/api/projects/film", json={"revision": 1})
             assert deleted.status == 200
