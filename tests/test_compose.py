@@ -27,8 +27,16 @@ from aiohttp.test_utils import TestClient, TestServer
 from dinkster_assets import AssetError, AssetRef
 from dinkster_assets.scratch import claim_inactive_produced_job
 from dinkster_caches import LayeredCache, MemoryLRUCache
-from dinkster_engine import EngineEvent
-from dinkster_graph import Graph, GraphNode, Link, TypedLiteral, graph_to_wire
+from dinkster_engine import EngineEvent, ExecutionError, GraphValidationError
+from dinkster_graph import (
+    Graph,
+    GraphNode,
+    Link,
+    TypedLiteral,
+    graph_from_wire,
+    graph_to_wire,
+    migrate_node_replacements,
+)
 from dinkster_memory import (
     GovernorReservationService,
     MeasuredMemory,
@@ -37,9 +45,16 @@ from dinkster_memory import (
 )
 from dinkster_memory.resident import ResidentPool
 from dinkster_registry import LockedPack, Lockfile
-from dinkster_schema import build_schemas
+from dinkster_schema import build_schemas, schema_signature
 from dinkster_server import PackInfo, create_app
-from dinkster_values import EncodedPayload, TypeRegistry, Value, ValueMeta, default_encode
+from dinkster_values import (
+    EncodedPayload,
+    TypeRegistry,
+    Value,
+    ValueMeta,
+    default_encode,
+    is_absent,
+)
 from dinkster_workers import ManifestError
 from dinkster_workers.doctor import prepare_catalog
 
@@ -745,6 +760,464 @@ def test_authored_inputs_execute_dependencies_and_invalidate_cache(
             assert changed_option.outputs["choice"]["result"].resolve() == "outside-menu|changed|13"
             assert changed_option.executed == ("choice",)
             assert changed_option.cached == ("index",)
+        finally:
+            await composer.close()
+
+    run_scenario(scenario())
+
+
+@pytest.mark.parametrize("attributed", [False, True])
+def test_host_record_helpers_execute_and_survive_pack_reload(
+    tmp_path: Path, attributed: bool
+) -> None:
+    def manifest(
+        version: str,
+        name: str,
+        *,
+        collision: bool = False,
+        added_default: int | None = None,
+        migration_from: str | None = None,
+        migration_note: str = "Saved Make nodes gain iterations=23 and retain seed and guidance.",
+    ) -> Path:
+        root = tmp_path / version
+        root.mkdir()
+        module = f"record_maker_{version}"
+        (root / f"{module}.py").write_text(
+            "from dinkster_schema import Input, Node, NodeSchema, Output, RecordField, TypeExpr\n"
+            "from dinkster_schema import MappingSource, ReplacementCase, ReplacementRule\n"
+            "INT = TypeExpr.concrete('INT')\n"
+            "TEXT = TypeExpr.concrete('STRING')\n"
+            "INNER_FIELDS = ["
+            f"RecordField('1-seed', '{name}', INT), "
+            "RecordField('optional', 'guidance', INT, optional=True)]\n"
+            + (
+                f"INNER_FIELDS.append(RecordField('added', 'iterations', INT, "
+                f"default={added_default!r}))\n"
+                if version in ("defaults", "updated_defaults", "required")
+                or migration_from is not None
+                else ""
+            )
+            + "INNER = TypeExpr.record_of('recordtest.inner', "
+            + ("*reversed(INNER_FIELDS))\n" if version == "second" else "*INNER_FIELDS)\n")
+            + "OUTER = TypeExpr.record_of('recordtest.outer', "
+            "RecordField('settings', 'settings', INNER), RecordField('label', 'prompt', TEXT))\n"
+            "class Consume(Node):\n"
+            "    @classmethod\n"
+            "    def define_schema(cls):\n"
+            "        return NodeSchema('recordtest.consume', body=("
+            "Input('seed_only', TypeExpr.record_of('recordtest.inner', INNER_FIELDS[0])), "
+            "Input('guidance_only', TypeExpr.record_of('recordtest.inner', INNER_FIELDS[1]), "
+            "required=False), "
+            "Input('value', OUTER), "
+            "Input('foreign', TypeExpr.record_of('recordtest.foreign', "
+            f"RecordField('other-seed', '{name}', INT), "
+            "RecordField('other-guidance', 'guidance', INT, optional=True), "
+            "RecordField('extra', 'extra', TEXT, optional=True)), required=False), "
+            "Output('text', TEXT)), replacements=("
+            + (
+                "ReplacementRule(from_type='recordtest.inner.make', "
+                f"from_signature={migration_from!r}, "
+                f"note={migration_note!r}, "
+                "cases=(ReplacementCase.build('recordtest.inner.make', inputs={"
+                "'field_312d73656564': MappingSource.copy('field_312d73656564'), "
+                "'field_6f7074696f6e616c': MappingSource.copy('field_6f7074696f6e616c'), "
+                "'field_6164646564': MappingSource.constant(23)}, "
+                "outputs={'record': 'record'}),)),"
+                if migration_from is not None
+                else ""
+            )
+            + "))\n"
+            "    @classmethod\n"
+            "    def execute(cls, value, seed_only):\n"
+            f"        count = value['settings']['{name}']\n"
+            f"        return cls.outputs(text=str(count+seed_only['{name}'])+'|'+value['prompt'])\n"
+            + (
+                "class Collision(Consume):\n"
+                "    @classmethod\n"
+                "    def define_schema(cls):\n"
+                "        return NodeSchema('recordtest.inner.make', body=(Output('value', INT),))\n"
+                "NODES = (Consume, Collision)\n"
+                if collision
+                else "NODES = (Consume,)\n"
+            ),
+            encoding="ascii",
+        )
+        path = root / "dinkster-pack.toml"
+        path.write_text(
+            '[pack]\nname = "record-test"\npublisher = "dinkster"\n'
+            'namespaces = ["recordtest"]\n'
+            f'[pack.entry]\nnodes = "{module}:NODES"\n',
+            encoding="ascii",
+        )
+        return path
+
+    first_manifest = manifest("first", "seed")
+    second_manifest = manifest("second", "noise")
+    collision_manifest = manifest("collision", "seed", collision=True)
+    defaults_manifest = manifest("defaults", "noise", added_default=0)
+    updated_defaults_manifest = manifest("updated_defaults", "noise", added_default=13)
+    required_manifest = manifest("required", "noise")
+
+    def pack_spec(path: Path) -> PackSpec:
+        return PackSpec(
+            path,
+            packs={
+                "records-library": PackInfo(display_name="Records Library"),
+                "inner-library": PackInfo(display_name="Inner Library"),
+            }
+            if attributed
+            else None,
+            attribute=(
+                lambda node_type: (
+                    "inner-library"
+                    if node_type.startswith("recordtest.inner.")
+                    else "records-library"
+                )
+            )
+            if attributed
+            else None,
+        )
+
+    async def scenario() -> None:
+        composer = ServingComposer(worker_env=WORKER_ENV)
+        try:
+            with pytest.raises(CompositionError, match="generated record node.*collides"):
+                await composer.add_pack(pack_spec(collision_manifest))
+            if attributed:
+                with pytest.raises(CompositionError, match="not among this spec's pack entries"):
+                    await composer.add_pack(
+                        replace(
+                            pack_spec(first_manifest),
+                            attribute=lambda node_type: (
+                                "missing-library"
+                                if node_type.endswith(".make")
+                                else "records-library"
+                            ),
+                        )
+                    )
+            delta = await composer.add_pack(pack_spec(first_manifest))
+            graph = Graph(
+                nodes={
+                    "inner": GraphNode("recordtest.inner.make", {"field_312d73656564": 29}),
+                    "outer": GraphNode(
+                        "recordtest.outer.make",
+                        {
+                            "field_73657474696e6773": Link("inner", "record"),
+                            "field_6c6162656c": "seven",
+                        },
+                    ),
+                    "consume": GraphNode(
+                        "recordtest.consume",
+                        {"value": Link("outer", "record"), "seed_only": Link("whole", "value")},
+                    ),
+                    "whole": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings"]'},
+                    ),
+                    "nested": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings", "1-seed"]'},
+                    ),
+                    "chained": GraphNode(
+                        "recordtest.inner.read",
+                        {"record": Link("whole", "value"), "field": '["1-seed"]'},
+                    ),
+                    "foreign": GraphNode(
+                        "recordtest.foreign.make",
+                        {"field_6f746865722d73656564": 53, "field_6578747261": "keep me"},
+                    ),
+                    "foreign_read": GraphNode(
+                        "recordtest.inner.read",
+                        {"record": Link("foreign", "record"), "field": '["1-seed"]'},
+                    ),
+                    "optional": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings", "optional"]'},
+                    ),
+                    "change": GraphNode(
+                        "recordtest.inner.change",
+                        {"record": Link("foreign", "record"), "field": '["optional"]', "value": 11},
+                    ),
+                    "change_again": GraphNode(
+                        "recordtest.inner.change",
+                        {"record": Link("change", "record"), "field": '["optional"]', "value": 17},
+                    ),
+                    "changed_read": GraphNode(
+                        "recordtest.foreign.read",
+                        {"record": Link("change_again", "record"), "field": '["other-guidance"]'},
+                    ),
+                    "nested_change": GraphNode(
+                        "recordtest.outer.change",
+                        {
+                            "record": Link("outer", "record"),
+                            "field": '["settings", "1-seed"]',
+                            "value": 41,
+                        },
+                    ),
+                    "text_change": GraphNode(
+                        "recordtest.outer.change",
+                        {"record": Link("outer", "record"), "field": '["label"]', "value": "eight"},
+                    ),
+                }
+            )
+            assert delta.schema_owners["recordtest.inner.make"] == "record-test"
+            client = TestClient(
+                TestServer(
+                    create_app(
+                        composer.composition.make_engine,
+                        composer.composition.schemas,
+                        packs=composer.composition.packs,
+                        node_packs=composer.composition.node_packs,
+                    )
+                )
+            )
+            await client.start_server()
+            try:
+                catalog = await (await client.get("/api/nodes")).json()
+                pack_id = "records-library" if attributed else "record-test"
+                for record in ("inner", "outer", "foreign"):
+                    for operation in ("make", "read", "change"):
+                        assert catalog["nodes"][f"recordtest.{record}.{operation}"]["pack"] == (
+                            "inner-library" if attributed and record == "inner" else pack_id
+                        )
+                assert pack_id in catalog["packs"]
+                assert ("inner-library" in catalog["packs"]) == attributed
+                assert ("record-test" in catalog["packs"]) != attributed
+            finally:
+                await client.close()
+            engine = composer.composition.make_engine(lambda _event: None)
+            result = await engine.run(graph, list(graph.nodes))
+            assert result.outputs["consume"]["text"].resolve() == "58|seven"
+            assert result.outputs["inner"]["record"].resolve() == {"seed": 29}
+            assert result.outputs["whole"]["value"].resolve() == {"seed": 29}
+            assert result.outputs["nested"]["value"].resolve() == 29
+            assert result.outputs["chained"]["value"].resolve() == 29
+            assert result.outputs["foreign_read"]["value"].resolve() == 53
+            assert is_absent(result.outputs["optional"]["value"])
+            assert result.outputs["change"]["record"].type_id == "recordtest.foreign"
+            assert result.outputs["change"]["record"].resolve() == {
+                "seed": 53,
+                "guidance": 11,
+                "extra": "keep me",
+            }
+            assert result.outputs["changed_read"]["value"].resolve() == 17
+            assert result.outputs["nested_change"]["record"].resolve() == {
+                "settings": {"seed": 41},
+                "prompt": "seven",
+            }
+            assert result.outputs["text_change"]["record"].resolve() == {
+                "settings": {"seed": 29},
+                "prompt": "eight",
+            }
+            invalid_replacement = Graph(
+                nodes={
+                    **graph.nodes,
+                    "change": GraphNode(
+                        "recordtest.inner.change",
+                        {
+                            "record": Link("foreign", "record"),
+                            "field": '["optional"]',
+                            "value": Link("whole_text", "value"),
+                        },
+                    ),
+                    "whole_text": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["label"]'},
+                    ),
+                }
+            )
+            with pytest.raises(ExecutionError, match="guidance.*INT.*STRING"):
+                await engine.run(invalid_replacement, ["change"])
+            text_selection = Graph(
+                nodes={
+                    **graph.nodes,
+                    "nested": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["label"]'},
+                    ),
+                }
+            )
+            selected = await engine.run(text_selection, ["nested"])
+            assert selected.outputs["nested"]["value"].resolve() == "seven"
+            unknown_identity = Graph(
+                nodes={
+                    **graph.nodes,
+                    "nested": GraphNode(
+                        "recordtest.outer.read",
+                        {"record": Link("outer", "record"), "field": '["settings", "seed"]'},
+                    ),
+                }
+            )
+            with pytest.raises(GraphValidationError, match="record field 'seed' is not declared"):
+                await engine.run(unknown_identity, ["nested"])
+            graph = Graph(
+                nodes={
+                    **graph.nodes,
+                    "inner": GraphNode(
+                        "recordtest.inner.make",
+                        {"field_312d73656564": 97, "field_6f7074696f6e616c": 11},
+                    ),
+                }
+            )
+            changed = await engine.run(graph, list(graph.nodes))
+            assert changed.outputs["consume"]["text"].resolve() == "194|seven"
+            assert changed.outputs["inner"]["record"].resolve() == {"seed": 97, "guidance": 11}
+            assert changed.outputs["nested"]["value"].resolve() == 97
+            assert changed.outputs["chained"]["value"].resolve() == 97
+            assert changed.outputs["optional"]["value"].resolve() == 11
+            if attributed:
+                with pytest.raises(CompositionError, match="not among this spec's pack entries"):
+                    await composer.reload_pack(
+                        "record-test",
+                        replace(
+                            pack_spec(second_manifest),
+                            attribute=lambda node_type: (
+                                "missing-library"
+                                if node_type.endswith(".read")
+                                else "records-library"
+                            ),
+                        ),
+                    )
+                unchanged = await engine.run(graph, ["consume"])
+                assert unchanged.outputs["consume"]["text"].resolve() == "194|seven"
+            reload = await composer.reload_pack("record-test", pack_spec(second_manifest))
+            assert "recordtest.inner.make" in reload.delta.schemas
+            assert reload.delta.node_packs["recordtest.inner.read"] == (
+                "inner-library" if attributed else "record-test"
+            )
+            renamed = await engine.run(graph, list(graph.nodes))
+            assert renamed.outputs["consume"]["text"].resolve() == "194|seven"
+            assert renamed.outputs["inner"]["record"].resolve() == {"noise": 97, "guidance": 11}
+            assert "inner" in renamed.cached
+            assert "outer" in renamed.cached
+            assert renamed.outputs["nested"]["value"].resolve() == 97
+            assert renamed.outputs["chained"]["value"].resolve() == 97
+            assert renamed.outputs["foreign_read"]["value"].resolve() == 53
+            assert renamed.outputs["whole"]["value"].resolve() == {"noise": 97, "guidance": 11}
+            assert {"whole", "nested", "chained", "optional"}.issubset(renamed.cached)
+            assert {"change", "change_again", "changed_read"}.issubset(renamed.cached)
+            assert renamed.outputs["change_again"]["record"].resolve() == {
+                "noise": 53,
+                "guidance": 17,
+                "extra": "keep me",
+            }
+            assert renamed.outputs["nested_change"]["record"].resolve() == {
+                "settings": {"noise": 41, "guidance": 11},
+                "prompt": "seven",
+            }
+            assert {"nested_change", "text_change"}.issubset(renamed.cached)
+            saved_make = Graph(
+                nodes={key: graph.nodes[key] for key in ("inner", "outer", "whole", "consume")}
+            )
+            old_signature = schema_signature(composer.composition.schemas["recordtest.inner.make"])
+            saved_make = Graph(
+                nodes={
+                    **saved_make.nodes,
+                    "seed_source": GraphNode(
+                        "recordtest.foreign.make", {"field_6f746865722d73656564": 97}
+                    ),
+                    "seed_value": GraphNode(
+                        "recordtest.foreign.read",
+                        {"record": Link("seed_source", "record"), "field": '["other-seed"]'},
+                    ),
+                    "inner": replace(
+                        saved_make.nodes["inner"],
+                        inputs={
+                            **saved_make.nodes["inner"].inputs,
+                            "field_312d73656564": Link("seed_value", "value"),
+                        },
+                        schema_signature=old_signature,
+                    ),
+                }
+            )
+            saved_make = graph_from_wire(json.loads(json.dumps(graph_to_wire(saved_make))))
+            with pytest.raises(CompositionError, match="adds required fields.*iterations"):
+                await composer.reload_pack("record-test", pack_spec(required_manifest))
+            for version, signature, note in (
+                ("unexplained", old_signature, ""),
+                ("unsigned", "", "Set iterations on saved Make nodes."),
+                ("unrelated", "other-interface", "Set iterations on saved Make nodes."),
+            ):
+                invalid = manifest(version, "noise", migration_from=signature, migration_note=note)
+                with pytest.raises(CompositionError, match="migration|adds required fields"):
+                    await composer.reload_pack("record-test", pack_spec(invalid))
+            unchanged = await engine.run(saved_make, ["consume"])
+            assert unchanged.outputs["consume"]["text"].resolve() == "194|seven"
+            migrated_manifest = manifest("migrated", "noise", migration_from=old_signature)
+            await composer.reload_pack("record-test", pack_spec(migrated_manifest))
+            migrated_live = await engine.run(saved_make, ["inner"])
+            assert migrated_live.outputs["inner"]["record"].resolve() == {
+                "noise": 97,
+                "guidance": 11,
+                "iterations": 23,
+            }
+            await composer.reload_pack("record-test", pack_spec(defaults_manifest))
+            added = await engine.run(saved_make, ["inner", "consume"])
+            assert added.outputs["inner"]["record"].resolve() == {
+                "noise": 97,
+                "guidance": 11,
+                "iterations": 0,
+            }
+            assert added.outputs["consume"]["text"].resolve() == "194|seven"
+            await composer.reload_pack("record-test", pack_spec(updated_defaults_manifest))
+            updated_default = await engine.run(saved_make, ["inner", "consume"])
+            assert updated_default.outputs["inner"]["record"].resolve() == {
+                "noise": 97,
+                "guidance": 11,
+                "iterations": 13,
+            }
+            assert "inner" in updated_default.executed
+            explicit = Graph(
+                nodes={
+                    "inner": GraphNode(
+                        "recordtest.inner.make",
+                        {"field_312d73656564": 29, "field_6164646564": 7},
+                    )
+                }
+            )
+            supplied = await engine.run(explicit, ["inner"])
+            assert supplied.outputs["inner"]["record"].resolve() == {"noise": 29, "iterations": 7}
+            await composer.reload_pack("record-test", pack_spec(required_manifest))
+            with pytest.raises(GraphValidationError, match=r"Missing required input: iterations\."):
+                await engine.run(saved_make, ["inner"])
+            supplied = await engine.run(explicit, ["inner"])
+            assert supplied.outputs["inner"]["record"].resolve() == {"noise": 29, "iterations": 7}
+            cold = ServingComposer(worker_env=WORKER_ENV)
+            try:
+                await cold.add_pack(pack_spec(migrated_manifest))
+                cold_engine = cold.composition.make_engine(lambda _event: None)
+                migrated = await cold_engine.run(saved_make, ["inner", "consume"])
+                assert migrated.outputs["inner"]["record"].resolve() == {
+                    "noise": 97,
+                    "guidance": 11,
+                    "iterations": 23,
+                }
+                assert migrated.outputs["consume"]["text"].resolve() == "194|seven"
+                reopened = migrate_node_replacements(saved_make, cold.composition.schemas)
+                reopened = graph_from_wire(json.loads(json.dumps(graph_to_wire(reopened))))
+                assert reopened.nodes["outer"].inputs == saved_make.nodes["outer"].inputs
+                assert migrate_node_replacements(reopened, cold.composition.schemas) == reopened
+                again = await cold_engine.run(reopened, ["inner"])
+                assert again.outputs["inner"]["record"].resolve() == {
+                    "noise": 97,
+                    "guidance": 11,
+                    "iterations": 23,
+                }
+                for signature in ("", "unrelated-interface"):
+                    unsigned = Graph(
+                        nodes={
+                            **saved_make.nodes,
+                            "inner": replace(saved_make.nodes["inner"], schema_signature=signature),
+                        }
+                    )
+                    with pytest.raises(GraphValidationError, match="Missing required input"):
+                        await cold_engine.run(unsigned, ["inner"])
+            finally:
+                await cold.close()
+            removed = await composer.remove_pack("record-test")
+            assert "recordtest.inner.make" in removed.removed_types
+            with pytest.raises(KeyError, match="recordtest.inner.make"):
+                await engine.run(graph, ["consume"])
         finally:
             await composer.close()
 

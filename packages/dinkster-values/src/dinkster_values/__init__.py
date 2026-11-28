@@ -276,6 +276,7 @@ from .model3d_codec import (
     validate_model3d_encoded,
 )
 from .pins import ResourcePins
+from .records import RecordPayload, make_record_value
 from .registry import (
     INLINE_STRING_CAP,
     BufferEncoding,
@@ -442,6 +443,7 @@ __all__ = [
     "LOAD3D_MODEL_INFO_TYPE",
     "LOAD_3D_TYPE",
     "ListPayload",
+    "RecordPayload",
     "TuplePayload",
     "MEDIA_AUDIO_UPLOAD_LIMIT_BYTES",
     "MEDIA_IMAGE_UPLOAD_LIMIT_BYTES",
@@ -613,6 +615,7 @@ __all__ = [
     "list_type_id",
     "make_absent_value",
     "make_list_value",
+    "make_record_value",
     "make_tuple_value",
     "merge_image_batches",
     "model3d_fingerprint",

@@ -74,6 +74,7 @@ from dinkster_schema import (
     combo_choices_json_bytes,
     schema_from_wire,
     schema_to_wire,
+    validate_claim,
     validate_name,
 )
 from dinkster_schema.body import LookupMark
@@ -578,6 +579,7 @@ class BoundarySession:
         self._compat_skips: dict[str, CompatGateDiagnostic] = {}
         self._lookup_marks: dict[str, LookupMark] = {}
         self._body_arms: dict[str, tuple[str, ...]] | None = None
+        self._record_namespaces: tuple[str, ...] | None = None
         self._vision_providers: tuple[VisionProvider, ...] | None = None
         self._generation_providers: tuple[GenerationProvider, ...] | None = None
         self._lazy_status = False
@@ -718,6 +720,11 @@ class BoundarySession:
         return self._body_arms
 
     @property
+    def record_namespaces(self) -> tuple[str, ...] | None:
+        """Record ownership claims, or None when the peer omitted them."""
+        return self._record_namespaces
+
+    @property
     def vision_providers(self) -> tuple[VisionProvider, ...] | None:
         """Provider declarations, or None when an older peer omitted them."""
         if self._schemas is None:
@@ -854,9 +861,14 @@ class BoundarySession:
         header, _ = frame
         protocol = header.get("protocol")
         if type(protocol) is not int or protocol != PROTOCOL_VERSION:
+            reason = (
+                "; this worker cannot receive linked record declarations; update the worker"
+                if protocol == 14
+                else ""
+            )
             raise RuntimeError(
                 f"{self._role} '{self._pack}' protocol mismatch: "
-                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}"
+                f"engine speaks {PROTOCOL_VERSION}, worker spoke {protocol!r}{reason}"
             )
         self._pack = str(header.get("pack", self._pack))
         declarations = PackDeclarations(header, role=self._role, pack=self._pack)
@@ -869,6 +881,15 @@ class BoundarySession:
         self._compat_skips = declarations.compat_skips
         self._lookup_marks = declarations.lookup_marks
         self._body_arms = declarations.body_arms
+        claims = header.get("recordNamespaces", [])
+        if not isinstance(claims, list) or any(
+            not isinstance(claim, str) or validate_claim(claim) is not None
+            for claim in cast("list[object]", claims)
+        ):
+            raise RuntimeError(f"{self._role} '{self._pack}' carried malformed recordNamespaces")
+        self._record_namespaces = (
+            tuple(cast("list[str]", claims)) if "recordNamespaces" in header else None
+        )
         self._vision_providers = None
         if "visionProviders" in header:
             try:

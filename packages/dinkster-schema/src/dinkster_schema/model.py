@@ -5,7 +5,7 @@ all consume these objects. There is no INPUT_TYPES-style dict anywhere.
 
 The type-expression model is deliberately small and closed (one canonical
 representation, mirroring Dinkster-Frontend's TypeExpr):
-concrete | union | wildcard | variable | list | asset | stream | tuple.
+concrete | union | wildcard | variable | list | asset | stream | tuple | record.
 
 Structured kinds use a recursive ``element`` expression instead of flat
 type ids. Lists (DESIGN 3.13): at runtime a list value's
@@ -80,6 +80,8 @@ TypeExprKind = Literal[
     "stream",
     "tuple",
     "tuple_element",
+    "record",
+    "record_field",
 ]
 
 Cardinality = Literal["scalar", "list", "unknown"]
@@ -140,6 +142,29 @@ def combo_choices_json_bytes(values: Sequence[object], *, subject: str) -> bytes
 
 
 @dataclass(frozen=True)
+class RecordField:
+    """A stable field identity, independent of its current name and position.
+
+    ``default`` seeds Make inputs only; it never fills absent record fields
+    or changes connection compatibility. None means no declared default.
+    """
+
+    id: str
+    name: str
+    type: TypeExpr
+    optional: bool = False
+    default: object = field(default=None, hash=False)
+
+    def __post_init__(self) -> None:
+        _validate_structural_id(self.id, "record field id")
+        _validate_structural_id(self.name, "record field name")
+        if self.type.runtime_type_id() is None or self.type.requires_elaboration:
+            raise ValueError(f"record field '{self.name}' requires a declared concrete type")
+        if type(self.optional) is not bool:
+            raise ValueError("record field optional must be a boolean")
+
+
+@dataclass(frozen=True)
 class TypeExpr:
     kind: TypeExprKind
     types: tuple[str, ...] = ()
@@ -148,6 +173,7 @@ class TypeExpr:
     elements: tuple[TypeExpr, ...] = ()
     input_id: str = ""
     index: int | str | None = None
+    fields: tuple[RecordField, ...] = ()
 
     def __post_init__(self) -> None:
         if self.kind not in (
@@ -160,8 +186,25 @@ class TypeExpr:
             "stream",
             "tuple",
             "tuple_element",
+            "record",
+            "record_field",
         ):
             raise ValueError(f"unknown TypeExpr kind: {self.kind!r}")
+        if self.kind == "record":
+            if len(self.types) != 1 or validate_name(self.types[0]) is not None:
+                raise ValueError("record TypeExpr requires one namespaced record identity")
+            if not isinstance(cast(object, self.fields), tuple):
+                raise ValueError("record TypeExpr requires an immutable fields tuple")
+            if any(
+                not isinstance(item, RecordField) for item in cast(tuple[object, ...], self.fields)
+            ):
+                raise ValueError("record fields must be RecordFields")
+            if len({item.id for item in self.fields}) != len(self.fields):
+                raise ValueError("record field identities must be unique")
+            if len({item.name for item in self.fields}) != len(self.fields):
+                raise ValueError("record field names must be unique")
+        elif self.fields:
+            raise ValueError(f"{self.kind} TypeExpr carries no record fields")
         if self.kind == "concrete":
             if len(self.types) != 1:
                 raise ValueError("concrete TypeExpr requires exactly one type id")
@@ -227,6 +270,11 @@ class TypeExpr:
                 raise ValueError("tuple element requires an integer index or named literal input")
             if self.index == "":
                 raise ValueError("tuple element index input must be nonempty")
+        elif self.kind == "record_field":
+            if not self.input_id or not isinstance(self.index, str) or not self.index:
+                raise ValueError("record field requires record and selector input references")
+            if self.types or self.template_id:
+                raise ValueError("record field carries only input references")
         elif self.input_id or self.index is not None:
             raise ValueError(f"{self.kind} TypeExpr carries no input or index reference")
 
@@ -255,9 +303,65 @@ class TypeExpr:
         return TypeExpr(kind="tuple", elements=elements)
 
     @staticmethod
+    def record_of(type_id: str, *fields: RecordField) -> TypeExpr:
+        return TypeExpr(kind="record", types=(type_id,), fields=fields)
+
+    def record_connection_problem(self, source: TypeExpr) -> str | None:
+        """Check declared record fields without consulting or loading a value."""
+        if source.kind == "record" and self.kind not in ("record", "wildcard", "variable", "union"):
+            return f"Expected {self.runtime_type_id() or self.kind}, got record {source.types[0]}."
+        if self.kind == "record":
+            if source.kind != "record":
+                return (
+                    f"Expected record {self.types[0]}, "
+                    f"got {source.runtime_type_id() or source.kind}."
+                )
+
+            def field_problem(wanted: TypeExpr, found: TypeExpr) -> str | None:
+                if wanted.kind == found.kind == "list":
+                    assert wanted.element is not None and found.element is not None
+                    return field_problem(wanted.element, found.element)
+                if wanted.kind == found.kind == "tuple" and len(wanted.elements) == len(
+                    found.elements
+                ):
+                    for item, supplied in zip(wanted.elements, found.elements, strict=True):
+                        if (problem := field_problem(item, supplied)) is not None:
+                            return problem
+                    return None
+                if (problem := wanted.record_connection_problem(found)) is not None:
+                    return problem
+                if wanted.kind != "record" and wanted != found:
+                    return f"Expected {wanted.runtime_type_id()}, got {found.runtime_type_id()}."
+                return None
+
+            same_record = self.types == source.types
+            supplied = {(item.id if same_record else item.name): item for item in source.fields}
+            for wanted in self.fields:
+                found = supplied.get(wanted.id if same_record else wanted.name)
+                if found is None:
+                    return f"Missing record field: {wanted.name}."
+                nested = field_problem(wanted.type, found.type)
+                if nested is not None:
+                    return f"Record field '{wanted.name}': {nested}"
+            return None
+        if self.kind == source.kind:
+            if self.element is not None and source.element is not None:
+                return self.element.record_connection_problem(source.element)
+            if self.kind == "tuple" and len(self.elements) == len(source.elements):
+                for wanted, found in zip(self.elements, source.elements, strict=True):
+                    if (problem := wanted.record_connection_problem(found)) is not None:
+                        return problem
+        return None
+
+    @staticmethod
     def tuple_element(tuple_input: str, index_input: str) -> TypeExpr:
         """An output position selected by a document-stored integer input."""
         return TypeExpr(kind="tuple_element", input_id=tuple_input, index=index_input)
+
+    @staticmethod
+    def record_field(record_input: str, field_input: str) -> TypeExpr:
+        """An output field selected by a stored JSON array of stable field IDs."""
+        return TypeExpr(kind="record_field", input_id=record_input, index=field_input)
 
     @property
     def requires_elaboration(self) -> bool:
@@ -317,7 +421,7 @@ class TypeExpr:
         fully concrete, else None. This is what workers wrap outputs with and
         what the engine wraps literals with - the single bridge between the
         expression level and runtime value type ids."""
-        if self.kind == "concrete":
+        if self.kind in ("concrete", "record"):
             return self.types[0]
         if self.kind == "tuple":
             positions = tuple(item.runtime_type_id() for item in self.elements)
@@ -369,7 +473,7 @@ class TypeExpr:
         value (scalar) regardless of what it decodes to."""
         if self.kind == "list":
             return "list"
-        if self.kind in ("concrete", "union", "asset", "stream", "tuple"):
+        if self.kind in ("concrete", "union", "asset", "stream", "tuple", "record"):
             return "scalar"
         return "unknown"
 
@@ -656,10 +760,6 @@ class ComboWidget:
             raise ValueError("combo widget options_input requires editable options")
         if self.remote_route:
             _remote_choice_id(self.remote_route)
-        if not self.options and not self.remote_route and not self.editable_options:
-            raise ValueError(
-                "combo widget needs static options, a remote route, or editable options"
-            )
         if self.refresh_button and not self.remote_route:
             raise ValueError(
                 "combo widget refresh button requires a remote route "
@@ -1826,10 +1926,10 @@ class Output:
                 )
 
 
-RESERVED_INPUT_IDS = frozenset({"execution_context", "input_values"})
+RESERVED_INPUT_IDS = frozenset({"execution_context", "input_values", "input_types"})
 """Framework-reserved execute() parameter names. ``execution_context`` carries
-live run control; ``input_values`` provides read-only input envelopes. These
-are not row ids."""
+live run control; ``input_values`` and ``input_types`` provide read-only
+envelopes and linked record declarations. These are not row ids."""
 
 SearchVisibility = Literal["normal", "deprecated", "hidden"]
 """How node search lists a type. Presentation/lifecycle metadata, never
@@ -1889,6 +1989,8 @@ exact-string identity - never trimmed, case-folded, or normalized."""
 def _type_variables(expr: TypeExpr) -> Iterable[TypeExpr]:
     if expr.kind == "variable":
         yield expr
+    elif expr.kind == "record" and expr.template_id:
+        yield TypeExpr.variable(expr.template_id)
     elif expr.kind in ("list", "asset", "stream"):
         assert expr.element is not None
         yield from _type_variables(expr.element)
@@ -2293,6 +2395,9 @@ class NodeSchema:
     """Inject read-only input envelopes without live run-control access.
     Execute may omit decoded input parameters to handle only their envelopes.
     Caching includes metadata throughout each input value tree."""
+    input_types: bool = False
+    """Inject read-only linked record declarations, including absent fields.
+    Declaration identity participates in invocation caching."""
     mirror: MirrorSpec | None = None
     """Optional frontend-renderable mirror of this node's transform (see
     MirrorSpec). Presentation metadata only: the engine never reads it,
@@ -2462,6 +2567,8 @@ class NodeSchema:
             raise ValueError("execution_context must be a bool")
         if type(self.input_values) is not bool:
             raise ValueError("input_values must be a bool")
+        if type(self.input_types) is not bool:
+            raise ValueError("input_types must be a bool")
         if self.editor_role is not None and (
             not isinstance(cast("object", self.editor_role), str) or not self.editor_role
         ):
@@ -2548,6 +2655,16 @@ class NodeSchema:
         inputs_by_id = {spec.id: spec for spec in self.inputs}
 
         def validate_output_type(expr: TypeExpr) -> None:
+            if expr.kind == "record_field":
+                source = inputs_by_id.get(expr.input_id)
+                selector = inputs_by_id.get(str(expr.index))
+                if source is None or source.type.kind != "record":
+                    raise ValueError("record field references an unknown record input")
+                if selector is None or selector.type not in (
+                    TypeExpr.concrete(CORE_STRING),
+                    TypeExpr.concrete(CORE_COMBO),
+                ):
+                    raise ValueError("record field selector must reference a STRING or COMBO input")
             if expr.kind == "tuple_element":
                 if expr.input_id and expr.input_id not in inputs_by_id:
                     raise ValueError("tuple element references an unknown tuple input")
@@ -2562,7 +2679,9 @@ class NodeSchema:
 
         for spec in self.inputs:
             if spec.type.requires_elaboration:
-                raise ValueError("input types cannot reference another input")
+                if spec.type.kind != "record_field":
+                    raise ValueError("input types cannot reference another input")
+                validate_output_type(spec.type)
         for output in self.outputs:
             validate_output_type(output.type)
         self._check_options_inputs(inputs_by_id)
@@ -2744,6 +2863,7 @@ class NodeSchema:
     def is_static(self) -> bool:
         return (
             self.additional_inputs is None
+            and not any(spec.type.requires_elaboration for spec in self.inputs)
             and not any(output.type.requires_elaboration for output in self.outputs)
             and not _body_has_structure(self.body)
         )

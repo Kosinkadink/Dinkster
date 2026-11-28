@@ -44,6 +44,7 @@ from .model import (
     stable_hash,
 )
 from .names import canonical_name, claim_covers, claims_conflict
+from .records import RecordPayload
 from .streams import MediaStream, make_stream_value, parse_stream_type_id
 from .tuples import make_tuple_value, parse_tuple_type_id
 
@@ -1137,6 +1138,11 @@ class TypeRegistry:
                 converted = [
                     self.input_object(child.type_id, child, producer=producer) for child in children
                 ]
+                if isinstance(obj.payload, RecordPayload):
+                    return {
+                        name: item
+                        for (_, name), item in zip(obj.payload.fields, converted, strict=True)
+                    }
                 return tuple(converted) if parse_tuple_type_id(type_id) is not None else converted
             try:
                 obj = obj.resolve()

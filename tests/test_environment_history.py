@@ -2593,9 +2593,13 @@ def test_restore_plan_reports_only_required_pack_wheels_without_writing(
     assert (root / "history/00000000000000000001.json").read_bytes() == original
 
 
-@pytest.mark.parametrize("combined", [False, True], ids=["base-only", "engine-and-base"])
+@pytest.mark.parametrize(
+    ("combined", "older_base"),
+    [(False, False), (False, True), (True, False)],
+    ids=["base-only", "older-compatible-base", "engine-and-base"],
+)
 def test_missing_base_offers_minimal_compatible_replacements(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, combined: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, combined: bool, older_base: bool
 ):
     for variable in ("XDG_DATA_HOME", "LOCALAPPDATA"):
         monkeypatch.setenv(variable, str(tmp_path / "user-data"))
@@ -2612,6 +2616,14 @@ def test_missing_base_offers_minimal_compatible_replacements(
         )
     )
     root, store, mirror = Path(fixture["root"]), Path(fixture["store"]), Path(fixture["mirror"])
+    if older_base:
+        executable_release(
+            mirror,
+            json.loads(Path(fixture["baseManifest"]).read_bytes()),
+            "1.0",
+            41,
+            base_protocols=[10, 11],
+        )
     setup = fixture["commands"]["setup"]
     code, result = _run(root, *setup[setup.index("setup") : -1])
     assert code == 0, result
@@ -2626,6 +2638,8 @@ def test_missing_base_offers_minimal_compatible_replacements(
         for compatible in (False, True):
             base = json.loads(json.dumps(original))
             base["interpreter"]["release"] = "replacement" if compatible else "incompatible"
+            if older_base:
+                base["workerProtocol"] = 10
             if not compatible:
                 base["python"] = "3.99.1"
             identity_fields = {

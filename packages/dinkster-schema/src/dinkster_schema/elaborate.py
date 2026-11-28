@@ -24,6 +24,7 @@ from .model import (
     Output,
     TypeExpr,
 )
+from .records import record_selection
 
 MAX_INTERFACE_ITEMS = 1024
 """Hard cap on total effective interface items (inputs + outputs)."""
@@ -234,14 +235,30 @@ def _elaborate_body(
         )
     _validate_projected_namespace(schema, flat.inputs)
     values = stored if isinstance(stored, Mapping) else None
+    projected_inputs = [
+        replace(spec, type=_project_output_type(spec.type, flat.inputs, values))
+        if spec.type.requires_elaboration
+        else spec
+        for spec in flat.inputs
+    ]
+    for index, spec in enumerate(flat.inputs):
+        if spec.type.kind == "record_field":
+            source = next(item for item in flat.inputs if item.id == spec.type.input_id)
+            selector = next(item for item in flat.inputs if item.id == spec.type.index)
+            selection = (
+                selector.default if values is None else values.get(selector.id, selector.default)
+            )
+            path, _, problem = record_selection(source.type, selection)
+            if not path or problem is not None:
+                projected_inputs[index] = replace(projected_inputs[index], required=False)
     outputs = [
-        replace(output, type=_project_tuple_output(output.type, flat.inputs, values))
+        replace(output, type=_project_output_type(output.type, flat.inputs, values))
         if output.type.requires_elaboration
         else output
         for output in flat.outputs
     ]
     inputs, outputs, scoped = _resolve_applies(
-        schema, list(flat.inputs), outputs, dict(flat.choices)
+        schema, projected_inputs, outputs, dict(flat.choices)
     )
     total = len(inputs) + len(outputs)
     if total > MAX_INTERFACE_ITEMS:
@@ -265,11 +282,19 @@ def _elaborate_body(
     )
 
 
-def _project_tuple_output(
+def _project_output_type(
     expr: TypeExpr,
     inputs: Sequence[Input],
     stored: Mapping[str, object] | None,
 ) -> TypeExpr:
+    if expr.kind == "record_field":
+        source = next(spec.type for spec in inputs if spec.id == expr.input_id)
+        selector = next(spec for spec in inputs if spec.id == expr.index)
+        value = selector.default if stored is None else stored.get(selector.id, selector.default)
+        try:
+            return record_selection(source, value)[1]
+        except ValueError as exc:
+            raise ElaborationError(str(exc)) from exc
     if expr.kind == "tuple_element":
         element = (
             next(spec.type for spec in inputs if spec.id == expr.input_id)
@@ -293,8 +318,8 @@ def _project_tuple_output(
         expr,
         element=None
         if expr.element is None
-        else _project_tuple_output(expr.element, inputs, stored),
-        elements=tuple(_project_tuple_output(item, inputs, stored) for item in expr.elements),
+        else _project_output_type(expr.element, inputs, stored),
+        elements=tuple(_project_output_type(item, inputs, stored) for item in expr.elements),
     )
 
 

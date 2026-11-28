@@ -211,7 +211,9 @@ def build_base(mirror: Path, scratch: Path, variant: str, *, version: str = "1.0
     return base
 
 
-def executable_release(mirror: Path, base: dict, version: str, value: int) -> None:
+def executable_release(
+    mirror: Path, base: dict, version: str, value: int, *, base_protocols: list[int] | None = None
+) -> None:
     """Publish one engine and select it on main using the production release format."""
     scratch = mirror / "build"
     scratch.mkdir(exist_ok=True)
@@ -230,6 +232,7 @@ def executable_release(mirror: Path, base: dict, version: str, value: int) -> No
             "commit": "d" * 40,
             "version": version,
             "workerProtocol": 11,
+            **({"baseWorkerProtocols": base_protocols} if base_protocols is not None else {}),
             "capabilities": ["bound-endpoint/1", "build-metadata/1"],
             "artifacts": [artifact("constraints.txt", constraints), artifact(path.name, payload)],
         }

@@ -30,6 +30,7 @@ from .model import (
     ValueMeta,
     stable_hash,
 )
+from .records import RecordPayload
 from .tuples import TuplePayload
 
 LIST_TYPE_PREFIX = "list<"
@@ -110,9 +111,13 @@ def list_children(value: Value) -> tuple[Value, ...] | None:
 
 
 def value_children(value: Value) -> tuple[Value, ...] | None:
-    """Children of either structural container, without list coercion."""
+    """Children of a structural container, without list coercion."""
     payload = value.payload
-    return payload.children if isinstance(payload, ListPayload | TuplePayload) else None
+    return (
+        payload.children
+        if isinstance(payload, ListPayload | TuplePayload | RecordPayload)
+        else None
+    )
 
 
 def iter_value_tree(value: Value) -> Iterator[Value]:
@@ -203,7 +208,7 @@ def stamp_resource_producer_arm(value: Value, owner: str, arm: str) -> Value:
         stamped = tuple(stamp_resource_producer_arm(child, owner, arm) for child in children)
         if stamped != children:
             payload = value.payload
-            assert isinstance(payload, ListPayload | TuplePayload)
+            assert isinstance(payload, ListPayload | TuplePayload | RecordPayload)
             value = replace(value, payload=replace(payload, children=stamped))
     if (
         _local_resource_ids(value)

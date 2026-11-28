@@ -57,7 +57,12 @@ from dinkster_protocol import (
     validate_preview_animation,
     validate_preview_mode,
 )
-from dinkster_schema import schema_from_wire, schema_to_wire
+from dinkster_schema import (
+    schema_from_wire,
+    schema_to_wire,
+    type_expr_from_wire,
+    type_expr_to_wire,
+)
 from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import (
     CONVERSATION_CAS_BUDGET_BYTES,
@@ -65,6 +70,7 @@ from dinkster_values import (
     BufferEncoding,
     EncodedPayload,
     ListPayload,
+    RecordPayload,
     TuplePayload,
     TypeRegistry,
     Value,
@@ -76,6 +82,7 @@ from dinkster_values import (
     stable_hash,
     value_children,
 )
+from dinkster_values.records import record_fields
 from dinkster_values.storage import encoded_storage_meta
 
 #: Windows and macOS report shared-memory mappings rounded up to a page
@@ -98,12 +105,13 @@ Once a codec's retained bytes reach this budget, further first-crossings
 still work - they just carry their bytes every time instead of becoming
 digest-only. Bounds the RAM a long-lived connection can pin."""
 
-PROTOCOL_VERSION = 14
+PROTOCOL_VERSION = 15
 """The boundary protocol version. Carried in the remote hello exchange
 (clientHello/hello) so peers built against different wire contracts refuse
 each other explicitly instead of corrupting frames. Local parent/child pairs
 ship together and do not negotiate.
 
+v15: linked record declarations accompany generic input envelopes;
 v14: device unloading uses the gated release protocol instead of memoryShed;
 v13: original image document attachments and source closure in successful results;
 v12: explicit mounted saved-file attachments in successful invocation results;
@@ -480,6 +488,8 @@ class ValueCodec:
                 "metaBlob": len(blobs),
                 "elements": element_wires,
             }
+            if isinstance(value.payload, RecordPayload):
+                wire["recordFields"] = [list(field) for field in value.payload.fields]
             blobs.append(default_encode(dict(value.meta.entries)))
             return wire, TransferStat(
                 value.payload.transport, total_size, total_ms, all_declared, all_reused
@@ -631,7 +641,12 @@ class ValueCodec:
             # and their positional or homogeneous parent. Identity crosses
             # verbatim like every fingerprint does (hazard H4).
             positions = parse_tuple_type_id(type_id)
-            if parse_list_type_id(type_id) is None and positions is None:
+            fields = record_fields(wire["recordFields"]) if "recordFields" in wire else None
+            if fields is not None and (
+                parse_list_type_id(type_id) is not None or positions is not None
+            ):
+                raise BoundaryError("record fields on a list or tuple envelope")
+            if parse_list_type_id(type_id) is None and positions is None and fields is None:
                 raise BoundaryError(f"elements on a non-container type id: {type_id!r}")
             child_values: list[Value] = []
             total_size = 0
@@ -649,7 +664,9 @@ class ValueCodec:
             ):
                 raise BoundaryError("tuple child types do not match their envelope positions")
             payload = (
-                ListPayload(tuple(child_values))
+                RecordPayload(fields, tuple(child_values))
+                if fields is not None
+                else ListPayload(tuple(child_values))
                 if positions is None
                 else TuplePayload(tuple(child_values))
             )
@@ -869,6 +886,11 @@ def encode_invocation(
         ],
         "inputs": inputs_wire,
     }
+    if invocation.input_types:
+        header["inputTypes"] = {
+            name: type_expr_to_wire(declaration)
+            for name, declaration in invocation.input_types.items()
+        }
     if invocation.arm is not None:
         header["arm"] = invocation.arm
     if invocation.expected_execution_identity is not None:
@@ -1110,6 +1132,14 @@ def decode_invocation(
         except (TypeError, ValueError) as exc:
             raise BoundaryError(f"invalid invocation mediaSources entry: {exc}") from exc
     try:
+        input_types_raw = header.get("inputTypes", {})
+        if not isinstance(input_types_raw, Mapping):
+            raise ValueError("inputTypes must be an object")
+        input_types = {}
+        for name, raw in input_types_raw.items():
+            if not isinstance(name, str) or not isinstance(raw, Mapping):
+                raise ValueError("inputTypes must map input names to type declarations")
+            input_types[name] = type_expr_from_wire(dict(raw))
         return Invocation(
             invocation_id=str(header["invocationId"]),
             node_id=str(header["nodeId"]),
@@ -1118,6 +1148,7 @@ def decode_invocation(
             effective_schema=schema_from_wire(
                 dict(cast("Mapping[str, Any]", header["effectiveSchema"]))
             ),
+            input_types=input_types,
             job_ref=job_ref_raw,
             attempt_id=attempt_id_raw,
             output_members=output_members,
@@ -1530,7 +1561,10 @@ def _preflight_value_tree(root: Value, budget: list[int]) -> None:
         children = value_children(value)
         element_type = parse_list_type_id(value.type_id)
         positions = parse_tuple_type_id(value.type_id)
-        if (children is None) != (element_type is None and positions is None):
+        record = isinstance(value.payload, RecordPayload)
+        if record and (element_type is not None or positions is not None):
+            raise BoundaryError("result algebra record has a list or tuple type")
+        if (children is None) != (element_type is None and positions is None and not record):
             raise BoundaryError("result algebra value has a noncanonical container envelope")
         if children is not None:
             if positions is not None:
@@ -1538,8 +1572,9 @@ def _preflight_value_tree(root: Value, budget: list[int]) -> None:
                     child.type_id for child in children
                 ):
                     raise BoundaryError("result algebra tuple child types do not match positions")
-            elif not isinstance(value.payload, ListPayload) or any(
-                element_type != "*" and child.type_id != element_type for child in children
+            elif not record and (
+                not isinstance(value.payload, ListPayload)
+                or any(element_type != "*" and child.type_id != element_type for child in children)
             ):
                 raise BoundaryError("result algebra list child type does not match its envelope")
             pending.extend((child, depth + 1) for child in children)
@@ -1748,16 +1783,31 @@ def _validate_value_descriptor(
     element_type = parse_list_type_id(wire["typeId"])
     positions = parse_tuple_type_id(wire["typeId"])
     if "elements" in wire:
-        if (element_type is None and positions is None) or set(wire) != {
+        fields = None
+        if "recordFields" in wire:
+            try:
+                fields = record_fields(wire["recordFields"])
+            except ValueError as exc:
+                raise BoundaryError(str(exc)) from exc
+            if element_type is not None or positions is not None:
+                raise BoundaryError("record fields on a list or tuple envelope")
+        expected_keys = {
             "typeId",
             "fingerprint",
             "metaBlob",
             "elements",
-        }:
+        }
+        if fields is not None:
+            expected_keys.add("recordFields")
+        if (element_type is None and positions is None and fields is None) or set(
+            wire
+        ) != expected_keys:
             raise BoundaryError("invalid list value descriptor fields")
         elements = wire["elements"]
         if type(elements) is not list or len(elements) > RESULT_ALGEBRA_MAX_COUNT:
             raise BoundaryError("invalid list value descriptor elements")
+        if fields is not None and len(fields) != len(elements):
+            raise BoundaryError("record fields and children must have equal lengths")
         if positions is not None and len(elements) != len(positions):
             raise BoundaryError("tuple value descriptor arity does not match its envelope")
         for index, child in enumerate(elements):

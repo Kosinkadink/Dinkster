@@ -227,6 +227,9 @@ async def run_service(
                         "payloadTransports": transports,
                         "leaseTtl": lease_ttl,
                         "resumeGrace": resume_grace,
+                        "recordNamespaces": list(
+                            dict.fromkeys((*manifest.namespaces, *manifest.type_namespaces))
+                        ),
                     },
                     asset_staging=asset_staging,
                     declared_assets=manifest.assets,

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
-from dinkster_schema import NodeSchema, RunExecutionContext
+from dinkster_schema import NodeSchema, RunExecutionContext, TypeExpr
 from dinkster_schema.reporting import EncodedPreviewArtifact, ImageDocumentArtifact
 from dinkster_values import Value
 from dinkster_values.asset_folders import AssetFolderContext
@@ -410,6 +410,10 @@ class Invocation:
     node_type: str
     inputs: Mapping[str, Value]
     effective_schema: NodeSchema
+    input_types: Mapping[str, TypeExpr] = field(default_factory=dict[str, TypeExpr], kw_only=True)
+    """Linked record declarations for generic output solving. Runtime input
+    envelopes still determine the bound type; declarations retain absent
+    optional fields and empty container structure without loading values."""
     output_members: tuple[tuple[str, tuple[str, ...]], ...] = ()
     connected_undemanded_inputs: tuple[str, ...] = ()
     executor: str | None = None
@@ -469,6 +473,10 @@ class Invocation:
     """Host-local run binding. Worker connections relay calls, never this object."""
 
     def __post_init__(self) -> None:
+        for input_id, declaration in self.input_types.items():
+            value = self.inputs.get(input_id)
+            if value is None or declaration.runtime_type_id() != value.type_id:
+                raise ValueError(f"Invocation.input_types disagrees with input '{input_id}'")
         if self.job_ref is not None and (type(self.job_ref) is not str or not self.job_ref):
             raise ValueError("Invocation.job_ref must be a non-empty string when present")
         if type(self.attempt_id) is not int or self.attempt_id < 1:

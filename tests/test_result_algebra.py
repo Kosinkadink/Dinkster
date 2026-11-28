@@ -24,7 +24,7 @@ from dinkster_protocol import (
     ReturnBatch,
 )
 from dinkster_schema import NodeSchema
-from dinkster_values import ListPayload, TypeRegistry, register_core_types
+from dinkster_values import ListPayload, TypeRegistry, make_record_value, register_core_types
 from dinkster_workers import boundary
 from dinkster_workers.boundary import (
     BoundaryError,
@@ -118,6 +118,38 @@ def test_positional_tuple_result_roundtrip_and_envelope_validation() -> None:
     for type_id in ("tuple<STRING,INT>", "tuple<INT>"):
         changed = copy.deepcopy(header)
         algebra(changed)["values"][0]["typeId"] = type_id
+        with pytest.raises(BoundaryError):
+            decode(changed, blobs)
+
+
+def test_record_result_preserves_fields_and_refuses_ambiguous_field_identity() -> None:
+    reg = registry()
+    value = make_record_value(
+        "test.settings",
+        {
+            "a": ("seed", reg.wrap("INT", 29)),
+            "b": ("prompt", reg.wrap("STRING", "seven")),
+        },
+    )
+    outcome = InvocationReturn(
+        ReturnBatch("scalar", (DirectReturn((("out", PresentOutput(value)),)),))
+    )
+    header, blobs = encode(outcome)
+    restored = decode(header, blobs)
+    assert isinstance(restored, InvocationReturn)
+    returned = restored.batch.units[0]
+    assert isinstance(returned, DirectReturn)
+    present = dict(returned.bindings)["out"]
+    assert isinstance(present, PresentOutput)
+    assert present.value.resolve() == {"seed": 29, "prompt": "seven"}
+    assert present.value.fingerprint == value.fingerprint
+    for fields in (
+        [["a", "seed"]],
+        [["a", "seed"], ["a", "prompt"]],
+        [["a", "seed"], ["b", "seed"]],
+    ):
+        changed = copy.deepcopy(header)
+        algebra(changed)["values"][0]["recordFields"] = fields
         with pytest.raises(BoundaryError):
             decode(changed, blobs)
 

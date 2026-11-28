@@ -107,6 +107,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.dinkster]
+base-worker-protocols = [14, 15]
 engine-capabilities = ["bound-endpoint/1", "build-metadata/1", "library-helper/1", "library-overlap/1", "node-table-record/1"]
 library-api = 1
 library-capabilities = ["projects", "changes", "changes.head", "index.scan", "index.progress", "index.scan.selected", "records.list", "records.migrate", "projects.needs.workflows", "projects.pack-selection"]

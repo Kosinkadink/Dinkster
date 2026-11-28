@@ -85,8 +85,14 @@ from dinkster_schema import (
 from dinkster_schema.body import all_rows
 from dinkster_schema.flatten import described_ids, flatten_body
 from dinkster_schema.media import media_diagnostics
-from dinkster_schema.model import Output
+from dinkster_schema.model import Input, Output, TypeExpr
 from dinkster_schema.nest import OutputShapeError, flatten_outputs, nest_inputs
+from dinkster_schema.records import (
+    contains_records,
+    project_record_value,
+    record_value_problem,
+    wrap_declared_value,
+)
 from dinkster_schema.reporting import (
     capture_image_documents,
     capture_preview_artifacts,
@@ -582,6 +588,15 @@ class InProcessWorker:
                 )
             )
 
+        for input_id, declaration in invocation.input_types.items():
+            problem = record_value_problem(declaration, invocation.inputs[input_id])
+            if problem is not None:
+                return InvocationResult(
+                    error=NodeError(
+                        invocation.node_id, invocation.node_type, f"input '{input_id}': {problem}"
+                    )
+                )
+
         coercion_diagnostics: list[dict[str, object]] = []
         media_inputs = dict(invocation.inputs)
         try:
@@ -849,12 +864,12 @@ class InProcessWorker:
             spec.id: None for spec in invocation.effective_schema.inputs if spec.id in supplied
         }
         stored.update((name, None) for name in supplied if name not in stored)
-        # A tuple selector's stored index decides its output's type.
+        # Stored tuple and record selectors decide dependent interface types.
         selectors: set[str] = set()
-        types = [row.type for row in all_rows(base_schema.body) if isinstance(row, Output)]
+        types = [row.type for row in all_rows(base_schema.body) if isinstance(row, (Input, Output))]
         while types:
             expr = types.pop()
-            if expr.kind == "tuple_element" and isinstance(expr.index, str):
+            if expr.kind in ("tuple_element", "record_field") and isinstance(expr.index, str):
                 selectors.add(expr.index)
             if expr.element is not None:
                 types.append(expr.element)
@@ -930,6 +945,8 @@ class InProcessWorker:
             kwargs["execution_context"] = invocation.run_control
         if base_schema.input_values:
             kwargs["input_values"] = MappingProxyType(dict(invocation.inputs))
+        if base_schema.input_types:
+            kwargs["input_types"] = MappingProxyType(dict(invocation.input_types))
         return kwargs
 
     def _unwrap(
@@ -975,6 +992,17 @@ class InProcessWorker:
         spec = invocation.effective_schema.input(input_id)
         if spec is None or is_absent(value):
             return value.resolve()
+
+        if contains_records(spec.type):
+            try:
+                projected = project_record_value(spec.type, value)
+                return (
+                    projected.resolve()
+                    if spec.accepts_storage
+                    else self._registry.input_object(projected.type_id, projected)
+                )
+            except TypeError as exc:
+                raise InputCoercionError(f"input '{input_id}': {exc}") from exc
 
         def input_object(type_id: str, obj: object) -> object:
             if spec.accepts_storage:
@@ -1128,7 +1156,7 @@ class InProcessWorker:
             return contract_error("; ".join(problems))
 
         outputs: dict[str, Value] = {}
-        bindings: Mapping[str, str] | None = None
+        bindings: Mapping[str, TypeExpr] | None = None
         for out in schema.outputs:
             expected = out.type.runtime_type_id()
             if expected is None:
@@ -1143,7 +1171,7 @@ class InProcessWorker:
                         bindings = bind_type_variables(
                             schema.inputs,
                             {
-                                input_id: value.type_id
+                                input_id: invocation.input_types.get(input_id, value.type_id)
                                 for input_id, value in invocation.inputs.items()
                                 if not is_absent(value)
                             },
@@ -1173,7 +1201,11 @@ class InProcessWorker:
                     )
                     continue
                 resolved = resolved_type_expr(out.type, bindings or {}) or out.type
-                if not resolved.accepts_concrete(returned_value.type_id):
+                if (problem := record_value_problem(resolved, returned_value)) is not None:
+                    return contract_error(f"output '{out.id}': {problem}")
+                if not contains_records(resolved) and not resolved.accepts_concrete(
+                    returned_value.type_id
+                ):
                     return contract_error(f"output '{out.id}' rejects {returned_value.type_id}")
                 outputs[out.id] = returned_value
                 continue
@@ -1185,7 +1217,12 @@ class InProcessWorker:
                 )
             try:
                 output = prepare_media_output(raw[out.id], expected, out, schema, media_inputs)
-                outputs[out.id] = self._registry.wrap(expected, output)
+                resolved = resolved_type_expr(out.type, bindings or {}) or out.type
+                outputs[out.id] = (
+                    wrap_declared_value(resolved, output, self._registry)
+                    if contains_records(resolved)
+                    else self._registry.wrap(expected, output)
+                )
             except (TypeError, ValueError) as exc:
                 # Shape violations (a list<T> output returning a non-sequence)
                 # are contract errors at this boundary, not engine crashes.

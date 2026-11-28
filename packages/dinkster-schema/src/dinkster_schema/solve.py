@@ -59,26 +59,33 @@ class TypeVariableConflict(TypeSolveError):
         self.got = got
 
 
-def bind_type_variables(specs: Iterable[Input], input_types: Mapping[str, str]) -> dict[str, str]:
-    """Solve template-variable bindings from runtime input type ids.
+def bind_type_variables(
+    specs: Iterable[Input], input_types: Mapping[str, str | TypeExpr]
+) -> dict[str, TypeExpr]:
+    """Solve template bindings, retaining declared record fields when known.
 
     specs is the *elaborated* input interface (family members flattened);
-    input_types maps input id -> the received value's runtime type id.
+    input_types maps input id to a runtime type id or its full declaration.
     Callers must exclude absent inputs: ``core.absent`` stands for a missing
     value and can never bind a variable. Inputs with no received value (an
     unfed optional) bind nothing.
     """
-    bindings: dict[str, str] = {}
+    bindings: dict[str, TypeExpr] = {}
     for spec in specs:
-        type_id = input_types.get(spec.id)
-        if type_id is not None:
+        received = input_types.get(spec.id)
+        if received is not None:
+            expression = (
+                _type_expr_from_runtime_id(received) if isinstance(received, str) else received
+            )
             if spec.accepts_list and spec.type.kind != "list":
-                type_id = parse_list_type_id(type_id) or type_id
-            _unify(spec.id, spec.type, type_id, bindings)
+                if expression.kind == "list":
+                    assert expression.element is not None
+                    expression = expression.element
+            _unify(spec.id, spec.type, expression, bindings)
     return bindings
 
 
-def resolved_type_id(expr: TypeExpr, bindings: Mapping[str, str]) -> str | None:
+def resolved_type_id(expr: TypeExpr, bindings: Mapping[str, TypeExpr]) -> str | None:
     """The runtime type id of an expression under bindings, else None.
 
     The bindings-free case is ``TypeExpr.runtime_type_id()``; this is the
@@ -88,13 +95,12 @@ def resolved_type_id(expr: TypeExpr, bindings: Mapping[str, str]) -> str | None:
     return None if resolved is None else resolved.runtime_type_id()
 
 
-def resolved_type_expr(expr: TypeExpr, bindings: Mapping[str, str]) -> TypeExpr | None:
+def resolved_type_expr(expr: TypeExpr, bindings: Mapping[str, TypeExpr]) -> TypeExpr | None:
     """A fully concrete expression under bindings, else None."""
-    if expr.kind == "concrete":
+    if expr.kind in ("concrete", "record"):
         return expr
     if expr.kind == "variable":
-        type_id = bindings.get(expr.template_id)
-        return None if type_id is None else _type_expr_from_runtime_id(type_id)
+        return bindings.get(expr.template_id)
     if expr.kind == "tuple":
         positions = tuple(resolved_type_expr(item, bindings) for item in expr.elements)
         if any(item is None for item in positions):
@@ -142,15 +148,27 @@ def _type_expr_from_runtime_id(type_id: str) -> TypeExpr:
     return TypeExpr.concrete(type_id)
 
 
-def _unify(input_id: str, expr: TypeExpr, type_id: str, bindings: dict[str, str]) -> None:
+def _unify(
+    input_id: str, expr: TypeExpr, received: TypeExpr, bindings: dict[str, TypeExpr]
+) -> None:
+    if expr.kind == "record" and expr.template_id:
+        problem = expr.record_connection_problem(received)
+        if problem is not None:
+            raise TypeSolveError(f"input '{input_id}': {problem}")
+        _unify(input_id, TypeExpr.variable(expr.template_id), received, bindings)
+        return
+    if expr.kind not in ("variable", "tuple", "stream", "list", "asset"):
+        return
+    type_id = received.runtime_type_id()
+    if type_id is None:
+        raise TypeSolveError(f"input '{input_id}': received type is not runtime-resolvable")
     if expr.kind == "tuple":
-        positions = parse_tuple_type_id(type_id)
-        if positions is None or len(positions) != len(expr.elements):
+        if received.kind != "tuple" or len(received.elements) != len(expr.elements):
             raise TypeSolveError(
                 f"input '{input_id}': expected a tuple of {len(expr.elements)} positions, "
                 f"got {type_id}"
             )
-        for item, position in zip(expr.elements, positions, strict=True):
+        for item, position in zip(expr.elements, received.elements, strict=True):
             _unify(input_id, item, position, bindings)
         return
     if expr.kind == "variable":
@@ -161,29 +179,28 @@ def _unify(input_id: str, expr: TypeExpr, type_id: str, bindings: dict[str, str]
             )
         bound = bindings.get(expr.template_id)
         if bound is None:
-            bindings[expr.template_id] = type_id
-        elif bound != type_id:
-            raise TypeVariableConflict(input_id, expr.template_id, bound, type_id)
+            bindings[expr.template_id] = received
+        elif bound.runtime_type_id() != type_id:
+            raise TypeVariableConflict(
+                input_id, expr.template_id, str(bound.runtime_type_id()), type_id
+            )
         return
     if expr.kind == "stream":
-        inner = parse_stream_type_id(type_id)
-        if inner is None:
+        if received.kind != "stream" or received.element is None:
             raise TypeSolveError(f"input '{input_id}': expected a stream value, got {type_id}")
         assert expr.element is not None
-        _unify(input_id, expr.element, inner, bindings)
+        _unify(input_id, expr.element, received.element, bindings)
         return
     if expr.kind == "list":
-        inner = parse_list_type_id(type_id)
-        if inner is None:
+        if received.kind != "list" or received.element is None:
             raise TypeSolveError(f"input '{input_id}': expected a list value, got {type_id}")
         assert expr.element is not None  # post_init invariant
-        _unify(input_id, expr.element, inner, bindings)
+        _unify(input_id, expr.element, received.element, bindings)
         return
     if expr.kind == "asset":
-        inner = parse_asset_type_id(type_id)
-        if inner is None:
+        if received.kind != "asset" or received.element is None:
             raise TypeSolveError(f"input '{input_id}': expected an asset value, got {type_id}")
         assert expr.element is not None  # post_init invariant
-        _unify(input_id, expr.element, inner, bindings)
+        _unify(input_id, expr.element, received.element, bindings)
     # concrete/union/wildcard bind nothing; edge compatibility is the
     # advisory document-time check, not this solver's job.
