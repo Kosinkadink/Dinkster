@@ -307,14 +307,15 @@ def _windows_replace(source: str, destination: Path) -> None:
             ("Flags", wintypes.DWORD),
             ("RootDirectory", wintypes.HANDLE),
             ("FileNameLength", wintypes.DWORD),
-            ("FileName", ctypes.c_ubyte * len(name)),
+            ("FileName", ctypes.c_ubyte * (len(name) + 2)),
         ]
 
     info = RenameInfo()
     # REPLACE_IF_EXISTS | POSIX_SEMANTICS keeps open readers on the old snapshot.
     info.Flags = 3
     info.FileNameLength = len(name)
-    info.FileName[:] = name
+    # Win32 scans for NUL even though FileNameLength excludes the terminator.
+    info.FileName[:] = name + b"\0\0"
     # DELETE access is required for rename; the flushed temporary file is closed.
     handle = kernel.CreateFileW(source, 0x10000, 7, None, 3, 0x80, None)
     if handle == ctypes.c_void_p(-1).value:

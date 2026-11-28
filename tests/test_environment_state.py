@@ -23,10 +23,13 @@ from dinkster_supervisor.environment_state import (
 )
 
 
-def test_document_reads_coexist_with_replacement_and_keep_complete_snapshots(tmp_path: Path):
+@pytest.mark.parametrize("suffix_length", range(4))
+def test_document_reads_coexist_with_replacement_and_keep_complete_snapshots(
+    tmp_path: Path, suffix_length: int
+):
     from dinkster_supervisor.environment_state import read_document, write_document
 
-    path = tmp_path / "state.json"
+    path = tmp_path / ("state" + "x" * suffix_length + ".json")
     before = {"index": 7, "message": "old snapshot"}
     after = {"index": 19, "message": "new snapshot with different length"}
     write_document(path, before)
