@@ -23,6 +23,7 @@ from .environment_history import (
     import_generation,
     publish_entry,
 )
+from .environment_progress import preparation_progress
 from .environment_runtime import generation_runtime_lock, generation_runtime_reason
 from .environment_state import (
     EnvironmentError,
@@ -427,6 +428,7 @@ def retry_generation_collection(root: Path, *, automatic: bool = False) -> dict[
                 if journals.is_symlink() or journals.is_junction():
                     raise EnvironmentError("collection refuses linked journals")
                 for path in sorted(journal_paths(root)):
+                    preparation_progress("recovering-cleanup")
                     if path.is_symlink():
                         raise EnvironmentError("collection refuses linked journals")
                     journal = Journal.read(path)
@@ -442,7 +444,9 @@ def retry_generation_collection(root: Path, *, automatic: bool = False) -> dict[
                             publish_entry(root, journal.history_entry)
                 published = {generation_number(entry.get("generation")) for entry in history(root)}
                 backlog = collection_preview(root)
-                for row in cast("list[dict[str, object]]", backlog["generations"]):
+                rows = cast("list[dict[str, object]]", backlog["generations"])
+                for index, row in enumerate(rows):
+                    preparation_progress("capturing-cleanup-history", index, len(rows))
                     number = cast("int", row["generation"])
                     if number in published:
                         continue
@@ -608,6 +612,8 @@ def _collect_generations(
         ):
             cleanup_collection(root, old)
     current, _, numbers = approved
+    if preserve_history:
+        preparation_progress("quarantining-old-versions", 0, len(numbers))
     if not numbers and not store_paths:
         return
     path = root / "journal" / f"{time.time_ns()}.json"
@@ -634,8 +640,10 @@ def _collect_generations(
                 finally:
                     os.close(descriptor)
         replace(journal, stage="building").write(path)
-        for number in numbers:
+        for index, number in enumerate(numbers, 1):
             durable_rename(root / "builds" / str(number), directory / str(number))
+            if preserve_history:
+                preparation_progress("quarantining-old-versions", index, len(numbers))
         for original, parked in _store_trees(path, journal):
             parents: list[Path] = []
             parent = parked.parent
@@ -651,9 +659,15 @@ def _collect_generations(
                     finally:
                         os.close(descriptor)
             durable_rename(original, parked)
+        if preserve_history:
+            preparation_progress("committing-cleanup", len(numbers), len(numbers))
         replace(journal, stage="complete").write(path)
     except Exception as exc:
         replace(Journal.read(path), error=str(exc)).write(path)
         recover_collection(root, path)
         raise
+    if preserve_history:
+        preparation_progress("deleting-old-versions", 0, len(numbers))
     cleanup_collection(root, path)
+    if preserve_history:
+        preparation_progress("deleting-old-versions", len(numbers), len(numbers))
