@@ -970,6 +970,16 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
         home = Home(installations=lambda: frozenset(roots), start=start, watch_interval=0.05)
         async with TestClient(TestServer(create_home_app(home, frontend=None))) as client:
 
+            async def restarted_binding() -> dict:
+                # Restart acknowledges spawning, not health. The scenario deadline
+                # bounds startup; binding assertions apply to its completed result.
+                while True:
+                    status = await (await client.get("/supervisor/status?project=film")).json()
+                    assert status["state"] in {"starting", "ready"}, status
+                    if status["execution"] and status["execution"]["filesystem"]:
+                        return status
+                    await asyncio.sleep(0.02)
+
             async def opened(root: Path, engine: str = "main") -> dict:
                 nonlocal started
                 started = asyncio.Event()
@@ -1022,22 +1032,14 @@ def test_execution_binding_tracks_managed_target_and_host_changes(
                         other_engine["execution"]["engine"]["url"] + "/supervisor/engine/restart"
                     )
                 ).status == 200
-            external_restart = await wait_for(
-                client,
-                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
-                "/supervisor/status?project=film",
-            )
+            external_restart = await restarted_binding()
             assert external_restart["execution"]["engine"] == other_engine["execution"]["engine"]
             assert (
                 external_restart["execution"]["filesystem"]
                 != other_engine["execution"]["filesystem"]
             )
             assert (await client.post("/supervisor/engine/restart")).status == 200
-            restarted = await wait_for(
-                client,
-                lambda s: bool(s["execution"] and s["execution"]["filesystem"]),
-                "/supervisor/status?project=film",
-            )
+            restarted = await restarted_binding()
             assert (
                 restarted["execution"]["filesystem"] != external_restart["execution"]["filesystem"]
             )
