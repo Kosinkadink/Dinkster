@@ -220,6 +220,8 @@ def test_remote_records_get_host_helpers_across_daemon_replacement(
             "    @classmethod\n"
             "    def define_schema(cls):\n"
             "        return NodeSchema('remotenodes.consume', body=(Input('value', OUTER), "
+            "Input('guidance_only', TypeExpr.record_of('remoteowned.settings', "
+            "COMPLETE.fields[1]), required=False), "
             "Input('other', BORROWED, required=False), Output('answer', INT)))\n"
             "    @classmethod\n"
             "    def execute(cls, value):\n"

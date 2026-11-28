@@ -278,7 +278,7 @@ from dinkster_workers.session import WorkerDied
 from dinkster_workers.windows_sandbox import WindowsProcessLauncher
 from packaging.requirements import Requirement
 
-from dinkster.record_nodes import record_helpers
+from dinkster.record_nodes import record_declarations, record_helpers
 
 from .composition_error import CompositionError
 from .extension_assets import read_module, resolve_frontend_modules
@@ -6431,11 +6431,11 @@ class ServingComposer:
             else tuple(provider for provider in generation_providers if provider.node in composed)
         )
         try:
-            selected = record_helpers(composed.values())
+            selected = record_declarations(composed.values())
             makers = {
                 node_type: node
                 for node_type, node in record_helpers(announced.values()).items()
-                if node_type in selected
+                if node_type.rsplit(".", 1)[0] in selected
             }
         except ValueError as exc:
             raise CompositionError(f"remote worker {spec.name!r}: {exc}") from exc

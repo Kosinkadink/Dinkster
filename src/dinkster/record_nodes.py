@@ -20,7 +20,7 @@ from dinkster_schema.records import record_selection
 from dinkster_values import CORE_COMBO, RecordPayload, Value, is_absent, make_record_value
 
 
-def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
+def record_declarations(schemas: Iterable[NodeSchema]) -> dict[str, list[TypeExpr]]:
     declarations: dict[str, list[TypeExpr]] = {}
 
     def visit(expression: TypeExpr) -> None:
@@ -37,8 +37,12 @@ def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
         for row in (*schema.inputs, *schema.outputs, *all_rows(schema.body)):
             if isinstance(row, (Input, Output)):
                 visit(row.type)
+    return declarations
+
+
+def record_helpers(schemas: Iterable[NodeSchema]) -> dict[str, type[Node]]:
     records: dict[str, TypeExpr] = {}
-    for identity, candidates in declarations.items():
+    for identity, candidates in record_declarations(schemas).items():
         known = {}
         for candidate in candidates:
             for field in candidate.fields:
